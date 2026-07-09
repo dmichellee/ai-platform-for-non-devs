@@ -1,0 +1,167 @@
+# CodeBuild #2 — 배포(cdk deploy app-runtime) (DESIGN.md 3.3 [Deploy], 3.5 드리프트 방지)
+#
+# 계약(_workspace/contracts/buildspec-contract.md):
+#  입력 아티팩트: ValidateBuild 산출물 image-tag.json({"imageTag":"<commitSha>"}).
+#  동작: 앱 파라미터(preset/scheme/subdomain/priority/permissionTemplate/이미지태그)를
+#        컨텍스트로 cdk deploy `apphub-{stage}-app-{appId}-runtime` 실행.
+#  앱 파라미터 출처: DDB App 레코드(APP#{appId}/META) + ComputePreset/PermissionTemplate.
+#        (여기서 조회해 컨텍스트로 조립 → app 스택 모드 synth/deploy)
+#  드리프트 방지(DESIGN 3.5): 배포 전 desiredCount=min 기동(깨우기), isInitialDeploy는
+#        스택 존재 여부로 판정(최초=true → desiredCount 지정, 갱신=false → 미지정).
+#  실패 시: FAILURE_CATEGORY=DEPLOY_FAILED (CloudFormation 자동 롤백 → 이전 버전 유지).
+#
+# 환경변수(프로젝트 주입): STAGE, APP_ID, AWS_ACCOUNT_ID, AWS_DEFAULT_REGION
+#  + CDK_SOURCE_DIR(플랫폼 CDK 코드 위치; provisioner가 주입) 또는 이 레포에 동봉된 infra.
+version: 0.2
+
+env:
+  exported-variables:
+    - FAILURE_CATEGORY
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 22
+    commands:
+      - node --version
+      - npm i -g aws-cdk pnpm
+      # 플랫폼 CDK 코드 확보(app-runtime construct 포함). provisioner가 CDK_SOURCE_S3_URI 주입.
+      - |
+        if [ -n "${CDK_SOURCE_S3_URI:-}" ]; then
+          aws s3 cp "${CDK_SOURCE_S3_URI}" ./cdk-src.tgz
+          mkdir -p cdk-src && tar -xzf cdk-src.tgz -C cdk-src
+          cd cdk-src && pnpm install --frozen-lockfile && cd -
+        else
+          echo "CDK_SOURCE_S3_URI 미지정 — 앱 런타임 스택 배포에 플랫폼 CDK 코드가 필요합니다." >&2
+          exit 1
+        fi
+
+  pre_build:
+    commands:
+      - export TABLE_NAME="apphub-${STAGE}-main"
+      - export RUNTIME_STACK="apphub-${STAGE}-app-${APP_ID}-runtime"
+      - export IMAGE_TAG="$(node -pe 'JSON.parse(require("fs").readFileSync("image-tag.json","utf8")).imageTag' 2>/dev/null || echo latest)"
+      - echo "배포 대상 스택=${RUNTIME_STACK}, 이미지 태그=${IMAGE_TAG}"
+      # 최초 배포 여부: CloudFormation 스택 존재 확인(존재하면 갱신=false).
+      - |
+        if aws cloudformation describe-stacks --stack-name "${RUNTIME_STACK}" \
+             --region "${AWS_DEFAULT_REGION}" >/dev/null 2>&1; then
+          export IS_INITIAL="false"
+        else
+          export IS_INITIAL="true"
+        fi
+      - echo "최초 배포 여부(IS_INITIAL)=${IS_INITIAL}"
+      # 앱 레코드 + 프리셋/권한 템플릿 조회 → 컨텍스트 파라미터 조립(env 파일로).
+      #  DDB get-item 결과는 AttributeValue 형태({"S":..},{"N":..},{"M":..},{"L":..},{"BOOL":..})다.
+      #  스칼라(S/N)만 읽던 이전 버전은 schedule/envVars/secretArns/permissionPolicy(전부 Map/List)를
+      #  통째로 누락해 스케줄러 미생성·env/시크릿 미주입(런타임 조용한 손실)을 유발했다(QA F-1/F-2/M-4).
+      #  → AttributeValue를 **재귀 언마샬**(unmarshall)하는 헬퍼 u()로 순수 JS 값으로 변환한 뒤,
+      #    app-params.ts loader가 기대하는 키(schedule/envVars/secretArns/permissionPolicyB64)에
+      #    정확히 맞춰 base64 JSON으로 emit하고 cdk deploy에 조건부 -c 로 전달한다.
+      - |
+        node - <<'NODE' > /tmp/app-ctx.env
+        const { execSync } = require("node:child_process");
+        const region = process.env.AWS_DEFAULT_REGION;
+        const table = process.env.TABLE_NAME;
+        const appId = process.env.APP_ID;
+        // DDB AttributeValue → 순수 JS 값 재귀 언마샬(S/N/BOOL/NULL/M/L/SS/NS 지원).
+        const u = (av) => {
+          if (av == null || typeof av !== "object") return av;
+          if ("S" in av) return av.S;
+          if ("N" in av) return Number(av.N);
+          if ("BOOL" in av) return av.BOOL;
+          if ("NULL" in av) return null;
+          if ("M" in av) { const o = {}; for (const [k, v] of Object.entries(av.M)) o[k] = u(v); return o; }
+          if ("L" in av) return av.L.map(u);
+          if ("SS" in av) return av.SS;
+          if ("NS" in av) return av.NS.map(Number);
+          return av;
+        };
+        // 아이템 전체를 언마샬해 순수 객체로 얻는다(없으면 {}).
+        const getItem = (key) => {
+          const raw = JSON.parse(execSync(
+            `aws dynamodb get-item --region ${region} --table-name ${table} --key '${JSON.stringify(key)}' --output json`
+          ).toString() || "{}").Item;
+          if (!raw) return {};
+          const o = {}; for (const [k, v] of Object.entries(raw)) o[k] = u(v); return o;
+        };
+        const app = getItem({ PK: { S: `APP#${appId}` }, SK: { S: "META" } });
+        const preset = getItem({ PK: { S: "CONFIG" }, SK: { S: `PRESET#${app.presetId ?? ""}` } });
+        const perm = getItem({ PK: { S: "CONFIG" }, SK: { S: `PERM#${app.permissionTemplateId ?? ""}` } });
+        const str = (v) => (v == null ? "" : String(v));
+        const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : Number(v) || 0);
+        // 스칼라 컨텍스트(app-params.ts ctxString/ctxNumber/ctxBool 소비).
+        const scalars = {
+          appId,
+          subdomain: str(app.subdomain),
+          scheme: str(app.scheme),
+          imageTag: str(process.env.IMAGE_TAG),
+          rulePriority: num(app.rulePriority),
+          cpu: num(preset.cpu), memory: num(preset.memory),
+          minCount: num(preset.minCount), maxCount: num(preset.maxCount),
+          scaleMetric: str(preset.scaleMetric) || "cpu",
+          scaleThreshold: num(preset.scaleThreshold) || 70,
+          sleepMode: str(app.sleepMode) || "always-on",
+          cognitoProtect: app.cognitoProtect === true || str(app.cognitoProtect) === "true",
+          isInitialDeploy: process.env.IS_INITIAL === "true",
+        };
+        const emit = (k, v) => process.stdout.write(`export CTX_${k}=${JSON.stringify(str(v))}\n`);
+        for (const [k, v] of Object.entries(scalars)) emit(k, v);
+        // JSON 컨텍스트(Map/List) — base64 JSON으로(셸 인용 안전, ctxJsonOpt가 base64 자동 판별).
+        //  app-params.ts loader 키와 1:1: schedule / envVars / secretArns / permissionPolicyB64.
+        const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64");
+        const emitJson = (k, o) => process.stdout.write(`export CTX_${k}=${b64(o)}\n`);
+        // schedule: sleepMode=schedule일 때만 유효({startTime,stopTime,days,timezone}). 없으면 미emit.
+        if (scalars.sleepMode === "schedule" && app.schedule && typeof app.schedule === "object") {
+          emitJson("scheduleB64", app.schedule);
+        }
+        // envVars: 평문 문자열맵. 값이 있을 때만 emit(빈 객체는 기본값과 동일).
+        if (app.envVars && typeof app.envVars === "object" && Object.keys(app.envVars).length > 0) {
+          emitJson("envVarsB64", app.envVars);
+        }
+        // secretArns: {name: SM ARN} 문자열맵(값 아님, ARN만). 있을 때만 emit.
+        if (app.secretArns && typeof app.secretArns === "object" && Object.keys(app.secretArns).length > 0) {
+          emitJson("secretArnsB64", app.secretArns);
+        }
+        // permissionPolicy: IAM 정책 문서(Map). 태스크 역할 인라인 정책. 있을 때만 emit.
+        if (perm.policyDocument && typeof perm.policyDocument === "object") {
+          emitJson("permissionPolicyB64", perm.policyDocument);
+        }
+        NODE
+      - cat /tmp/app-ctx.env
+      - . /tmp/app-ctx.env
+
+  build:
+    commands:
+      - |
+        set +e
+        cd cdk-src/infra
+        cdk deploy "${RUNTIME_STACK}" --require-approval never --region "${AWS_DEFAULT_REGION}" \
+          -c stage="${STAGE}" \
+          -c appId="${CTX_appId}" \
+          -c appStackKind=runtime \
+          -c subdomain="${CTX_subdomain}" \
+          -c scheme="${CTX_scheme}" \
+          -c imageTag="${CTX_imageTag}" \
+          -c rulePriority="${CTX_rulePriority}" \
+          -c cpu="${CTX_cpu}" -c memory="${CTX_memory}" \
+          -c minCount="${CTX_minCount}" -c maxCount="${CTX_maxCount}" \
+          -c scaleMetric="${CTX_scaleMetric}" -c scaleThreshold="${CTX_scaleThreshold}" \
+          -c sleepMode="${CTX_sleepMode}" \
+          -c cognitoProtect="${CTX_cognitoProtect}" \
+          -c isInitialDeploy="${CTX_isInitialDeploy}" \
+          ${CTX_scheduleB64:+-c schedule="${CTX_scheduleB64}"} \
+          ${CTX_envVarsB64:+-c envVars="${CTX_envVarsB64}"} \
+          ${CTX_secretArnsB64:+-c secretArns="${CTX_secretArnsB64}"} \
+          ${CTX_permissionPolicyB64:+-c permissionPolicyB64="${CTX_permissionPolicyB64}"}
+        DEPLOY_RC=$?
+        set -e
+        if [ "${DEPLOY_RC}" != "0" ]; then
+          export FAILURE_CATEGORY="DEPLOY_FAILED"
+          echo "cdk deploy 실패 — CloudFormation 롤백으로 이전 버전 유지" >&2
+          exit 1
+        fi
+
+  post_build:
+    commands:
+      - echo "app-runtime 배포 완료: ${RUNTIME_STACK} (이미지 ${IMAGE_TAG})"

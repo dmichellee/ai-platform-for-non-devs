@@ -1,0 +1,13 @@
+{
+  "name": "sample-build-error",
+  "version": "1.0.0",
+  "private": true,
+  "description": "의도적 빌드 실패 픽스처 — 존재할 수 없는 의존성 버전으로 npm ci를 깨뜨린다.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "this-package-does-not-exist-apphub-e2e": "0.0.0-nonexistent"
+  }
+}

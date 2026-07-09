@@ -1,0 +1,224 @@
+/**
+ * API 클라이언트 인터페이스 + HTTP 구현.
+ * 응답 봉투({data} / {data:{items,nextToken}} / {error})를 여기서 언랩한다.
+ * 계약(api-contract.md)에 정의된 엔드포인트만 노출한다.
+ */
+import type {
+  AdminSettings,
+  AlbRegistry,
+  App,
+  ComputePreset,
+  CreateAppRequest,
+  Deployment,
+  ListEnvelope,
+  LogEvent,
+  LogsEnvelope,
+  PatchAppRequest,
+  PermissionTemplate,
+  PlatformUser,
+  Provider,
+  RepoConnection,
+  SingleEnvelope,
+} from "./types.js";
+
+/** 계약 에러 봉투를 던지는 오류. code로 분기, message는 그대로 노출 가능. */
+export class ApiError extends Error {
+  readonly code: string;
+  readonly httpStatus: number;
+  constructor(code: string, message: string, httpStatus: number) {
+    super(message);
+    this.name = "ApiError";
+    this.code = code;
+    this.httpStatus = httpStatus;
+  }
+}
+
+export interface ApiClient {
+  // 앱
+  listApps(): Promise<App[]>;
+  getApp(appId: string): Promise<App>;
+  createApp(body: CreateAppRequest): Promise<App>;
+  patchApp(appId: string, body: PatchAppRequest): Promise<App>;
+  deleteApp(appId: string): Promise<{ appId: string; status: "DELETING" }>;
+  // 배포
+  deploy(appId: string): Promise<Deployment>;
+  listDeployments(appId: string, limit?: number): Promise<Deployment[]>;
+  rollback(appId: string, deploymentId: string): Promise<Deployment>;
+  // 로그
+  getLogs(appId: string, opts?: { limit?: number; nextToken?: string; startTime?: number }): Promise<{ events: LogEvent[]; nextToken?: string }>;
+  // 연결
+  listConnections(): Promise<RepoConnection[]>;
+  createConnection(provider: Provider, displayName: string): Promise<RepoConnection>;
+  deleteConnection(connId: string): Promise<void>;
+  // 관리자
+  adminGetSettings(): Promise<AdminSettings>;
+  adminPutSettings(body: Omit<AdminSettings, "updatedAt">): Promise<AdminSettings>;
+  adminListPresets(): Promise<ComputePreset[]>;
+  adminCreatePreset(body: Partial<ComputePreset>): Promise<ComputePreset>;
+  adminUpdatePreset(presetId: string, body: Partial<ComputePreset>): Promise<ComputePreset>;
+  adminDeletePreset(presetId: string): Promise<void>;
+  adminListPermTemplates(): Promise<PermissionTemplate[]>;
+  adminCreatePermTemplate(body: { displayName: string; policyDocument: object }): Promise<PermissionTemplate>;
+  adminUpdatePermTemplate(permId: string, body: { displayName?: string; policyDocument?: object }): Promise<PermissionTemplate>;
+  adminDeletePermTemplate(permId: string): Promise<void>;
+  adminListUsers(): Promise<PlatformUser[]>;
+  adminInviteUser(email: string, group?: "admin" | "user"): Promise<{ username: string; email: string; group: string }>;
+  adminPatchUser(username: string, body: { group?: string; enabled?: boolean }): Promise<{ username: string }>;
+  adminListAllApps(status?: string): Promise<App[]>;
+  adminAlbRegistry(): Promise<AlbRegistry[]>;
+}
+
+type TokenProvider = () => string | null;
+
+export class HttpApiClient implements ApiClient {
+  private readonly baseUrl: string;
+  private readonly getToken: TokenProvider;
+
+  constructor(baseUrl: string, getToken: TokenProvider) {
+    this.baseUrl = baseUrl.replace(/\/$/, "");
+    this.getToken = getToken;
+  }
+
+  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json; charset=utf-8",
+    };
+    const token = this.getToken();
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
+    const init: RequestInit = { method, headers };
+    if (body !== undefined) init.body = JSON.stringify(body);
+    const res = await fetch(`${this.baseUrl}${path}`, init);
+
+    if (res.status === 204) return undefined as T;
+
+    let json: unknown = null;
+    const text = await res.text();
+    if (text) {
+      try {
+        json = JSON.parse(text);
+      } catch {
+        throw new ApiError("INTERNAL_ERROR", "응답을 해석하지 못했어요.", res.status);
+      }
+    }
+
+    if (!res.ok) {
+      const err = (json as { error?: { code?: string; message?: string } })?.error;
+      throw new ApiError(
+        err?.code ?? (res.status === 401 ? "UNAUTHENTICATED" : "INTERNAL_ERROR"),
+        err?.message ?? "요청을 처리하지 못했어요.",
+        res.status,
+      );
+    }
+    return json as T;
+  }
+
+  private async single<T>(method: string, path: string, body?: unknown): Promise<T> {
+    const env = await this.request<SingleEnvelope<T>>(method, path, body);
+    return env.data;
+  }
+
+  private async list<T>(method: string, path: string, body?: unknown): Promise<T[]> {
+    const env = await this.request<ListEnvelope<T>>(method, path, body);
+    return env.data.items;
+  }
+
+  // 앱
+  listApps(): Promise<App[]> {
+    return this.list<App>("GET", "/apps");
+  }
+  getApp(appId: string): Promise<App> {
+    return this.single<App>("GET", `/apps/${appId}`);
+  }
+  createApp(b: CreateAppRequest): Promise<App> {
+    return this.single<App>("POST", "/apps", b);
+  }
+  patchApp(appId: string, b: PatchAppRequest): Promise<App> {
+    return this.single<App>("PATCH", `/apps/${appId}`, b);
+  }
+  deleteApp(appId: string): Promise<{ appId: string; status: "DELETING" }> {
+    return this.single("DELETE", `/apps/${appId}`);
+  }
+
+  // 배포
+  deploy(appId: string): Promise<Deployment> {
+    return this.single<Deployment>("POST", `/apps/${appId}/deploy`);
+  }
+  listDeployments(appId: string, limit = 20): Promise<Deployment[]> {
+    return this.list<Deployment>("GET", `/apps/${appId}/deployments?limit=${limit}`);
+  }
+  rollback(appId: string, deploymentId: string): Promise<Deployment> {
+    return this.single<Deployment>("POST", `/apps/${appId}/rollback`, { deploymentId });
+  }
+
+  // 로그
+  async getLogs(
+    appId: string,
+    opts?: { limit?: number; nextToken?: string; startTime?: number },
+  ): Promise<{ events: LogEvent[]; nextToken?: string }> {
+    const q = new URLSearchParams();
+    q.set("limit", String(opts?.limit ?? 100));
+    if (opts?.nextToken) q.set("nextToken", opts.nextToken);
+    if (opts?.startTime) q.set("startTime", String(opts.startTime));
+    const env = await this.request<LogsEnvelope>("GET", `/apps/${appId}/logs?${q.toString()}`);
+    return env.data;
+  }
+
+  // 연결
+  listConnections(): Promise<RepoConnection[]> {
+    return this.list<RepoConnection>("GET", "/connections");
+  }
+  createConnection(provider: Provider, displayName: string): Promise<RepoConnection> {
+    return this.single<RepoConnection>("POST", "/connections", { provider, displayName });
+  }
+  async deleteConnection(connId: string): Promise<void> {
+    await this.request<void>("DELETE", `/connections/${connId}`);
+  }
+
+  // 관리자
+  adminGetSettings(): Promise<AdminSettings> {
+    return this.single<AdminSettings>("GET", "/admin/settings");
+  }
+  adminPutSettings(b: Omit<AdminSettings, "updatedAt">): Promise<AdminSettings> {
+    return this.single<AdminSettings>("PUT", "/admin/settings", b);
+  }
+  adminListPresets(): Promise<ComputePreset[]> {
+    return this.list<ComputePreset>("GET", "/admin/presets");
+  }
+  adminCreatePreset(b: Partial<ComputePreset>): Promise<ComputePreset> {
+    return this.single<ComputePreset>("POST", "/admin/presets", b);
+  }
+  adminUpdatePreset(presetId: string, b: Partial<ComputePreset>): Promise<ComputePreset> {
+    return this.single<ComputePreset>("PUT", `/admin/presets/${presetId}`, b);
+  }
+  async adminDeletePreset(presetId: string): Promise<void> {
+    await this.request<void>("DELETE", `/admin/presets/${presetId}`);
+  }
+  adminListPermTemplates(): Promise<PermissionTemplate[]> {
+    return this.list<PermissionTemplate>("GET", "/admin/permission-templates");
+  }
+  adminCreatePermTemplate(b: { displayName: string; policyDocument: object }): Promise<PermissionTemplate> {
+    return this.single<PermissionTemplate>("POST", "/admin/permission-templates", b);
+  }
+  adminUpdatePermTemplate(permId: string, b: { displayName?: string; policyDocument?: object }): Promise<PermissionTemplate> {
+    return this.single<PermissionTemplate>("PUT", `/admin/permission-templates/${permId}`, b);
+  }
+  async adminDeletePermTemplate(permId: string): Promise<void> {
+    await this.request<void>("DELETE", `/admin/permission-templates/${permId}`);
+  }
+  adminListUsers(): Promise<PlatformUser[]> {
+    return this.list<PlatformUser>("GET", "/admin/users");
+  }
+  adminInviteUser(email: string, group?: "admin" | "user"): Promise<{ username: string; email: string; group: string }> {
+    return this.single("POST", "/admin/users", group ? { email, group } : { email });
+  }
+  adminPatchUser(username: string, b: { group?: string; enabled?: boolean }): Promise<{ username: string }> {
+    return this.single("PATCH", `/admin/users/${username}`, b);
+  }
+  adminListAllApps(status?: string): Promise<App[]> {
+    return this.list<App>("GET", status ? `/admin/apps?status=${status}` : "/admin/apps");
+  }
+  adminAlbRegistry(): Promise<AlbRegistry[]> {
+    return this.list<AlbRegistry>("GET", "/admin/alb-registry");
+  }
+}

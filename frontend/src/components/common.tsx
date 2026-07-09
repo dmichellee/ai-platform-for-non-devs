@@ -1,0 +1,223 @@
+/**
+ * 공통 소품 — 상단 바, 모달, 스켈레톤, 빈 상태, 토글 스위치, 에러 배너.
+ * 이모지 금지 → 전부 Lucide.
+ */
+import type { ReactNode } from "react";
+import { AlertTriangle, Info, LayoutGrid, LogOut, Plug, ShieldCheck, X } from "lucide-react";
+import { ThemeToggle } from "./ThemeToggle.js";
+import { useNavigate, useRoute } from "../lib/router.js";
+import { useAuth } from "../auth/AuthContext.js";
+import type { ApiError } from "../lib/api.js";
+import { errorFallbackMessage } from "../lib/labels.js";
+
+export function BrandMark({ size = 30 }: { size?: number }): JSX.Element {
+  return (
+    <span
+      className="mark"
+      aria-hidden="true"
+      style={{ width: size, height: size, borderRadius: size / 3.3 }}
+    >
+      <LayoutGrid size={Math.round(size * 0.56)} strokeWidth={2} />
+    </span>
+  );
+}
+
+/** 사용자 화면 상단 바 (로고 · 메뉴 · 앱 개수 · 테마 · 로그아웃) */
+export function TopBar({
+  userInitial,
+  appCount,
+  quota,
+  onLogout,
+}: {
+  userInitial: string;
+  appCount?: number | undefined;
+  quota?: number | undefined;
+  onLogout: () => void;
+}): JSX.Element {
+  const nav = useNavigate();
+  const route = useRoute();
+  const { isAdmin } = useAuth();
+  const isDash = route.path === "/" || route.segments[0] === "apps";
+  const isConn = route.segments[0] === "connections";
+  return (
+    <div className="app-topbar">
+      <button
+        type="button"
+        className="logo"
+        onClick={() => nav("/")}
+        style={{ background: "transparent", border: 0 }}
+      >
+        <BrandMark />
+        AppHub
+      </button>
+      <div className="spacer" />
+      <button
+        type="button"
+        className={`topbar-link ${isDash ? "active" : ""}`}
+        onClick={() => nav("/")}
+      >
+        내 앱
+      </button>
+      <button
+        type="button"
+        className={`topbar-link ${isConn ? "active" : ""}`}
+        onClick={() => nav("/connections")}
+      >
+        <span className="row" style={{ gap: 6 }}>
+          <Plug size={15} strokeWidth={2} className="icon" />
+          저장소 연결
+        </span>
+      </button>
+      {isAdmin && (
+        <button
+          type="button"
+          className="topbar-link admin"
+          onClick={() => nav("/admin")}
+          title="관리자 페이지"
+        >
+          <span className="row" style={{ gap: 6 }}>
+            <ShieldCheck size={15} strokeWidth={2} className="icon" />
+            관리자
+          </span>
+        </button>
+      )}
+      {appCount !== undefined && quota !== undefined && (
+        <span className="chip">
+          내 앱 {appCount} / {quota}
+        </span>
+      )}
+      <ThemeToggle />
+      <button
+        type="button"
+        className="row-act"
+        aria-label="로그아웃"
+        title="로그아웃"
+        onClick={onLogout}
+        style={{ padding: 6 }}
+      >
+        <LogOut size={18} strokeWidth={2} className="icon" />
+      </button>
+      <span className="avatar" aria-hidden="true">
+        {userInitial}
+      </span>
+    </div>
+  );
+}
+
+export function Modal({
+  title,
+  children,
+  onClose,
+  sharp = false,
+}: {
+  title: string;
+  children: ReactNode;
+  onClose: () => void;
+  sharp?: boolean;
+}): JSX.Element {
+  return (
+    <div className="scrim" onClick={onClose} role="presentation">
+      <div
+        className={`modal ${sharp ? "sharp" : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="row" style={{ justifyContent: "space-between", marginBottom: 12 }}>
+          <h3 style={{ margin: 0 }}>{title}</h3>
+          <button type="button" className="row-act" aria-label="닫기" onClick={onClose}>
+            <X size={18} className="icon" />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+export function Skeleton({ height = 120, count = 1 }: { height?: number; count?: number }): JSX.Element {
+  return (
+    <div className="stack" aria-hidden="true">
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} className="skeleton" style={{ height }} />
+      ))}
+    </div>
+  );
+}
+
+export function EmptyState({
+  icon,
+  title,
+  desc,
+  action,
+}: {
+  icon: ReactNode;
+  title: string;
+  desc?: string;
+  action?: ReactNode;
+}): JSX.Element {
+  return (
+    <div className="empty">
+      <div className="big">{icon}</div>
+      <div style={{ fontWeight: 700, fontSize: 16, color: "var(--on-surface)" }}>{title}</div>
+      {desc && <p style={{ marginTop: 6 }}>{desc}</p>}
+      {action && <div className="mt4">{action}</div>}
+    </div>
+  );
+}
+
+export function ErrorNotice({ error }: { error: ApiError }): JSX.Element {
+  // 계약: message는 그대로 노출 가능. 비어 있으면 code 기반 폴백.
+  const msg = error.message || errorFallbackMessage(error.code);
+  return (
+    <div className="notice error" role="alert">
+      <AlertTriangle size={18} className="icon" />
+      <div>{msg}</div>
+    </div>
+  );
+}
+
+export function InfoNotice({ children }: { children: ReactNode }): JSX.Element {
+  return (
+    <div className="notice info">
+      <Info size={18} className="icon" />
+      <div>{children}</div>
+    </div>
+  );
+}
+
+export function Toggle({
+  on,
+  onChange,
+  label,
+}: {
+  on: boolean;
+  onChange: (v: boolean) => void;
+  label: string;
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      className={`switch ${on ? "on" : ""}`}
+      onClick={() => onChange(!on)}
+    >
+      <span className="knob" aria-hidden="true" />
+    </button>
+  );
+}
+
+/** 상대 시간 (KO). */
+export function relTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return "방금 전";
+  if (min < 60) return `${min}분 전`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}시간 전`;
+  const day = Math.floor(hr / 24);
+  return `${day}일 전`;
+}

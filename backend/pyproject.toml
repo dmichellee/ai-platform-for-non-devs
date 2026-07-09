@@ -1,0 +1,37 @@
+[project]
+name = "apphub-backend"
+version = "0.1.0"
+description = "AppHub 컨트롤 플레인 백엔드 (Lambda API 핸들러 + Dockerfile 검증기). Python 3.13, 순수 boto3."
+requires-python = ">=3.13"
+# 런타임 의존성 없음 — boto3/botocore는 Lambda(PYTHON_3_13) 런타임에 기본 포함.
+# 순수 boto3 원칙(D-M8): 번들/레이어 불필요. 배포 자산에 서드파티 패키지를 싣지 않는다.
+dependencies = []
+
+[dependency-groups]
+# dev 전용 — Lambda 자산에는 포함되지 않는다(테스트/타입 점검용).
+dev = [
+    "boto3>=1.35",
+    "botocore>=1.35",
+    "moto[dynamodb]>=5.0",
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["app", "tests"]
+
+[tool.ruff.lint]
+# 내부 로컬 변수 snake_case 허용, DDB/API 경계 키는 camelCase 유지(D-M8) → N806/N815 등 완화하지 않되
+# camelCase 딕셔너리 키는 리터럴이라 규칙 대상 아님. 기본 룰셋만.
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]
+
+[tool.uv]
+package = false

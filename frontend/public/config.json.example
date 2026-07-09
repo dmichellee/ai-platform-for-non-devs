@@ -1,0 +1,10 @@
+{
+  "_comment": "deploy.sh가 stack-outputs(platform)로 이 파일을 생성해 SPA 버킷에 config.json 으로 업로드한다. mock=false면 실서비스.",
+  "apiUrl": "https://REPLACE.execute-api.ap-northeast-2.amazonaws.com/dev",
+  "userPoolId": "ap-northeast-2_REPLACE",
+  "userPoolClientId": "REPLACE_SPA_CLIENT_ID",
+  "cognitoDomain": "apphub-dev-ACCOUNT.auth.ap-northeast-2.amazoncognito.com",
+  "region": "ap-northeast-2",
+  "stage": "dev",
+  "mock": false
+}

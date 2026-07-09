@@ -1,0 +1,23 @@
+{
+  "enabled": true,
+  "name": "배포 준비 자기점검",
+  "description": "저장 또는 수동 실행 시, 이 앱이 사내 배포 플랫폼(AppHub)의 배포 표준을 만족하는지 점검하고 미비점을 수정 제안한다. Dockerfile 존재/EXPOSE 8080/허용 베이스 이미지, GET /health 라우트, 하드코딩된 시크릿을 검사한다.",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "Dockerfile",
+      "**/Dockerfile",
+      "**/*.js",
+      "**/*.ts",
+      "**/*.py",
+      "package.json",
+      "requirements.txt",
+      "pyproject.toml"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "이 앱이 사내 배포 플랫폼(AppHub) 배포 표준을 만족하는지 점검하라. steering의 deployment-standard.md를 기준으로 다음을 확인하고, 문제가 있으면 사용자에게 구체적 수정안을 제시하라(자동 수정은 사용자 확인 후에만).\n\n1) Dockerfile 존재: 레포 루트에 Dockerfile이 있는가? 없으면 생성 제안.\n2) 포트: Dockerfile에 'EXPOSE 8080'이 있는가? 앱 코드가 환경변수 PORT(기본 8080)에서 리슨하는가? 다른 포트(예: 3000)를 쓰면 8080으로 교정 제안.\n3) 베이스 이미지: FROM이 허용된 공식 이미지(예: public.ecr.aws/docker/library/node:22-slim, python:3.12-slim)인가?\n4) 금지 항목: --privileged, /var/run/docker.sock, --network host, --cap-add, 호스트 경로 바인드 마운트가 없는가?\n5) non-root: Dockerfile에 USER 지시자로 non-root 실행이 설정됐는가?(없으면 권장)\n6) 헬스체크: 앱에 GET /health가 있고 인증 없이 200을 반환하는가? 없으면 추가 제안.\n7) 하드코딩 시크릿: API 키/비밀번호/토큰이 코드에 하드코딩됐는가? 있으면 환경변수로 옮기고 README에 목록화 제안.\n8) 로그/무상태: 파일 로그·로컬 영속 저장이 있으면 표준출력/외부저장소로 전환 제안.\n\n최종 판정은 플랫폼의 배포 전 검증이 담당하므로, 이 점검은 '미리 걸러주는' 보조 수단임을 사용자에게 알린다. 이상이 없으면 '배포 표준 점검 통과'라고 간단히 보고한다."
+  }
+}

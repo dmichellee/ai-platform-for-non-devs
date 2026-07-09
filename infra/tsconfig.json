@@ -1,0 +1,19 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "verbatimModuleSyntax": false,
+    "types": ["node"],
+    "outDir": "dist",
+    "rootDir": ".",
+    "lib": ["ES2022"],
+    // aws-cdk-lib의 IVpc는 `vpnGatewayId?: string`(optional)로 선언되지만 구체 Vpc의
+    //  getter는 `string | undefined`를 반환한다. base의 exactOptionalPropertyTypes:true 하에서는
+    //  이 둘이 비호환이라 구체 Vpc → IVpc props 대입이 컴파일 실패한다(라이브러리 타입 마찰).
+    //  CDK 코드가 사는 infra 패키지에 한해 이 옵션만 완화한다(다른 패키지는 base 유지).
+    "exactOptionalPropertyTypes": false
+  },
+  "include": ["bin/**/*.ts", "lib/**/*.ts", "test/**/*.ts"],
+  "exclude": ["node_modules", "cdk.out", "dist"]
+}

@@ -1,0 +1,95 @@
+# provisioner CodeBuild — 앱 스택 원격 배포 (DESIGN.md 3.2 단계 2 / 3.1 provisioner)
+#
+# 계약(_workspace/contracts/buildspec-contract.md 6장 미해결 자산 주입 D-M4-05):
+#  ProvisionApp 상태 기계가 이 프로젝트를 StartBuild 하며 아래 env를 override로 주입한다:
+#    APP_ID, STAGE, APP_STACK_KIND(pipeline|runtime), PROVIDER, REPO_URL, BRANCH,
+#    AUTO_DEPLOY, CONNECTION_ARN(선택)
+#  프로젝트 레벨 고정 env(platform-stack이 설정):
+#    AWS_ACCOUNT_ID, AWS_DEFAULT_REGION, TABLE_NAME,
+#    CDK_SOURCE_S3_URI  — 플랫폼 CDK tarball(app-* construct 포함) S3 위치
+#    VALIDATOR_S3_URI   — Dockerfile 검증기 번들 S3 위치
+#      → 이 두 값을 app-pipeline 스택 컨텍스트로 전달해, 생성되는 CodeBuild #1/#2 프로젝트의
+#        env(VALIDATOR_S3_URI / CDK_SOURCE_S3_URI)로 주입한다(D-M4-05 신뢰 경계 충족).
+#
+# 동작: 플랫폼 CDK 코드를 S3에서 받아 `cdk deploy apphub-{stage}-app-{APP_ID}-{APP_STACK_KIND}`.
+#   무거운 작업(빌드/이미지)은 앱 파이프라인이 하고, 이 프로젝트는 스택 생성/갱신만 한다.
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 22
+    commands:
+      - node --version
+      - npm i -g aws-cdk pnpm
+      # 플랫폼 CDK 코드 tarball 확보(app-pipeline/app-runtime construct 포함).
+      - |
+        if [ -z "${CDK_SOURCE_S3_URI:-}" ]; then
+          echo "CDK_SOURCE_S3_URI 미지정 — 플랫폼이 CDK 소스를 업로드해야 합니다(deploy.sh)." >&2
+          exit 1
+        fi
+        if [ -z "${VALIDATOR_S3_URI:-}" ]; then
+          echo "VALIDATOR_S3_URI 미지정 — 플랫폼이 검증기 번들을 업로드해야 합니다(deploy.sh)." >&2
+          exit 1
+        fi
+        aws s3 cp "${CDK_SOURCE_S3_URI}" ./cdk-src.tgz
+        mkdir -p cdk-src && tar -xzf cdk-src.tgz -C cdk-src
+        cd cdk-src && pnpm install --frozen-lockfile && cd -
+
+  pre_build:
+    commands:
+      - export APP_STACK_KIND="${APP_STACK_KIND:-pipeline}"
+      - export STACK_NAME="apphub-${STAGE}-app-${APP_ID}-${APP_STACK_KIND}"
+      - echo "대상 스택=${STACK_NAME} (kind=${APP_STACK_KIND})"
+      # app-pipeline 스택은 DDB App 레코드에서 provider/repo/branch/autoDeploy를 읽어 컨텍스트로 조립.
+      #  (deploy.yml과 동일 패턴 — 단일 원본은 buildspec-contract 4장)
+      - |
+        if [ "${APP_STACK_KIND}" = "pipeline" ]; then
+          node - <<'NODE' > /tmp/pipe-ctx.env
+          const { execSync } = require("node:child_process");
+          const region = process.env.AWS_DEFAULT_REGION;
+          const table = process.env.TABLE_NAME;
+          const appId = process.env.APP_ID;
+          const ddb = (key) => JSON.parse(execSync(
+            `aws dynamodb get-item --region ${region} --table-name ${table} --key '${JSON.stringify(key)}' --output json`
+          ).toString() || "{}").Item || {};
+          const S = (v) => (v && v.S) || "";
+          const B = (v) => (v && typeof v.BOOL === "boolean") ? v.BOOL : (S(v) === "true");
+          const app = ddb({ PK: { S: `APP#${appId}` }, SK: { S: "META" } });
+          const emit = (k, v) => process.stdout.write(`export CTX_${k}=${JSON.stringify(String(v))}\n`);
+          emit("provider", S(app.provider) || process.env.PROVIDER || "codecommit");
+          emit("repoUrl", S(app.repoUrl) || process.env.REPO_URL || "");
+          emit("branch", S(app.branch) || process.env.BRANCH || "main");
+          emit("autoDeployEnabled", B(app.autoDeployEnabled));
+          if (app.connectionArn && app.connectionArn.S) emit("connectionArn", app.connectionArn.S);
+          NODE
+          cat /tmp/pipe-ctx.env
+          . /tmp/pipe-ctx.env
+        fi
+
+  build:
+    commands:
+      - |
+        cd cdk-src/infra
+        if [ "${APP_STACK_KIND}" = "pipeline" ]; then
+          cdk deploy "${STACK_NAME}" --require-approval never --region "${AWS_DEFAULT_REGION}" \
+            -c stage="${STAGE}" \
+            -c appId="${APP_ID}" \
+            -c appStackKind=pipeline \
+            -c provider="${CTX_provider}" \
+            -c repoUrl="${CTX_repoUrl}" \
+            -c branch="${CTX_branch}" \
+            -c autoDeployEnabled="${CTX_autoDeployEnabled}" \
+            -c validatorS3Uri="${VALIDATOR_S3_URI}" \
+            -c cdkSourceS3Uri="${CDK_SOURCE_S3_URI}" \
+            ${CTX_connectionArn:+-c connectionArn="${CTX_connectionArn}"}
+        else
+          # runtime 배포는 앱 파이프라인의 Deploy 스테이지(deploy.yml)가 담당하지만,
+          #  버전 되돌리기(롤백, DESIGN 9)는 provisioner가 이미지 태그만 바꿔 직접 배포할 수 있다.
+          echo "runtime 배포는 app-pipeline Deploy 스테이지(deploy.yml)가 수행합니다." >&2
+          exit 1
+        fi
+
+  post_build:
+    commands:
+      - echo "provisioner 완료: ${STACK_NAME}"

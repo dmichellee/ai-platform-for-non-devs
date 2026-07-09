@@ -1,0 +1,25 @@
+{
+  "name": "@apphub/infra",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc --build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "synth": "cdk synth -c stage=dev",
+    "synth:ci": "node scripts/synth-check.mjs",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.177.0",
+    "constructs": "^10.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.1",
+    "aws-cdk": "^2.177.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}

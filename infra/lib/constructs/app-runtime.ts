@@ -1,0 +1,395 @@
+import {
+  Duration,
+  RemovalPolicy,
+  aws_applicationautoscaling as appscaling,
+  aws_cloudwatch as cw,
+  aws_ec2 as ec2,
+  aws_ecr as ecr,
+  aws_ecs as ecs,
+  aws_elasticloadbalancingv2 as elbv2,
+  aws_iam as iam,
+  aws_logs as logs,
+  aws_route53 as route53,
+  aws_route53_targets as route53_targets,
+  aws_scheduler as scheduler,
+  aws_secretsmanager as secretsmanager,
+  aws_ssm as ssm,
+} from "aws-cdk-lib";
+import { Construct } from "constructs";
+import { resourcePrefix } from "../config";
+import type { AppRuntimeParams } from "./app-params";
+
+/**
+ * app-runtime — 특정 앱의 **실행체** (apphub-conventions 2장, DESIGN.md 3.1/3.5).
+ *
+ * 포함(전부 앱별 — 앱 삭제 = 이 스택 삭제로 완결):
+ *  - ECS Fargate 태스크 정의(프리셋 cpu/mem 주입) + 서비스
+ *  - Target Group(/health 헬스체크) + 공유 ALB 리스너 규칙(host 기반, priority 파라미터 주입)
+ *  - Route53 레코드(scheme별 public/private zone alias)
+ *  - 앱 태스크 역할(권한 템플릿 정책 주입) + 실행 역할
+ *  - 로그 그룹(retention 30, 스택 삭제 시 함께)
+ *  - EventBridge Scheduler 2개(가동 스케줄 시작/종료)
+ *  - 시크릿은 ECS secrets(환경변수 아님, D8)
+ *  - D16 Cognito 인증 리스너 옵션(cognitoProtect)
+ *
+ * 드리프트 방지(DESIGN 3.5): desiredCount는 최초 생성 시에만 지정, 갱신 배포에선 미지정.
+ * 공유 리소스(VPC/ALB/리스너/SG/hosted zone)는 network SSM에서 읽는다(Export 잠금 방지).
+ */
+export interface AppRuntimeProps {
+  readonly params: AppRuntimeParams;
+}
+
+export class AppRuntime extends Construct {
+  readonly service: ecs.FargateService;
+  readonly targetGroup: elbv2.ApplicationTargetGroup;
+  readonly taskRole: iam.Role;
+  readonly logGroup: logs.LogGroup;
+
+  constructor(scope: Construct, id: string, props: AppRuntimeProps) {
+    super(scope, id);
+
+    const p = props.params;
+    const prefix = resourcePrefix(p.stage);
+    const appPrefix = `${prefix}-app-${p.appId}`;
+    const isInternal = p.scheme === "internal";
+
+    // ── network 공유 리소스 참조 (SSM, Export 아님) ─────────────────────────
+    const netSsm = (key: string): string =>
+      ssm.StringParameter.valueForStringParameter(this, `/apphub/${p.stage}/network/${key}`);
+
+    const vpcId = netSsm("vpc-id");
+    const albDns = netSsm(isInternal ? "internal-alb-dns" : "internet-alb-dns");
+    const albZoneId = netSsm(isInternal ? "internal-alb-canonical-zone-id" : "internet-alb-canonical-zone-id");
+    const listenerArn = netSsm(isInternal ? "internal-https-listener-arn" : "internet-https-listener-arn");
+    const albSgId = netSsm(isInternal ? "internal-alb-sg-id" : "internet-alb-sg-id");
+    const appTaskSgId = netSsm("app-task-sg-id");
+    const hostedZoneId = netSsm(isInternal ? "private-hosted-zone-id" : "public-hosted-zone-id");
+    const appsDomain = ssm.StringParameter.valueForStringParameter(
+      this,
+      `/apphub/${p.stage}/network/apps-domain`,
+    );
+
+    // VPC 참조: 앱 태스크는 PRIVATE_WITH_EGRESS에 배치한다. fromLookup은 계정 접근이 필요해
+    //  CI/테스트 synth를 깨므로, network 스택이 발행한 개별 SSM(AZ·private subnet, 0-indexed)로
+    //  fromVpcAttributes를 명시 배열로 구성한다(list-token 경고 없이 synth 안정, deploy 시점 resolve).
+    //  dev/prod 부트스트랩 VPC는 2 AZ 고정(D-M2-01). 상수 SUBNET_COUNT로 개별 파라미터를 읽는다.
+    const SUBNET_COUNT = 2;
+    const azs: string[] = [];
+    const privateSubnetIds: string[] = [];
+    for (let i = 0; i < SUBNET_COUNT; i++) {
+      privateSubnetIds.push(netSsm(`private-subnet-id-${i}`));
+      azs.push(netSsm(`private-subnet-az-${i}`));
+    }
+    const vpc = ec2.Vpc.fromVpcAttributes(this, "Vpc", {
+      vpcId,
+      availabilityZones: azs,
+      privateSubnetIds,
+    });
+
+    const albSg = ec2.SecurityGroup.fromSecurityGroupId(this, "AlbSg", albSgId, {
+      mutable: false,
+    });
+    // 앱 전용 태스크 SG — 인바운드는 ALB SG 참조로만(D17, CIDR 금지).
+    const taskSg = new ec2.SecurityGroup(this, "TaskSg", {
+      vpc,
+      securityGroupName: `${appPrefix}-task-sg`,
+      description: `App task SG for ${p.appId} - inbound from shared ALB SG only (D17)`,
+      allowAllOutbound: true,
+    });
+    taskSg.connections.allowFrom(albSg, ec2.Port.tcp(8080), "from shared ALB");
+    void appTaskSgId; // 공유 태스크 SG는 참조 대상(네트워크 스택)이며, 앱은 전용 SG를 파생 사용.
+
+    // ── ECS 클러스터(공유 VPC 위, 앱별) ────────────────────────────────────
+    const cluster = new ecs.Cluster(this, "Cluster", {
+      clusterName: `${appPrefix}`,
+      vpc,
+      containerInsightsV2: ecs.ContainerInsights.DISABLED,
+    });
+
+    // ── 로그 그룹 (retention 30, 스택 삭제 시 함께) ─────────────────────────
+    // 경로 규약: /apphub/{stage}/app/{appId} — platform API의 logs:FilterLogEvents 권한 범위와 일치.
+    const logGroup = new logs.LogGroup(this, "Logs", {
+      logGroupName: `/apphub/${p.stage}/app/${p.appId}`,
+      retention: logs.RetentionDays.ONE_MONTH, // 30일 (DESIGN 9)
+      removalPolicy: RemovalPolicy.DESTROY, // 앱 삭제 시 함께 소멸
+    });
+    this.logGroup = logGroup;
+
+    // ── IAM 역할 ──────────────────────────────────────────────────────────
+    // 실행 역할: ECR pull + 로그 write + 시크릿 read(ECS secrets 주입용).
+    const executionRole = new iam.Role(this, "ExecutionRole", {
+      roleName: `${appPrefix}-exec`,
+      assumedBy: new iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
+    });
+    logGroup.grantWrite(executionRole);
+
+    // 태스크 역할: 권한 템플릿 정책 주입(관리자 정의). 없으면 권한 없음(최소 권한, D7).
+    const taskRole = new iam.Role(this, "TaskRole", {
+      roleName: `${appPrefix}-task`,
+      assumedBy: new iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
+      description: `App task role for ${p.appId} (permission template injected)`,
+    });
+    if (p.permissionPolicy && Object.keys(p.permissionPolicy).length > 0) {
+      // 권한 템플릿의 policyDocument(IAM 정책 문서)를 인라인 정책으로 부착.
+      taskRole.attachInlinePolicy(
+        new iam.Policy(this, "PermissionTemplate", {
+          policyName: "permission-template",
+          document: iam.PolicyDocument.fromJson(p.permissionPolicy),
+        }),
+      );
+    }
+    this.taskRole = taskRole;
+
+    // ── 태스크 정의 (프리셋 cpu/mem 주입) ───────────────────────────────────
+    const taskDef = new ecs.FargateTaskDefinition(this, "TaskDef", {
+      family: `${appPrefix}`,
+      cpu: p.cpu,
+      memoryLimitMiB: p.memory,
+      executionRole,
+      taskRole,
+      runtimePlatform: {
+        cpuArchitecture: ecs.CpuArchitecture.X86_64,
+        operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
+      },
+    });
+
+    // 이미지: 앱 pipeline이 push한 ECR 리포(태그=commitSha). 리포명 규약은 app-pipeline과 공유.
+    //  fromEcrRepository를 쓰면 실행 역할에 ECR pull 정책이 자동 부여된다(fromRegistry는 미부여).
+    const ecrRepo = ecr.Repository.fromRepositoryName(this, "Ecr", `${appPrefix}`);
+    const image = ecs.ContainerImage.fromEcrRepository(ecrRepo, p.imageTag);
+
+    // 시크릿: ECS secrets 로 주입(환경변수 아님, D8). Secrets Manager ARN만 참조.
+    const secrets: Record<string, ecs.Secret> = {};
+    let secretIdx = 0;
+    for (const [name, arn] of Object.entries(p.secretArns)) {
+      const sm = secretsmanager.Secret.fromSecretCompleteArn(this, `Secret${secretIdx++}`, arn);
+      sm.grantRead(executionRole);
+      secrets[name] = ecs.Secret.fromSecretsManager(sm);
+    }
+
+    const container = taskDef.addContainer("app", {
+      image,
+      containerName: "app",
+      logging: ecs.LogDrivers.awsLogs({ streamPrefix: "app", logGroup }),
+      environment: {
+        // 컨테이너 계약: 8080 포트(KIRO-STANDARDS C2). PORT도 관례로 주입.
+        PORT: "8080",
+        ...p.envVars,
+      },
+      secrets, // ← 시크릿은 여기(환경변수 아님)
+      portMappings: [{ containerPort: 8080, protocol: ecs.Protocol.TCP }],
+    });
+    void container;
+
+    // ── Fargate 서비스 ──────────────────────────────────────────────────────
+    // desiredCount: 최초 생성 시에만 minCount 지정, 갱신 배포에선 미지정(드리프트 방지, DESIGN 3.5).
+    this.service = new ecs.FargateService(this, "Service", {
+      serviceName: `${appPrefix}`,
+      cluster,
+      taskDefinition: taskDef,
+      securityGroups: [taskSg],
+      // fromVpcAttributes로 만든 VPC는 subnetType selection이 불가하므로 subnet 목록을 직접 지정.
+      vpcSubnets: { subnets: vpc.privateSubnets },
+      ...(p.isInitialDeploy ? { desiredCount: p.minCount } : {}),
+      minHealthyPercent: 100,
+      maxHealthyPercent: 200,
+      circuitBreaker: { rollback: true }, // 배포 실패 시 자동 롤백(이전 버전 유지, DESIGN 3.3)
+      healthCheckGracePeriod: Duration.seconds(60), // C9 기동 60초
+    });
+
+    // ── Target Group (/health 헬스체크) ─────────────────────────────────────
+    this.targetGroup = new elbv2.ApplicationTargetGroup(this, "Tg", {
+      targetGroupName: `${prefix}-app-${p.appId}`.slice(0, 32),
+      vpc,
+      port: 8080,
+      protocol: elbv2.ApplicationProtocol.HTTP,
+      targetType: elbv2.TargetType.IP,
+      targets: [this.service],
+      deregistrationDelay: Duration.seconds(30),
+      healthCheck: {
+        path: "/health", // C3 헬스체크
+        healthyHttpCodes: "200",
+        interval: Duration.seconds(15),
+        timeout: Duration.seconds(5),
+        healthyThresholdCount: 2,
+        unhealthyThresholdCount: 3,
+      },
+    });
+
+    // ── 오토스케일링 (프리셋 min/max + 스케일 기준) ──────────────────────────
+    if (p.maxCount > p.minCount) {
+      const scaling = this.service.autoScaleTaskCount({
+        minCapacity: p.minCount,
+        maxCapacity: p.maxCount,
+      });
+      if (p.scaleMetric === "cpu") {
+        scaling.scaleOnCpuUtilization("CpuScaling", {
+          targetUtilizationPercent: p.scaleThreshold,
+        });
+      } else {
+        // requests 스케일: 공유 ALB를 임포트 리스너로 참조하므로 CDK 그래프가 TG-ALB attach를
+        //  정적으로 인식하지 못한다 → scaleOnRequestCount(L2 편의 메서드)는 TargetGroupNeedsAttachedLoad로
+        //  synth 실패(QA F-3). ALBRequestCountPerTarget predefined metric + resourceLabel을 명시한
+        //  TargetTrackingScalingPolicy를 직접 구성해 attach 정적검증을 우회하면서 실제 요청기반 스케일링을 얻는다.
+        //  resourceLabel = "{ALB full-name}/{TG full-name}" (ALB full-name은 network SSM, TG는 이 construct).
+        const albFullName = netSsm(isInternal ? "internal-alb-full-name" : "internet-alb-full-name");
+        new appscaling.TargetTrackingScalingPolicy(this, "ReqScaling", {
+          scalingTarget: scaling,
+          predefinedMetric: appscaling.PredefinedMetric.ALB_REQUEST_COUNT_PER_TARGET,
+          resourceLabel: `${albFullName}/${this.targetGroup.targetGroupFullName}`,
+          targetValue: p.scaleThreshold,
+        });
+      }
+    }
+
+    // ── 공유 ALB 리스너 규칙 (host 기반, priority 파라미터 주입) ──────────────
+    const listener = elbv2.ApplicationListener.fromApplicationListenerAttributes(this, "Listener", {
+      listenerArn,
+      securityGroup: albSg,
+    });
+    const host = `${p.subdomain}.${appsDomain}`;
+
+    // 규칙 생성: 기본은 forward(앱 TG). D16 cognitoProtect면 아래 escape hatch로
+    //  authenticate-cognito → forward 체인으로 재정의한다.
+    //  (Waker는 잠자기 전환 시 이 액션 체인에서 forward 대상만 Waker TG로 교체 — 인증 유지, DESIGN 3.5)
+    const rule = new elbv2.ApplicationListenerRule(this, "HostRule", {
+      listener,
+      priority: p.rulePriority, // ← DDB 카운터에서 발급받아 주입(자동 채번 금지)
+      conditions: [elbv2.ListenerCondition.hostHeaders([host])],
+      action: elbv2.ListenerAction.forward([this.targetGroup]),
+    });
+
+    // D16: authenticate-cognito 네이티브 액션. CDK L2(authenticateOidc)는 client_secret을 요구해
+    //  Cognito 퍼블릭 클라이언트와 맞지 않으므로 CfnListenerRule escape hatch로 정확히 기술한다.
+    if (p.cognitoProtect) {
+      const userPoolArn = ssm.StringParameter.valueForStringParameter(
+        this,
+        `/apphub/${p.stage}/platform/user-pool-arn`,
+      );
+      const userPoolClientId = ssm.StringParameter.valueForStringParameter(
+        this,
+        `/apphub/${p.stage}/platform/app-auth-client-id`,
+      );
+      const userPoolDomain = ssm.StringParameter.valueForStringParameter(
+        this,
+        `/apphub/${p.stage}/platform/user-pool-domain`,
+      );
+      const cfnRule = rule.node.defaultChild as elbv2.CfnListenerRule;
+      cfnRule.actions = [
+        {
+          type: "authenticate-cognito",
+          order: 1,
+          authenticateCognitoConfig: {
+            userPoolArn,
+            userPoolClientId,
+            userPoolDomain,
+            onUnauthenticatedRequest: "authenticate",
+            scope: "openid",
+          },
+        },
+        {
+          type: "forward",
+          order: 2,
+          targetGroupArn: this.targetGroup.targetGroupArn,
+        },
+      ];
+    }
+
+    // ── Route53 레코드 (scheme별 zone alias) ────────────────────────────────
+    // ALB 실체를 fromLookup 없이 DNS + canonical zone id(둘 다 network SSM)로 alias 대상 구성.
+    //  route53_targets.LoadBalancerTarget은 ILoadBalancerV2 실체를 요구하므로,
+    //  IAliasRecordTarget을 직접 구현해 SSM 토큰 값만으로 A/AAAA alias를 만든다.
+    const zone = route53.HostedZone.fromHostedZoneAttributes(this, "Zone", {
+      hostedZoneId,
+      zoneName: appsDomain,
+    });
+    const albAliasTarget: route53.IAliasRecordTarget = {
+      bind: () => ({ dnsName: albDns, hostedZoneId: albZoneId }),
+    };
+    new route53.ARecord(this, "AliasA", {
+      zone,
+      recordName: p.subdomain,
+      target: route53.RecordTarget.fromAlias(albAliasTarget),
+    });
+    void route53_targets;
+
+    // ── EventBridge Scheduler 2개 (가동 스케줄 — DESIGN 3.5) ─────────────────
+    // 시작 시각: desiredCount=minCount. 종료 시각: desiredCount=0. sleepMode=schedule일 때만.
+    if (p.sleepMode === "schedule" && p.schedule) {
+      const schedulerRole = new iam.Role(this, "SchedulerRole", {
+        roleName: `${appPrefix}-scheduler`,
+        assumedBy: new iam.ServicePrincipal("scheduler.amazonaws.com"),
+      });
+      schedulerRole.addToPolicy(
+        new iam.PolicyStatement({
+          actions: ["ecs:UpdateService"],
+          resources: [this.service.serviceArn],
+        }),
+      );
+
+      const cron = (time: string): string => {
+        const [hh, mm] = time.split(":");
+        const dow = p.schedule!.days.map((d) => d + 1).join(","); // scheduler cron: 1(SUN)~7(SAT)
+        return `cron(${Number(mm)} ${Number(hh)} ? * ${dow} *)`;
+      };
+
+      // 공통 target: ecs:UpdateService (universal target arn = arn:aws:scheduler:::aws-sdk:ecs:updateService)
+      const updateServiceTarget = (desired: number): scheduler.CfnSchedule.TargetProperty => ({
+        arn: "arn:aws:scheduler:::aws-sdk:ecs:updateService",
+        roleArn: schedulerRole.roleArn,
+        input: JSON.stringify({
+          Cluster: cluster.clusterArn,
+          Service: this.service.serviceName,
+          DesiredCount: desired,
+        }),
+      });
+
+      new scheduler.CfnSchedule(this, "StartSchedule", {
+        name: `${appPrefix}-start`,
+        flexibleTimeWindow: { mode: "OFF" },
+        scheduleExpression: cron(p.schedule.startTime),
+        scheduleExpressionTimezone: p.schedule.timezone,
+        target: updateServiceTarget(p.minCount),
+        state: "ENABLED",
+      });
+      new scheduler.CfnSchedule(this, "StopSchedule", {
+        name: `${appPrefix}-stop`,
+        flexibleTimeWindow: { mode: "OFF" },
+        scheduleExpression: cron(p.schedule.stopTime),
+        scheduleExpressionTimezone: p.schedule.timezone,
+        target: updateServiceTarget(0),
+        state: "ENABLED",
+      });
+    }
+
+    // ── 유휴 재중지 알람 (DESIGN 3.5 — 유휴 15분 → 잠자기) ────────────────────
+    // always-on은 잠들지 않는다(제외). on-demand/schedule 앱만 유휴 알람을 만든다.
+    //  알람명 규약: {appPrefix}-idle → network의 공유 idle-sleep EventBridge 규칙이 잡아
+    //  sleep-transition Lambda를 호출한다(alarmName에서 appId 파싱, D-M5-03). 앱 삭제 = 이 알람 삭제.
+    //  지표: 앱 TG의 RequestCountPerTarget(TG+ALB 차원). ALB full name은 network SSM에서 읽는다.
+    if (p.sleepMode !== "always-on") {
+      const albFullName = netSsm(isInternal ? "internal-alb-full-name" : "internet-alb-full-name");
+      const idleMetric = new cw.Metric({
+        namespace: "AWS/ApplicationELB",
+        metricName: "RequestCountPerTarget",
+        dimensionsMap: {
+          TargetGroup: this.targetGroup.targetGroupFullName,
+          LoadBalancer: albFullName,
+        },
+        statistic: "Sum",
+        period: Duration.minutes(5),
+      });
+      new cw.Alarm(this, "IdleAlarm", {
+        alarmName: `${appPrefix}-idle`,
+        alarmDescription: `Idle (no requests) -> sleep transition trigger - ${p.appId}`,
+        metric: idleMetric,
+        // 5분×3 = 15분 연속 요청 0이면 ALARM(DESIGN 3.5: 유휴 15분).
+        threshold: 1,
+        comparisonOperator: cw.ComparisonOperator.LESS_THAN_THRESHOLD,
+        evaluationPeriods: 3,
+        // 데이터 없음(=요청 0, 태스크 유휴)도 유휴로 간주해 ALARM 처리.
+        treatMissingData: cw.TreatMissingData.BREACHING,
+      });
+    }
+  }
+}

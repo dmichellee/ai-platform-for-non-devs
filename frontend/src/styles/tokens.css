@@ -1,0 +1,94 @@
+/* ============================================================
+   AppHub 디자인 토큰 — 사용자 제공 팔레트 (Material 계열)
+   다크가 기본(default). data-theme="light" 로 토글.
+   원본: design-system/apphub/tokens.md, _workspace/design/tone-and-manner.html
+   프론트엔드는 이 토큰만 참조하고 raw hex 직접 사용 금지.
+   ============================================================ */
+:root,
+[data-theme="dark"] {
+  --primary: #bb86fc;
+  --primary-variant: #3700b3;
+  --secondary: #03dac6;
+  --secondary-variant: #03dac6;
+  --bg: #121212;
+  --surface: #1e1e1e; /* elevation overlay 반영 */
+  --surface-2: #232323;
+  --surface-hover: #2a2a2a;
+  --border: #2e2e2e;
+  --border-strong: #3d3d3d;
+  --error: #cf6679;
+  --on-primary: #000000;
+  --on-secondary: #000000;
+  --on-bg: #ffffff;
+  --on-surface: #ffffff;
+  --on-surface-muted: #a0a0a0;
+  --on-surface-subtle: #6e6e6e;
+  --on-error: #000000;
+  --primary-soft: rgba(187, 134, 252, 0.14);
+  --secondary-soft: rgba(3, 218, 198, 0.14);
+  --error-soft: rgba(207, 102, 121, 0.14);
+  --success: #03dac6;
+  --scrim: rgba(0, 0, 0, 0.6);
+  --shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="light"] {
+  --primary: #6200ee;
+  --primary-variant: #3700b3;
+  --secondary: #03dac6;
+  --secondary-variant: #018786;
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #faf9fe;
+  --surface-hover: #f5f3ff;
+  --border: #e2e0ec;
+  --border-strong: #c9c6d6;
+  --error: #b00020;
+  --on-primary: #ffffff;
+  --on-secondary: #000000;
+  --on-bg: #000000;
+  --on-surface: #000000;
+  --on-surface-muted: #5f5b6b;
+  --on-surface-subtle: #8b879a;
+  --on-error: #ffffff;
+  --primary-soft: rgba(98, 0, 238, 0.08);
+  --secondary-soft: rgba(1, 135, 134, 0.1);
+  --error-soft: rgba(176, 0, 32, 0.08);
+  --success: #018786;
+  --scrim: rgba(0, 0, 0, 0.5);
+  --shadow: 0 8px 30px rgba(80, 60, 120, 0.12);
+}
+
+:root {
+  /* radius: 사용자 화면 부드러움 / 관리자 화면 엄격 */
+  --radius-soft: 18px;
+  --radius-soft-lg: 24px;
+  --radius-sharp: 8px;
+  /* spacing scale 4·8·12·16·24·32·48 */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+  --s7: 48px;
+  --font: "Plus Jakarta Sans", -apple-system, sans-serif;
+  --mono: "JetBrains Mono", monospace;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--on-bg);
+  font-family: var(--font);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  transition:
+    background 0.25s ease,
+    color 0.25s ease;
+}
