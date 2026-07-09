@@ -72,27 +72,49 @@ export interface ApiClient {
   adminAlbRegistry(): Promise<AlbRegistry[]>;
 }
 
-type TokenProvider = () => string | null;
+/**
+ * 인증 브릿지 — API 클라이언트가 세션 만료를 스스로 다루도록 AuthContext가 주입한다.
+ * - ensureFreshToken: 요청 직전 유효 토큰 확보(만료 임박이면 조용히 갱신). 없으면 null.
+ * - onUnauthorized: 401 수신 시 호출. 갱신 성공하면 새 토큰(재시도용), 실패면 세션 종료 후 null.
+ */
+export interface AuthBridge {
+  ensureFreshToken: () => Promise<string | null>;
+  onUnauthorized: () => Promise<string | null>;
+}
 
 export class HttpApiClient implements ApiClient {
   private readonly baseUrl: string;
-  private readonly getToken: TokenProvider;
+  private readonly auth: AuthBridge;
 
-  constructor(baseUrl: string, getToken: TokenProvider) {
+  constructor(baseUrl: string, auth: AuthBridge) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
-    this.getToken = getToken;
+    this.auth = auth;
   }
 
-  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  /** 실제 HTTP 왕복 1회. CORS로 위장된 401은 fetch TypeError로 오므로 그것과 구분해 표시한다. */
+  private async fetchOnce<T>(
+    method: string,
+    path: string,
+    token: string | null,
+    body?: unknown,
+  ): Promise<T> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json; charset=utf-8",
     };
-    const token = this.getToken();
     if (token) headers["Authorization"] = `Bearer ${token}`;
 
     const init: RequestInit = { method, headers };
     if (body !== undefined) init.body = JSON.stringify(body);
-    const res = await fetch(`${this.baseUrl}${path}`, init);
+
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}${path}`, init);
+    } catch {
+      // 네트워크 오류. API GW authorizer의 401은 CORS 헤더가 없어 브라우저에서 여기로 온다.
+      // 진짜 장애와 구분이 어려우므로 여기서 곧바로 로그아웃시키지 않는다(과도 로그아웃 방지).
+      // 대신 NETWORK_ERROR로 표시하고, 만료는 선제 확보(ensureFreshToken)가 대부분 걸러낸다.
+      throw new ApiError("NETWORK_ERROR", "연결이 원활하지 않아요. 잠시 후 다시 시도해주세요.", 0);
+    }
 
     if (res.status === 204) return undefined as T;
 
@@ -115,6 +137,21 @@ export class HttpApiClient implements ApiClient {
       );
     }
     return json as T;
+  }
+
+  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+    // 1) 선제 만료 확보 — 만료(임박)면 조용히 갱신, 불가면 null(그대로 진행 → 401 처리로 위임).
+    const token = await this.auth.ensureFreshToken();
+    try {
+      return await this.fetchOnce<T>(method, path, token, body);
+    } catch (e) {
+      // 2) 401(UNAUTHENTICATED)만 갱신+재시도 1회. 그 외 에러는 그대로 던진다.
+      if (e instanceof ApiError && e.code === "UNAUTHENTICATED") {
+        const fresh = await this.auth.onUnauthorized();
+        if (fresh) return this.fetchOnce<T>(method, path, fresh, body);
+      }
+      throw e;
+    }
   }
 
   private async single<T>(method: string, path: string, body?: unknown): Promise<T> {

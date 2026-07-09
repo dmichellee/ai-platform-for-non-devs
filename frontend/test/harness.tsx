@@ -72,7 +72,14 @@ export function renderWithProviders(ui: ReactNode, api?: ApiClient): RenderResul
   const client = api ?? new MockApiClient();
   return render(
     <AuthProvider config={MOCK_CONFIG}>
-      <ApiProvider config={MOCK_CONFIG} getToken={() => "test-token"} client={client}>
+      <ApiProvider
+        config={MOCK_CONFIG}
+        auth={{
+          ensureFreshToken: async () => "test-token",
+          onUnauthorized: async () => null,
+        }}
+        client={client}
+      >
         {ui}
       </ApiProvider>
     </AuthProvider>,

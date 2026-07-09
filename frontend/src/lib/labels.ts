@@ -155,6 +155,10 @@ export function errorFallbackMessage(code?: string): string {
       return "대상을 찾을 수 없어요.";
     case "INVALID_STATE":
       return "지금 상태에서는 이 작업을 할 수 없어요.";
+    case "UNAUTHENTICATED":
+      return "로그인이 만료됐어요. 다시 로그인해주세요.";
+    case "NETWORK_ERROR":
+      return "연결이 원활하지 않아요. 잠시 후 다시 시도해주세요.";
     default:
       return "요청을 처리하지 못했어요. 잠시 후 다시 시도해주세요.";
   }

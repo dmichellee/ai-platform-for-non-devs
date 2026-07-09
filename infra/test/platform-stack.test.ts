@@ -173,6 +173,56 @@ describe("platform 스택", () => {
       // Access-Control-Allow-Origin: * 금지 — 허용 목록에 단독 * 가 있으면 안 된다.
       expect(rendered).not.toContain('"*"');
     });
+
+    describe("Gateway Responses — authorizer 401/403에 CORS 헤더 부착", () => {
+      // 회귀 방지: authorizer가 토큰 만료/부재로 401/403을 게이트웨이 단에서 반환할 때 CORS 헤더가
+      //  없으면 브라우저가 응답 status를 읽지 못하고 "CORS 에러"로 오인 → 프론트가 UNAUTHENTICATED를
+      //  처리할 수 없다. UNAUTHORIZED/ACCESS_DENIED/DEFAULT_4XX/DEFAULT_5XX에 Allow-Origin/Headers를 단다.
+      const EXPECTED_TYPES = ["UNAUTHORIZED", "ACCESS_DENIED", "DEFAULT_4XX", "DEFAULT_5XX"];
+
+      it("4종 GatewayResponse 리소스가 CORS 헤더와 함께 존재한다", () => {
+        template.resourceCountIs("AWS::ApiGateway::GatewayResponse", EXPECTED_TYPES.length);
+        const responses = template.findResources("AWS::ApiGateway::GatewayResponse");
+        const byType = new Map<string, Record<string, unknown>>();
+        for (const r of Object.values(responses)) {
+          const props = r.Properties as Record<string, unknown>;
+          byType.set(String(props["ResponseType"]), props);
+        }
+        for (const type of EXPECTED_TYPES) {
+          const props = byType.get(type);
+          expect(props, `${type} GatewayResponse가 존재해야 함`).toBeDefined();
+          const params = props!["ResponseParameters"] as Record<string, unknown>;
+          // Access-Control-Allow-Origin 헤더가 매핑된다(브라우저가 401을 읽게 하는 핵심).
+          const originVal = params["gatewayresponse.header.Access-Control-Allow-Origin"];
+          expect(originVal, `${type}에 Allow-Origin 헤더 필요`).toBeDefined();
+          // 정적 문자열은 single-quote로 감싼다('https://...'). CloudFront 도메인은 Fn::Join으로 렌더되며,
+          //  join 조각에 여는 따옴표 `'https://`가 나타난다(와일드카드 * 아님).
+          const originJson = JSON.stringify(originVal);
+          expect(originJson).toContain("'https://");
+          expect(originJson).not.toContain("'*'");
+          // Access-Control-Allow-Headers 헤더도 정적값으로 단다.
+          expect(params["gatewayresponse.header.Access-Control-Allow-Headers"]).toBe(
+            "'Authorization,Content-Type'",
+          );
+        }
+      });
+
+      it("UNAUTHORIZED GatewayResponse의 Allow-Origin은 CloudFront 도메인(GetAtt)을 참조한다", () => {
+        const responses = template.findResources("AWS::ApiGateway::GatewayResponse");
+        const unauthorized = Object.values(responses).find(
+          (r) => (r.Properties as Record<string, unknown>)["ResponseType"] === "UNAUTHORIZED",
+        );
+        expect(unauthorized, "UNAUTHORIZED GatewayResponse가 존재해야 함").toBeDefined();
+        const params = (unauthorized!.Properties as Record<string, Record<string, unknown>>)[
+          "ResponseParameters"
+        ];
+        // spaOriginUrl == `https://${distribution.distributionDomainName}` 이므로 도메인 참조가 join 조각에 온다.
+        const originJson = JSON.stringify(
+          params["gatewayresponse.header.Access-Control-Allow-Origin"],
+        );
+        expect(originJson).toContain("DomainName");
+      });
+    });
   });
 
   describe("SPA 호스팅 — 비공개 S3 + CloudFront(OAC)", () => {

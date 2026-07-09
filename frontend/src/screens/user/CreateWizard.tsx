@@ -85,6 +85,12 @@ const EMPTY: Draft = {
   sleepMode: "on-demand",
 };
 
+// 저장소 종류 표시 우선순위 — AWS 저장소(CodeCommit)를 항상 먼저. 나머지는 기존 순서 유지.
+const PROVIDER_RANK: Record<Provider, number> = { codecommit: 0, github: 1, gitlab: 2 };
+function providerRank(p: Provider): number {
+  return PROVIDER_RANK[p];
+}
+
 function toSubdomain(name: string): string {
   return name
     .toLowerCase()
@@ -247,7 +253,11 @@ function StepRepo({
   conns: RepoConnection[];
 }): JSX.Element {
   const nav = useNavigate();
-  const available = conns.filter((c) => c.status === "AVAILABLE");
+  // AWS 저장소(CodeCommit)를 먼저 보여준다 — 바로 사용 가능하므로 비개발자에게 권장.
+  // 그 외에는 기존 순서 유지(안정 정렬).
+  const available = conns
+    .filter((c) => c.status === "AVAILABLE")
+    .sort((a, b) => providerRank(a.provider) - providerRank(b.provider));
   const isCodeCommit = draft.provider === "codecommit";
 
   // 연결이 바뀌면 이전에 고른 저장소 주소는 초기화(연결마다 저장소가 다름).

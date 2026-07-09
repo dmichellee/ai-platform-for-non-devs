@@ -183,7 +183,8 @@ function AddConnectionModal({
   onClose: () => void;
   onCreated: (conn: RepoConnection) => void;
 }): JSX.Element {
-  const [provider, setProvider] = useState<Provider>("github");
+  // 기본 선택은 AWS 저장소(CodeCommit) — 바로 사용 가능하므로 비개발자에게 권장.
+  const [provider, setProvider] = useState<Provider>("codecommit");
   const [name, setName] = useState("");
   const create = useMutation<{ provider: Provider; name: string }, RepoConnection>((a, args) =>
     a.createConnection(args.provider, args.name),
@@ -194,7 +195,7 @@ function AddConnectionModal({
       <div className="field">
         <label>저장소 종류</label>
         <div className="choice-row" style={{ gridTemplateColumns: "repeat(3,1fr)" }}>
-          {(["github", "gitlab", "codecommit"] as Provider[]).map((p) => (
+          {(["codecommit", "github", "gitlab"] as Provider[]).map((p) => (
             <button
               key={p}
               type="button"

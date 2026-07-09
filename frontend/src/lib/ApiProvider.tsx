@@ -12,7 +12,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { ApiError, HttpApiClient, type ApiClient } from "./api.js";
+import { ApiError, HttpApiClient, type ApiClient, type AuthBridge } from "./api.js";
 import type { RuntimeConfig } from "./config.js";
 import { MockApiClient } from "../mock/mockApi.js";
 
@@ -20,20 +20,33 @@ const ApiContext = createContext<ApiClient | null>(null);
 
 export function ApiProvider({
   config,
-  getToken,
+  auth,
   children,
   client,
 }: {
   config: RuntimeConfig;
-  getToken: () => string | null;
+  /**
+   * 인증 브릿지 — 실서비스 HttpApiClient가 세션 만료를 스스로 다루게 한다.
+   * ensureFreshToken(선제 갱신)·onUnauthorized(401 시 갱신/로그아웃)를 AuthContext가 준다.
+   */
+  auth: AuthBridge;
   children: ReactNode;
   client?: ApiClient; // 테스트 주입용
 }): JSX.Element {
+  // auth 함수는 세션 변화에 따라 정체성이 바뀔 수 있으나, 클라이언트가 항상 최신을
+  // 호출하도록 안정적인 래퍼(ref)로 감싼다 → config만으로 클라이언트를 재생성.
+  const authRef = useRef(auth);
+  authRef.current = auth;
+
   const api = useMemo<ApiClient>(() => {
     if (client) return client;
     if (config.mock) return new MockApiClient();
-    return new HttpApiClient(config.apiUrl, getToken);
-  }, [config, getToken, client]);
+    const bridge: AuthBridge = {
+      ensureFreshToken: () => authRef.current.ensureFreshToken(),
+      onUnauthorized: () => authRef.current.onUnauthorized(),
+    };
+    return new HttpApiClient(config.apiUrl, bridge);
+  }, [config, client]);
   return <ApiContext.Provider value={api}>{children}</ApiContext.Provider>;
 }
 

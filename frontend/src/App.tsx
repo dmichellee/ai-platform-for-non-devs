@@ -29,7 +29,7 @@ export default function App({ config }: { config: RuntimeConfig }): JSX.Element 
 }
 
 function AuthedApp({ config }: { config: RuntimeConfig }): JSX.Element {
-  const { session, ready, isAdmin, getToken } = useAuth();
+  const { session, ready, isAdmin, ensureFreshToken, handleUnauthorized } = useAuth();
 
   if (!ready) {
     return (
@@ -44,7 +44,10 @@ function AuthedApp({ config }: { config: RuntimeConfig }): JSX.Element {
   }
 
   return (
-    <ApiProvider config={config} getToken={getToken}>
+    <ApiProvider
+      config={config}
+      auth={{ ensureFreshToken, onUnauthorized: handleUnauthorized }}
+    >
       <Router isAdmin={isAdmin} />
     </ApiProvider>
   );

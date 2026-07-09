@@ -404,6 +404,39 @@ export class PlatformStack extends Stack {
       authorizerName: `${prefix}-authorizer`,
     });
 
+    // ── Gateway Responses (authorizer/게이트웨이 단 4xx/5xx에 CORS 헤더 부착) ──
+    // 문제: Cognito authorizer가 토큰 만료/부재로 요청을 거부하면 Lambda 도달 전에 API GW가
+    //  직접 401/403을 반환하는데, 기본 Gateway Response에는 CORS 헤더가 없다. 그래서 브라우저는
+    //  응답을 읽지 못하고 실제 401 대신 "CORS 에러"로 표시 → 프론트가 UNAUTHENTICATED를 인지 못함.
+    // 해결: 게이트웨이 단 응답에도 Access-Control-Allow-Origin/Headers를 붙여 브라우저가 status를
+    //  읽게 한다. (정상 응답·preflight CORS는 defaultCorsPreflightOptions와 Lambda 핸들러가 그대로 담당 —
+    //  이 블록은 그 경로를 건드리지 않는다.)
+    // 제약: Gateway Response 헤더 값은 정적 문자열이라 요청 Origin 에코(다중 오리진)가 불가하다.
+    //  단일 정적값만 가능하므로 SPA CloudFront 도메인을 우선한다(spaOriginUrl, single-quote로 감쌈).
+    //  ⇒ dev 로컬(http://localhost:5173)은 게이트웨이 단 401/403에서 여전히 CORS 표시가 남을 수 있으나
+    //     수용한다(로컬 개발 편의보다 배포 도메인의 만료 UX가 우선). 정상 응답/preflight의 localhost는
+    //     defaultCorsPreflightOptions·핸들러 CORS가 계속 지원한다.
+    const gatewayCorsHeaders: { [key: string]: string } = {
+      // 정적 문자열이어야 하므로 값 자체를 single-quote로 감싼다(`'https://...'`).
+      "Access-Control-Allow-Origin": `'${spaOriginUrl}'`,
+      "Access-Control-Allow-Headers": "'Authorization,Content-Type'",
+    };
+    // authorizer 거부(401)와 인가 실패(403)가 핵심이고, 그 외 게이트웨이 단 4xx/5xx도 함께 커버한다.
+    //  DEFAULT_4XX/5XX는 세부 타입이 지정되지 않은 응답의 폴백이라 UNAUTHORIZED/ACCESS_DENIED와 함께 둔다.
+    const gatewayResponseTypes: Array<{ id: string; type: apigw.ResponseType }> = [
+      { id: "GwRespUnauthorized", type: apigw.ResponseType.UNAUTHORIZED }, // 401 (토큰 만료/부재)
+      { id: "GwRespAccessDenied", type: apigw.ResponseType.ACCESS_DENIED }, // 403 (인가 실패)
+      { id: "GwRespDefault4xx", type: apigw.ResponseType.DEFAULT_4XX },
+      { id: "GwRespDefault5xx", type: apigw.ResponseType.DEFAULT_5XX },
+    ];
+    for (const { id, type } of gatewayResponseTypes) {
+      new apigw.GatewayResponse(this, id, {
+        restApi: api,
+        type,
+        responseHeaders: gatewayCorsHeaders,
+      });
+    }
+
     // /{proxy+} 골격 — 실제 리소스/메서드 트리는 M3가 확장. 프록시로 모든 경로 위임.
     const proxy = api.root.addProxy({
       anyMethod: true,
