@@ -16,8 +16,14 @@ dist/
 build/
 *.tsbuildinfo
 
-# backend Lambda 자산 산출물 (backend/app 이 진실, backend/build.sh 가 동기화 — deploy 전 실행)
+# backend Lambda 자산 산출물 (backend/app 이 진실, backend/build.sh 가 동기화 — deploy 전 실행).
+# D-M8: API + task/wake 5종 6개 자산 모두 build.sh 산출물(app/ + handler.py shim) → 추적 제외.
 infra/lambda/api/
+infra/lambda/provision-task/
+infra/lambda/delete-task/
+infra/lambda/waker/
+infra/lambda/wake-restore/
+infra/lambda/sleep-transition/
 
 # python (backend — D-M8 Python 3.13, uv/pytest)
 .venv/

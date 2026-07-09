@@ -46,6 +46,7 @@ def ddb_table():
     """moto 로 단일 테이블 생성(PK/SK + GSI1 ownerId/SK + GSI2 status/SK). 매 테스트 격리."""
     from app.data import client as data_client
     from app.integrations import clients as integ_clients
+    from app.integrations import ssm as ssm_module
 
     with mock_aws():
         resource = boto3.resource("dynamodb", region_name="ap-northeast-2")
@@ -85,9 +86,11 @@ def ddb_table():
         # 모듈 캐시 초기화 — 새 moto 리소스를 쓰도록.
         data_client.reset_client_cache()
         integ_clients.reset_clients()
+        ssm_module.reset_cache()
         yield table
         data_client.reset_client_cache()
         integ_clients.reset_clients()
+        ssm_module.reset_cache()
 
 
 class StubClient:
@@ -130,6 +133,48 @@ def stub_clients():
     # SFN start_execution 기본 성공 응답.
     stubs["stepfunctions"].set_response("start_execution", {"executionArn": "arn:exec"})
     yield stubs
+
+
+class SsmStub:
+    """파라미터명 → 값 맵으로 get_parameter 를 흉내내는 SSM stub(호출 기록 포함)."""
+
+    def __init__(self, params: dict[str, str] | None = None) -> None:
+        self.params: dict[str, str] = dict(params or {})
+        self.calls: list[dict[str, Any]] = []
+
+    def set_param(self, name: str, value: str) -> None:
+        self.params[name] = value
+
+    def get_parameter(self, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+        name = kwargs["Name"]
+        if name not in self.params:
+            raise KeyError(f"SsmStub: 미설정 파라미터 {name}")
+        return {"Parameter": {"Name": name, "Value": self.params[name]}}
+
+
+@pytest.fixture
+def p2_clients():
+    """P2(SFN task + Waker) stub 클라이언트. AWS 제어면(CodeBuild/CodePipeline/CFN/SM/SSM/ECS/ELBv2)."""
+    from app.integrations import clients as integ_clients
+    from app.integrations import ssm as ssm_module
+
+    ssm_module.reset_cache()
+    stubs: dict[str, StubClient] = {}
+    for service in (
+        "codebuild",
+        "codepipeline",
+        "cloudformation",
+        "secretsmanager",
+        "ssm",
+        "ecs",
+        "elbv2",
+    ):
+        stub = StubClient()
+        stubs[service] = stub
+        integ_clients.set_client(service, stub)
+    yield stubs
+    ssm_module.reset_cache()
 
 
 # ── API GW proxy 이벤트 빌더 ──────────────────────────────────────────────────

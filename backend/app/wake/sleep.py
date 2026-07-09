@@ -1,0 +1,76 @@
+"""잠자기 Lambda — 유휴 알람 / 스케줄 EventBridge 트리거 (DESIGN.md 3.5, D-M5-03).
+
+앱이 유휴하면: ECS desiredCount=0(멱등) + 리스너 규칙 forward 를 공유 Waker TG 로 전환(멱등)
+  + runtimeState=SLEEPING. always-on 앱은 잠자지 않는다.
+appId 는 event.appId(직접 호출) 또는 알람명(`apphub-{stage}-app-{appId}-idle`)에서 파싱.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import Any
+
+from ..data.apps import get_app, set_runtime_state
+from ..integrations.ssm import listener_arn_for_scheme, network_param
+from . import stage
+from .ecs_service import ensure_stopped
+from .listener_rule import transition_listener_rule
+from .target_group import find_app_target_group_arn
+
+
+def app_id_from_sleep_event(event: dict[str, Any], stage_value: str) -> str | None:
+    """event.appId(직접 호출) 우선, 없으면 CloudWatch 알람명에서 appId 파싱."""
+    if event.get("appId"):
+        return event["appId"]
+    detail = event.get("detail") or {}
+    alarm_data = event.get("alarmData") or {}
+    alarm_name = detail.get("alarmName") or alarm_data.get("alarmName")
+    if not alarm_name:
+        return None
+    match = re.match(rf"^apphub-{re.escape(stage_value)}-app-(.+)-idle$", alarm_name)
+    return match.group(1) if match else None
+
+
+def sleep_app(app_id: str) -> dict[str, Any]:
+    """앱을 잠재운다(멱등). always-on 이면 스킵. ECS 정지 + 규칙 to=waker + SLEEPING."""
+    st = stage()
+    app = get_app(app_id)
+    if not app:
+        return {"appId": app_id, "reason": "app-record-missing"}
+    if app.get("status") != "ACTIVE":
+        return {"appId": app_id, "reason": f"status-{app.get('status')}"}
+    if app.get("sleepMode") == "always-on":
+        return {"appId": app_id, "reason": "always-on"}
+    stop = ensure_stopped(st, app_id)
+    app_tg_arn = find_app_target_group_arn(st, app_id)
+    waker_tg_arn = network_param(st, "waker-tg-arn")
+    listener_arn = listener_arn_for_scheme(st, app["scheme"])
+    domain = network_param(st, "apps-domain")
+    host = f"{app['subdomain']}.{domain}"
+    rule_switched = False
+    if app_tg_arn:
+        res = transition_listener_rule(
+            listener_arn=listener_arn,
+            host=host,
+            app_target_group_arn=app_tg_arn,
+            waker_target_group_arn=waker_tg_arn,
+            to="waker",
+        )
+        rule_switched = res.get("changed", False)
+    if app.get("runtimeState") != "SLEEPING":
+        try:
+            set_runtime_state(app_id, "SLEEPING")
+        except Exception:  # noqa: BLE001
+            pass
+    return {"appId": app_id, "stopped": stop.get("changed", False), "ruleSwitched": rule_switched}
+
+
+def handle(event: dict[str, Any], _context: Any = None) -> dict[str, Any]:
+    st = stage()
+    app_id = app_id_from_sleep_event(event, st)
+    if not app_id:
+        print("[sleep-transition] appId 없음:", event)
+        return {"reason": "no-appId"}
+    result = sleep_app(app_id)
+    print("[sleep-transition]", result)
+    return result

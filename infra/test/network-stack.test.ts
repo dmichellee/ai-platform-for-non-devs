@@ -171,7 +171,9 @@ describe("network 스택", () => {
       });
     });
 
-    it("Waker/복원/잠자기 3함수 모두 STAGE + APPS_DOMAIN env를 갖는다", () => {
+    it("Waker/복원/잠자기 3함수 모두 STAGE + APPS_DOMAIN + TABLE_NAME env를 갖는다", () => {
+      // D-M8 P2 필수 요청: 데이터 계층(app.data.client.table)이 TABLE_NAME 을 요구(폴백 없음).
+      //  테이블명은 결정론적 apphub-dev-main(platform 스택이 만든 단일 테이블). 크로스스택/SSM 없이 직접 주입.
       for (const name of ["apphub-dev-waker", "apphub-dev-wake-restore", "apphub-dev-sleep-transition"]) {
         template.hasResourceProperties("AWS::Lambda::Function", {
           FunctionName: name,
@@ -179,10 +181,46 @@ describe("network 스택", () => {
             Variables: Match.objectLike({
               STAGE: "dev",
               APPS_DOMAIN: "apps-dev.example.com",
+              TABLE_NAME: "apphub-dev-main",
             }),
           },
         });
       }
+    });
+
+    it("Waker/복원/잠자기 3함수 모두 PYTHON_3_13 / handler.handler 로 전환됐다(D-M8)", () => {
+      for (const name of ["apphub-dev-waker", "apphub-dev-wake-restore", "apphub-dev-sleep-transition"]) {
+        template.hasResourceProperties("AWS::Lambda::Function", {
+          FunctionName: name,
+          Runtime: "python3.13",
+          Handler: "handler.handler",
+        });
+      }
+    });
+
+    it("Waker/복원/잠자기 3함수 모두 DDB 접근 IAM(테이블 + index/*)을 가진다(P2 로직 R/W)", () => {
+      // grantWakeFunctionPermissions 의 ddbRw: GetItem/PutItem/UpdateItem/Query + tableArn + index/*.
+      //  3함수 각각 policy가 있어야 한다. 테이블 ARN 조각(table/apphub-dev-main)으로 확인.
+      const policies = template.findResources("AWS::IAM::Policy");
+      let ddbRwCount = 0;
+      for (const pol of Object.values(policies)) {
+        const doc = (
+          pol.Properties as {
+            PolicyDocument?: { Statement?: Array<{ Sid?: string; Action?: unknown; Resource?: unknown }> };
+          }
+        ).PolicyDocument;
+        for (const st of doc?.Statement ?? []) {
+          if (st.Sid === "AppTableRW") {
+            const res = JSON.stringify(st.Resource);
+            const act = JSON.stringify(st.Action);
+            if (res.includes("table/apphub-dev-main") && act.includes("dynamodb:")) {
+              ddbRwCount++;
+            }
+          }
+        }
+      }
+      // waker/restore/sleep 3함수 각각 1개 = 최소 3개.
+      expect(ddbRwCount).toBeGreaterThanOrEqual(3);
     });
   });
 

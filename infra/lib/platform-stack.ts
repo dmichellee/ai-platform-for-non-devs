@@ -198,10 +198,11 @@ export class PlatformStack extends Stack {
     });
     const apiHandler = new lambda.Function(this, "ApiHandler", {
       functionName: `${prefix}-api`,
-      runtime: lambda.Runtime.NODEJS_22_X,
-      handler: "index.handler",
-      // D-M3-01/02: backend/src가 진실. tsup이 infra/lambda/api/index.mjs로 번들한 산출물을
-      //  자산으로 참조한다. deploy.sh가 cdk deploy 전 `pnpm -C backend build`로 산출물 보장.
+      runtime: lambda.Runtime.PYTHON_3_13,
+      handler: "handler.handler",
+      // D-M8: backend(Python)가 진실. backend/build.sh가 app/ 를 infra/lambda/api/ 로 동기화하고
+      //  자산 루트에 handler.py shim(app.handler.handler 재노출)을 둔다. deploy.sh가 cdk deploy 전
+      //  `bash backend/build.sh`로 산출물(infra/lambda/api/handler.py + app/)을 보장한다.
       code: lambda.Code.fromAsset(path.join(__dirname, "..", "lambda", "api")),
       timeout: Duration.seconds(29), // API GW 통합 타임아웃 상한
       memorySize: 512,
@@ -212,7 +213,7 @@ export class PlatformStack extends Stack {
         USER_POOL_CLIENT_ID: userPoolClient.userPoolClientId,
         STAGE: config.stage,
         APPS_DOMAIN: config.appsDomain,
-        // 핸들러 CORS(infra/lambda/api/index.mjs corsHeaders)가 요청 Origin을 허용 목록과
+        // 핸들러 CORS(app/http/cors.py)가 요청 Origin을 허용 목록과
         //  대조해 그대로 에코한다(와일드카드 * 미사용 — D17/PLATFORM-ENGINEERING과 무관하나 보안 관행).
         //  허용 origin은 SPA CloudFront 도메인. dev는 Vite dev 서버(localhost:5173)도 함께 허용
         //  (SpaClient callbackUrls의 localDevOrigins와 동일 정책). distribution은 위에서 이미 참조 중이라 순환 없음.
@@ -311,7 +312,7 @@ export class PlatformStack extends Stack {
       description: "AppHub control plane REST API",
       deployOptions: { stageName: config.stage },
       // OPTIONS preflight는 API GW가 각 리소스에 만드는 MOCK 통합이 처리한다(ANY proxy 통합보다 우선).
-      //  실제 응답의 CORS는 Lambda 핸들러(index.mjs corsHeaders)가 붙이므로, 두 경로의 정책을 정합시킨다:
+      //  실제 응답의 CORS는 Lambda 핸들러(app/http/cors.py)가 붙이므로, 두 경로의 정책을 정합시킨다:
       //   - allowOrigins: SPA CloudFront 도메인(+dev localhost) == ALLOWED_ORIGINS env == 핸들러 에코 대상.
       //   - allowHeaders: Cors.DEFAULT_HEADERS는 Authorization 포함(핸들러 ALLOW_HEADERS와 정합).
       //   - allowCredentials: 핸들러가 Access-Control-Allow-Credentials:true를 붙이므로 preflight도 맞춘다.
@@ -357,7 +358,9 @@ export class PlatformStack extends Stack {
       autoDeleteObjects: config.stage !== "prod",
     });
     // 고정 키 → S3 URI. deploy.sh 업로드 키(3b 단계)와 정확히 일치해야 한다.
-    const validatorS3Uri = `s3://${assetsBucket.bucketName}/validator/dockerfile-validator.mjs`;
+    //  D-M8: 검증기는 Python 2파일(dockerfile_validator.py + dockerfile.py)이므로 단일 파일이 아니라
+    //  디렉토리 prefix(끝에 `/`)로 가리킨다. validate-build.yml 이 prefix 아래 두 파일을 명시 cp 한다.
+    const validatorS3Uri = `s3://${assetsBucket.bucketName}/validator/`;
     const cdkSourceS3Uri = `s3://${assetsBucket.bucketName}/cdk-source/cdk-src.tgz`;
 
     // ── Kiro 설정 다운로드 정적 경로 (P-M7-01) ─────────────────────────────
@@ -682,7 +685,7 @@ export class PlatformStack extends Stack {
     stage: StageConfig["stage"],
     prefix: string,
   ): { provisionStateMachine: sfn.StateMachine; deleteStateMachine: sfn.StateMachine } {
-    // ── task Lambda 2개 (nodejs22, index.handler, STAGE env) ──────────────
+    // ── task Lambda 2개 (PYTHON_3_13, handler.handler, STAGE + TABLE_NAME env) ──
     const tableArn = this.formatArn({ service: "dynamodb", resource: "table", resourceName: `${prefix}-main` });
     const provisionerBuildArn = this.formatArn({ service: "codebuild", resource: "project", resourceName: `${prefix}-provisioner` });
     const appPipelineArn = this.formatArn({ service: "codepipeline", resource: `${prefix}-app-*` });
@@ -714,13 +717,15 @@ export class PlatformStack extends Stack {
     // provision-task — allocate-slot / deploy-pipeline / poll-build / first-deploy / finalize.
     const provisionTask = new lambda.Function(this, "ProvisionTask", {
       functionName: `${prefix}-provision-task`,
-      runtime: lambda.Runtime.NODEJS_22_X,
-      handler: "index.handler",
+      runtime: lambda.Runtime.PYTHON_3_13,
+      handler: "handler.handler",
       code: lambda.Code.fromAsset(path.join(__dirname, "..", "lambda", "provision-task")),
       timeout: Duration.seconds(60),
       memorySize: 256,
       logGroup: taskLog("provision-task"),
-      environment: { STAGE: stage },
+      // TABLE_NAME: 데이터 계층(app.data.client.table)이 요구(폴백 없음 — config.table_name).
+      //  테이블명은 결정론적(`${prefix}-main`)이라 크로스스택/SSM 없이 직접 주입한다(D-M8 P2 요청).
+      environment: { STAGE: stage, TABLE_NAME: `${prefix}-main` },
       description: "ProvisionApp step dispatch (D-M5-01)",
     });
     // IAM(ARN 범위, Resource:"*" 금지):
@@ -756,13 +761,14 @@ export class PlatformStack extends Stack {
     // delete-task — delete-runtime / poll-runtime / delete-pipeline / poll-pipeline / cleanup / finalize.
     const deleteTask = new lambda.Function(this, "DeleteTask", {
       functionName: `${prefix}-delete-task`,
-      runtime: lambda.Runtime.NODEJS_22_X,
-      handler: "index.handler",
+      runtime: lambda.Runtime.PYTHON_3_13,
+      handler: "handler.handler",
       code: lambda.Code.fromAsset(path.join(__dirname, "..", "lambda", "delete-task")),
       timeout: Duration.seconds(60),
       memorySize: 256,
       logGroup: taskLog("delete-task"),
-      environment: { STAGE: stage },
+      // TABLE_NAME: 데이터 계층 요구(폴백 없음). 결정론적 테이블명 직접 주입(D-M8 P2 요청).
+      environment: { STAGE: stage, TABLE_NAME: `${prefix}-main` },
       description: "DeleteApp step dispatch (D-M5-01)",
     });
     deleteTask.addToRolePolicy(

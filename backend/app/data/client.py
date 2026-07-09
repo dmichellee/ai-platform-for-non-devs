@@ -16,7 +16,7 @@ from typing import Any
 import boto3
 from botocore.exceptions import ClientError
 
-from ..config import load_config
+from ..config import table_name as _table_name
 
 
 def is_conditional_check_failed(err: BaseException) -> bool:
@@ -39,8 +39,12 @@ def _get_resource() -> Any:
 
 
 def table() -> Any:
-    """설정된 TABLE_NAME 의 DynamoDB Table 리소스."""
-    name = load_config().table_name
+    """설정된 TABLE_NAME 의 DynamoDB Table 리소스.
+
+    task/wake Lambda 도 이 데이터 계층을 공유하므로 TABLE_NAME 만 읽는다(config.table_name).
+    load_config() 전체 검증(API 전용 env 요구)을 경유하지 않는다.
+    """
+    name = _table_name()
     cached = _table_cache.get(name)
     if cached is None:
         cached = _get_resource().Table(name)

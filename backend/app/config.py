@@ -38,6 +38,18 @@ def _opt_list(name: str) -> list[str]:
     return [item for item in (segment.strip().rstrip("/") for segment in raw.split(",")) if item]
 
 
+def table_name() -> str:
+    """TABLE_NAME 만 읽는 경량 접근자.
+
+    데이터 계층(app.data.client.table)은 API·task·wake Lambda 5종이 **공유**한다.
+    task/wake Lambda 에는 API 전용 env(USER_POOL_ID/PROVISION_SM_ARN/DELETE_SM_ARN 등)를
+    주입하지 않으므로(최소권한·낮은 결합도 — infra P3), 데이터 계층이 load_config() 전체
+    검증을 경유하면 첫 DDB 접근에서 필수 env 누락으로 크래시한다. 데이터 계층은 오직
+    TABLE_NAME 만 필요하므로 이 경량 함수를 쓴다. API 핸들러 경로는 load_config()로 전체 검증.
+    """
+    return _req("TABLE_NAME")
+
+
 def load_config() -> AppConfig:
     return AppConfig(
         table_name=_req("TABLE_NAME"),

@@ -92,6 +92,8 @@ require_cmd aws
 require_cmd node
 require_cmd pnpm
 require_cmd docker
+# backend/build.sh 가 Lambda 자산 동기화에 rsync 를 쓴다(D-M8, 순수 boto3 — pip install 불필요).
+require_cmd rsync
 
 # Node 버전(>=22)
 NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
@@ -154,18 +156,27 @@ else
     || { echo "오류: cdk bootstrap 실패. 중단합니다." >&2; exit 1; }
 fi
 
-# ── 2b. API Lambda 번들(backend build) — cdk deploy 전에 자산 산출물 보장 ────
-# D-M3-01/02: backend/src가 진실. tsup이 infra/lambda/api/index.mjs 로 번들하고
-#  platform-stack이 이 경로를 lambda.Code.fromAsset 로 참조한다. 재실행 안전(clean 후 재빌드).
-step "2b/5 API Lambda 번들 (backend build)"
-( cd "${ROOT_DIR}/backend" && pnpm install --frozen-lockfile && pnpm build ) \
-  || { echo "오류: backend 빌드(pnpm install/build) 실패. 중단합니다." >&2; exit 1; }
-if [[ ! -f "${INFRA_DIR}/lambda/api/index.mjs" ]]; then
-  echo "오류: backend build 산출물(infra/lambda/api/index.mjs)이 없습니다." >&2
-  echo "      'pnpm -C backend build' 가 정상 완료됐는지 확인하세요." >&2
+# ── 2b. Lambda 자산 동기화(backend build) — cdk deploy 전에 자산 산출물 보장 ──
+# D-M8: backend(Python)가 진실. backend/build.sh 가 app/ 를 각 Lambda 자산 디렉토리로 동기화하고
+#  자산 루트에 handler.py shim(handler.handler)을 둔다. platform/network 스택이 이 경로를
+#  lambda.Code.fromAsset + runtime=PYTHON_3_13 로 참조한다. 또한 검증기 2파일을 dist/validator/ 로
+#  산출한다(3b 업로드). 순수 boto3(pip install 불필요) — 대상 디렉토리를 비우고 다시 채워 멱등.
+step "2b/5 Lambda 자산 동기화 (backend build.sh)"
+bash "${ROOT_DIR}/backend/build.sh" \
+  || { echo "오류: backend 자산 동기화(build.sh) 실패. 중단합니다." >&2; exit 1; }
+# API + task/wake 5종 = 자산 6개 모두 handler.py(shim) + app/ 를 갖춰야 한다.
+MISSING_ASSET=""
+for name in api provision-task delete-task waker wake-restore sleep-transition; do
+  if [[ ! -f "${INFRA_DIR}/lambda/${name}/handler.py" || ! -d "${INFRA_DIR}/lambda/${name}/app" ]]; then
+    MISSING_ASSET="${MISSING_ASSET} ${name}"
+  fi
+done
+if [[ -n "${MISSING_ASSET}" ]]; then
+  echo "오류: backend build.sh 산출물 누락(handler.py + app/):${MISSING_ASSET}" >&2
+  echo "      'bash backend/build.sh' 가 정상 완료됐는지 확인하세요." >&2
   exit 1
 fi
-log "API Lambda 자산 번들 OK (infra/lambda/api/index.mjs)"
+log "Lambda 자산 6종 동기화 OK (api + provision-task/delete-task + waker/wake-restore/sleep-transition)"
 
 # ── 3. cdk deploy (network → platform, CFN이 멱등 보장) ──────────────────────
 # 실패(스택 rollback 포함)는 반드시 스크립트 전체 non-zero exit로 전파한다.
@@ -203,28 +214,36 @@ ssm_param() {
 COGNITO_DOMAIN="$(ssm_param "/apphub/${STAGE}/platform/user-pool-domain")"
 
 # ── 3b. provisioner 자산 업로드 (D-M4-05 미해결 자산 주입) ────────────────────
-# 앱 파이프라인 CodeBuild가 요구하는 두 자산을 플랫폼 자산 버킷의 고정 키로 업로드한다:
-#   - 검증기 번들:  s3://{assets}/validator/dockerfile-validator.mjs  (VALIDATOR_S3_URI)
-#   - 플랫폼 CDK소스: s3://{assets}/cdk-source/cdk-src.tgz            (CDK_SOURCE_S3_URI)
+# 앱 파이프라인 CodeBuild가 요구하는 자산을 플랫폼 자산 버킷의 고정 키로 업로드한다:
+#   - 검증기(Python 2파일): s3://{assets}/validator/dockerfile_validator.py
+#                           s3://{assets}/validator/dockerfile.py         (VALIDATOR_S3_URI=prefix)
+#   - 플랫폼 CDK소스:        s3://{assets}/cdk-source/cdk-src.tgz          (CDK_SOURCE_S3_URI)
 # platform-stack의 provisioner 프로젝트 env가 이 고정 S3 URI를 가리키므로(deploy와 동일 키),
 #  업로드만 하면 provisioner→app-pipeline 배포 시 검증기/CDK소스가 신뢰 경계 안에서 주입된다.
 step "3b/5 provisioner 자산 업로드 (검증기 · CDK 소스)"
 if [[ -z "${ASSETS_BUCKET}" ]]; then
   log "AssetsBucketName Output 없음 — 자산 업로드 건너뜀(platform-stack에 자산 버킷 추가 필요)."
 else
-  VALIDATOR_BUNDLE="${ROOT_DIR}/backend/dist/dockerfile-validator.mjs"
-  if [[ ! -f "${VALIDATOR_BUNDLE}" ]]; then
-    echo "오류: 검증기 번들이 없습니다(${VALIDATOR_BUNDLE}). 'pnpm -C backend build' 확인." >&2
+  # D-M8: 검증기는 backend/build.sh 가 산출한 dist/validator/ 의 2파일(자립 스크립트).
+  VALIDATOR_DIR="${ROOT_DIR}/backend/dist/validator"
+  if [[ ! -f "${VALIDATOR_DIR}/dockerfile_validator.py" || ! -f "${VALIDATOR_DIR}/dockerfile.py" ]]; then
+    echo "오류: 검증기 자산이 불완전합니다(${VALIDATOR_DIR}/{dockerfile_validator.py,dockerfile.py})." >&2
+    echo "      'bash backend/build.sh' 가 정상 완료됐는지 확인하세요." >&2
     exit 1
   fi
-  log "검증기 번들 업로드 → s3://${ASSETS_BUCKET}/validator/dockerfile-validator.mjs"
-  aws s3 cp "${VALIDATOR_BUNDLE}" "s3://${ASSETS_BUCKET}/validator/dockerfile-validator.mjs" \
-    --region "${REGION}"
+  log "검증기 자산 업로드 → s3://${ASSETS_BUCKET}/validator/ (dockerfile_validator.py, dockerfile.py)"
+  aws s3 cp "${VALIDATOR_DIR}/dockerfile_validator.py" \
+    "s3://${ASSETS_BUCKET}/validator/dockerfile_validator.py" --region "${REGION}"
+  aws s3 cp "${VALIDATOR_DIR}/dockerfile.py" \
+    "s3://${ASSETS_BUCKET}/validator/dockerfile.py" --region "${REGION}"
 
   # CDK 소스 tarball — app-* construct 배포에 필요한 최소 소스(infra + backend + 루트 매니페스트).
+  #  provisioner/deploy 빌드는 이 tarball을 풀고 `pnpm install`(CDK 툴체인) 후 `cdk deploy app-*` 한다.
+  #  app-pipeline/app-runtime construct는 buildspec 자산(infra/buildspec/*.yml)만 참조하고
+  #  플랫폼 Lambda 자산(infra/lambda/*, Python)은 참조하지 않으므로 tarball에 없어도 무방하다.
   #  node_modules/dist/.git 등은 제외(provisioner가 pnpm install로 복원). 재현 가능하게 정렬.
   #  frontend는 tar 대상에 포함하지 않으므로(app 배포와 무관) 빌드 산출물이 tarball에 들어가지 않는다.
-  #  소스는 infra/backend만 포함. `**/dist` 제외로 어떤 dist도 tarball에 들어가지 않음.
+  #  backend(Python)는 pyproject.toml/app/이 들어가나 dist/는 `**/dist` 제외로 빠진다(무해).
   log "CDK 소스 tarball 생성·업로드 → s3://${ASSETS_BUCKET}/cdk-source/cdk-src.tgz"
   CDK_TARBALL="$(mktemp -t apphub-cdk-src-XXXXXX.tgz)"
   tar -czf "${CDK_TARBALL}" -C "${ROOT_DIR}" \

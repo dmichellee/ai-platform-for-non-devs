@@ -41,7 +41,7 @@ export interface AppPipelineParams {
   /**
    * 플랫폼 제공 자산 S3 URI(D-M5-06). provisioner가 -c 로 전달 → 이 construct가 생성하는
    * CodeBuild #1/#2 env(VALIDATOR_S3_URI/CDK_SOURCE_S3_URI)로 주입한다(신뢰 경계, D-M4-05).
-   *  - validatorS3Uri: Dockerfile 검증기 번들(dockerfile-validator.mjs) 위치.
+   *  - validatorS3Uri: Dockerfile 검증기(Python, dockerfile_validator.py + dockerfile.py) 디렉토리 prefix.
    *  - cdkSourceS3Uri: 플랫폼 CDK tarball(app-runtime construct 포함) 위치.
    */
   readonly validatorS3Uri?: string;

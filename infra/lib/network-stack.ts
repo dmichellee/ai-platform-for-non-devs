@@ -183,11 +183,20 @@ export class NetworkStack extends Stack {
     });
     this.internalAlb = internalAlb;
 
-    // ── Waker / 복원 / 잠자기 Lambda 3종 (D-M5-03) ──────────────────────────
-    // 함수 실코드는 backend M5가 infra/lambda/{waker,wake-restore,sleep-transition}로 번들해 둠.
+    // ── Waker / 복원 / 잠자기 Lambda 3종 (D-M5-03, D-M8 Python 전환) ─────────
+    // 함수 실코드는 backend(Python)가 build.sh로 infra/lambda/{waker,wake-restore,sleep-transition}에
+    //  동기화해 둔다(app/ + handler.py shim). runtime=PYTHON_3_13, handler="handler.handler".
     //  network가 함수 리소스 + 트리거(EventBridge) + IAM(ecs/ddb/ssm/elbv2, ARN 범위)을 확정한다.
-    //  공통 env: STAGE, APPS_DOMAIN(host = {subdomain}.{appsDomain} 구성용).
-    const commonEnv = { STAGE: config.stage, APPS_DOMAIN: config.appsDomain };
+    //  공통 env: STAGE, APPS_DOMAIN(host = {subdomain}.{appsDomain} 구성용) +
+    //   TABLE_NAME — 데이터 계층(app.data.client.table)이 요구(폴백 없음, D-M8 P2 필수 요청).
+    //   테이블은 platform 스택이 만든 apphub-{stage}-main. 테이블명은 결정론적(`${prefix}-main`)이라
+    //   크로스스택 참조/SSM 런타임 조회 없이 직접 주입한다(deploy.yml의 TABLE_NAME 재구성과 동일 규약).
+    //   DDB 접근 IAM은 grantWakeFunctionPermissions의 ddbRw(tableArn + index/*)가 3함수에 부여.
+    const commonEnv = {
+      STAGE: config.stage,
+      APPS_DOMAIN: config.appsDomain,
+      TABLE_NAME: `${prefix}-main`,
+    };
     const fnLog = (name: string): logs.LogGroup =>
       new logs.LogGroup(this, `${name}Logs`, {
         logGroupName: `/apphub/${config.stage}/${name}`,
@@ -198,8 +207,8 @@ export class NetworkStack extends Stack {
     // Waker — ALB Lambda 타깃. Host→앱 식별→ensureRunning(멱등)→대기페이지 200.
     const wakerFunction = new lambda.Function(this, "WakerFn", {
       functionName: `${prefix}-waker`,
-      runtime: lambda.Runtime.NODEJS_22_X,
-      handler: "index.handler",
+      runtime: lambda.Runtime.PYTHON_3_13,
+      handler: "handler.handler",
       code: lambda.Code.fromAsset(path.join(__dirname, "..", "lambda", "waker")),
       timeout: Duration.seconds(30),
       memorySize: 256,
@@ -212,8 +221,8 @@ export class NetworkStack extends Stack {
     // 복원 — EventBridge(ECS Task State Change RUNNING) 수신 → 리스너 규칙 forward를 앱 TG로 복원.
     const wakeRestoreFunction = new lambda.Function(this, "WakeRestoreFn", {
       functionName: `${prefix}-wake-restore`,
-      runtime: lambda.Runtime.NODEJS_22_X,
-      handler: "index.handler",
+      runtime: lambda.Runtime.PYTHON_3_13,
+      handler: "handler.handler",
       code: lambda.Code.fromAsset(path.join(__dirname, "..", "lambda", "wake-restore")),
       timeout: Duration.seconds(60),
       memorySize: 256,
@@ -226,8 +235,8 @@ export class NetworkStack extends Stack {
     // 잠자기 — 유휴 알람(CloudWatch Alarm State Change) 수신 → desiredCount=0 + 규칙 to=waker.
     const sleepTransitionFunction = new lambda.Function(this, "SleepTransitionFn", {
       functionName: `${prefix}-sleep-transition`,
-      runtime: lambda.Runtime.NODEJS_22_X,
-      handler: "index.handler",
+      runtime: lambda.Runtime.PYTHON_3_13,
+      handler: "handler.handler",
       code: lambda.Code.fromAsset(path.join(__dirname, "..", "lambda", "sleep-transition")),
       timeout: Duration.seconds(60),
       memorySize: 256,

@@ -151,7 +151,7 @@ describe("platform 스택", () => {
             TABLE_NAME: Match.anyValue(),
             USER_POOL_ID: Match.anyValue(),
             STAGE: "dev",
-            // 핸들러 CORS(index.mjs)가 읽는 허용 origin. dev는 CloudFront 도메인 + localhost:5173.
+            // 핸들러 CORS(app/http/cors.py)가 읽는 허용 origin. dev는 CloudFront 도메인 + localhost:5173.
             ALLOWED_ORIGINS: Match.anyValue(),
           }),
         },
@@ -244,7 +244,8 @@ describe("platform 스택", () => {
       // 값은 Fn::Join(자산 버킷 Ref 포함) — 고정 키 경로가 join 조각에 있어야 한다.
       const validator = envList.find((e) => e.Name === "VALIDATOR_S3_URI");
       const cdkSrc = envList.find((e) => e.Name === "CDK_SOURCE_S3_URI");
-      expect(JSON.stringify(validator!.Value)).toContain("validator/dockerfile-validator.mjs");
+      // D-M8: 검증기는 Python 2파일이라 단일 파일이 아니라 디렉토리 prefix(validator/)를 가리킨다.
+      expect(JSON.stringify(validator!.Value)).toContain("validator/");
       expect(JSON.stringify(cdkSrc!.Value)).toContain("cdk-source/cdk-src.tgz");
     });
 
@@ -322,18 +323,32 @@ describe("platform 스택", () => {
       });
     });
 
-    it("task Lambda 2개(provision-task/delete-task, nodejs22, STAGE env)가 존재한다", () => {
+    it("task Lambda 2개(provision-task/delete-task, PYTHON_3_13, handler.handler, STAGE+TABLE_NAME env)가 존재한다", () => {
+      // D-M8: 런타임 Python 3.13, 핸들러 handler.handler(자산 루트 shim). 데이터 계층이 요구하는
+      //  TABLE_NAME(폴백 없음)이 반드시 주입된다(P2 필수 요청). 테이블명은 결정론적 apphub-dev-main.
       template.hasResourceProperties("AWS::Lambda::Function", {
         FunctionName: "apphub-dev-provision-task",
-        Runtime: "nodejs22.x",
-        Handler: "index.handler",
-        Environment: { Variables: Match.objectLike({ STAGE: "dev" }) },
+        Runtime: "python3.13",
+        Handler: "handler.handler",
+        Environment: {
+          Variables: Match.objectLike({ STAGE: "dev", TABLE_NAME: "apphub-dev-main" }),
+        },
       });
       template.hasResourceProperties("AWS::Lambda::Function", {
         FunctionName: "apphub-dev-delete-task",
-        Runtime: "nodejs22.x",
-        Handler: "index.handler",
-        Environment: { Variables: Match.objectLike({ STAGE: "dev" }) },
+        Runtime: "python3.13",
+        Handler: "handler.handler",
+        Environment: {
+          Variables: Match.objectLike({ STAGE: "dev", TABLE_NAME: "apphub-dev-main" }),
+        },
+      });
+    });
+
+    it("API 핸들러 Lambda가 PYTHON_3_13 / handler.handler 로 전환됐다(D-M8)", () => {
+      template.hasResourceProperties("AWS::Lambda::Function", {
+        FunctionName: "apphub-dev-api",
+        Runtime: "python3.13",
+        Handler: "handler.handler",
       });
     });
 
