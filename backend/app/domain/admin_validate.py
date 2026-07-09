@@ -151,8 +151,10 @@ def parse_preset(raw: str | None) -> dict[str, Any]:
         "scaleThreshold": scale_threshold,
     }
     preset_id = body.get("presetId")
-    if isinstance(preset_id, str):
-        result["presetId"] = preset_id
+    if preset_id is not None:
+        if not isinstance(preset_id, str) or preset_id.strip() == "":
+            raise errors.validation("프리셋 식별자가 비어 있어요.")
+        result["presetId"] = preset_id.strip()
     return result
 
 
@@ -169,6 +171,8 @@ def parse_permission_template(raw: str | None) -> dict[str, Any]:
         "policyDocument": policy_document,
     }
     perm_id = body.get("permId")
-    if isinstance(perm_id, str):
-        result["permId"] = perm_id
+    if perm_id is not None:
+        if not isinstance(perm_id, str) or perm_id.strip() == "":
+            raise errors.validation("템플릿 식별자가 비어 있어요.")
+        result["permId"] = perm_id.strip()
     return result

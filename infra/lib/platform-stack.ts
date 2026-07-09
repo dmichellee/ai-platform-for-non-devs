@@ -347,14 +347,17 @@ export class PlatformStack extends Stack {
       }),
     );
     //     ┌ 리소스 레벨 지원 → 계정/리전 한정 ARN 유지 ─────────────────────────────────────────────┐
-    //     │ - GetRepository: 특정 repo ARN 대상 → 계정/리전 스코프로 한정(IAM 시뮬레이터 allowed 확인).
+    //     │ - GetRepository/DeleteRepository: 특정 repo ARN 대상 → 계정/리전 스코프로 한정.
+    //     │   (GetRepository는 IAM 시뮬레이터 allowed 확인. DeleteRepository는 사용자가 AppHub로 만든
+    //     │    본인 레포 삭제 API(DELETE /connections/{id}/repos/{name})가 사용 — 핸들러가 소유권을
+    //     │    DDB로 검증하므로 IAM은 계정/리전 스코프로 충분.)
     //     │   앱 레포 명명 규약이 아직 없어 계정 리전 전체(*)로 두되, 서비스+리전+계정으로는 좁힌다.
     //     │   레포 명명 규약이 생기면 resourceName을 그 접두어로 더 좁힌다(후속).
     //     └───────────────────────────────────────────────────────────────────────────────────────┘
     apiHandler.addToRolePolicy(
       new iam.PolicyStatement({
-        sid: "CodeCommitRepoGet",
-        actions: ["codecommit:GetRepository"],
+        sid: "CodeCommitRepoManage",
+        actions: ["codecommit:GetRepository", "codecommit:DeleteRepository"],
         resources: [
           this.formatArn({
             service: "codecommit",

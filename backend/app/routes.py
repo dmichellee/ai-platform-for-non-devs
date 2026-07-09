@@ -29,9 +29,15 @@ from .handlers.apps import (
     list_my_apps,
     patch_app,
 )
+from .handlers.catalog import (
+    check_subdomain,
+    get_permission_templates_public,
+    get_presets_public,
+)
 from .handlers.connections import (
     create_connection_repo,
     create_my_connection,
+    delete_connection_repo,
     delete_my_connection,
     list_connection_repos,
     list_my_connections,
@@ -63,12 +69,18 @@ def build_router() -> Router:
     # ── 로그 ─────────────────────────────────────────────────────────────────
     r.get("/apps/:id/logs", get_app_logs)
 
+    # ── 마법사 카탈로그 (user: 읽기 전용) ────────────────────────────────────
+    r.get("/presets", get_presets_public)
+    r.get("/permission-templates", get_permission_templates_public)
+    r.get("/subdomains/check", check_subdomain)
+
     # ── 레포 연결 ──────────────────────────────────────────────────────────────
     r.get("/connections", list_my_connections)
     r.post("/connections", create_my_connection)
     r.delete("/connections/:connId", delete_my_connection)
     r.get("/connections/:connId/repos", list_connection_repos)
     r.post("/connections/:connId/repos", create_connection_repo)
+    r.delete("/connections/:connId/repos/:repoName", delete_connection_repo)
 
     # ── 관리자: 플랫폼 설정 ─────────────────────────────────────────────────
     r.get("/admin/settings", get_settings)

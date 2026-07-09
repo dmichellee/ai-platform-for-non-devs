@@ -4,8 +4,9 @@
  *  → 6 가동 방식 → 7 Kiro 설정 안내.
  * AWS 용어 노출 금지. 마지막 단계 "만들기"에서만 POST /apps 호출(계약).
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlertTriangle,
   ArrowLeft,
   ArrowRight,
   Check,
@@ -23,8 +24,9 @@ import {
   Server,
   Trash2,
 } from "lucide-react";
-import { BackLink, ErrorNotice, InfoNotice, Modal, TopBar } from "../../components/common.js";
-import { useApi, useMutation, useQuery } from "../../lib/ApiProvider.js";
+import { BackLink, ErrorNotice, InfoNotice, Modal, Skeleton, TopBar } from "../../components/common.js";
+import { NewRepoModal } from "../../components/RepoManager.js";
+import { useApi, useMutation, useQuery, type QueryResult } from "../../lib/ApiProvider.js";
 import { useNavigate } from "../../lib/router.js";
 import { useAuth } from "../../auth/AuthContext.js";
 import { sessionInitial } from "../../auth/tokens.js";
@@ -33,11 +35,12 @@ import type {
   CodeCommitRepo,
   ComputePreset,
   CreateAppRequest,
-  PermissionTemplate,
   Provider,
   RepoConnection,
   Scheme,
   SleepMode,
+  SubdomainCheck,
+  UserPermissionTemplate,
 } from "../../lib/types.js";
 import {
   PROVIDER_LABEL,
@@ -91,12 +94,98 @@ function providerRank(p: Provider): number {
   return PROVIDER_RANK[p];
 }
 
+// 이름 → 자동 서브도메인 생성: 완전 정리(앞뒤 하이픈 트림 포함). 이름은 임의 문자라 공백을 하이픈으로.
 function toSubdomain(name: string): string {
   return name
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 40);
+}
+
+// 접속 주소 직접 입력 중(onChange): 소문자화 + 허용문자(a-z0-9-)만 + 40자 제한.
+// 앞 하이픈만 즉시 차단(시작 문자 규칙). 끝 하이픈·연속 하이픈은 남겨두어 "my-app" 타이핑을 방해하지 않는다.
+// 앞/뒤 트림은 blur·제출 직전에만(sanitizeSubdomain).
+function subdomainTyping(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "")
+    .replace(/^-+/, "")
+    .slice(0, 40);
+}
+
+// blur·제출 직전 최종 정리: 앞뒤 하이픈 제거 + 연속 하이픈을 하나로.
+function sanitizeSubdomain(value: string): string {
+  return value
+    .replace(/-{2,}/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+}
+
+// ── 버그 2: 서브도메인 실시간 중복/형식 확인 (디바운스 500ms) ──
+// state: idle(3자 미만·미입력) | checking(확인 중) | available(사용 가능)
+//        | taken(이미 사용 중) | invalid(형식/예약어) | error(확인 실패)
+type SubCheckState = "idle" | "checking" | "available" | "taken" | "invalid" | "error";
+interface SubCheckResult {
+  state: SubCheckState;
+  /** blur 시 트림된 최종값으로 디바운스 없이 즉시 재확인한다. */
+  check: (value: string) => void;
+}
+const SUBDOMAIN_DEBOUNCE_MS = 500;
+
+function useSubdomainCheck(value: string): { state: SubCheckState } & SubCheckResult {
+  const api = useApi();
+  const [state, setState] = useState<SubCheckState>("idle");
+  // 마지막으로 요청한 값을 추적해 응답 경합(stale response)을 무시한다.
+  const latestRef = useRef<string>("");
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const run = (raw: string): void => {
+    const v = raw.trim();
+    latestRef.current = v;
+    if (v.length < 3) {
+      setState("idle");
+      return;
+    }
+    setState("checking");
+    api
+      .checkSubdomain(v)
+      .then((res: SubdomainCheck) => {
+        if (latestRef.current !== v) return; // 더 최신 입력이 있으면 버린다
+        if (res.available) setState("available");
+        else setState(res.reason === "TAKEN" ? "taken" : "invalid");
+      })
+      .catch(() => {
+        if (latestRef.current !== v) return;
+        setState("error");
+      });
+  };
+  const runRef = useRef(run);
+  runRef.current = run;
+
+  // 입력값 변화 → 디바운스 후 확인. 3자 미만이면 즉시 idle.
+  useEffect(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    const v = value.trim();
+    if (v.length < 3) {
+      latestRef.current = v;
+      setState("idle");
+      return;
+    }
+    setState("checking");
+    timerRef.current = setTimeout(() => runRef.current(value), SUBDOMAIN_DEBOUNCE_MS);
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [value]);
+
+  // blur 시 트림된 최종값으로 즉시(디바운스 없이) 재확인하기 위한 진입점.
+  const check = (v: string): void => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    runRef.current(v);
+  };
+
+  return { state, check };
 }
 
 export function CreateWizard(): JSX.Element {
@@ -108,9 +197,14 @@ export function CreateWizard(): JSX.Element {
   const [created, setCreated] = useState<App | null>(null);
 
   const conns = useQuery<RepoConnection[]>((a) => a.listConnections(), []);
-  const presets = useQuery<ComputePreset[]>((a) => a.adminListPresets().catch(() => []), []);
-  const perms = useQuery<PermissionTemplate[]>((a) => a.adminListPermTemplates().catch(() => []), []);
+  // 버그 3: 관리자 엔드포인트(403) 대신 user용 /presets, /permission-templates 사용.
+  // 오류를 catch로 삼키지 않고 그대로 노출한다(원인 파악 가능).
+  const presets = useQuery<ComputePreset[]>((a) => a.listPresets(), []);
+  const perms = useQuery<UserPermissionTemplate[]>((a) => a.listPermTemplates(), []);
   const createMut = useMutation<CreateAppRequest, App>((a, body) => a.createApp(body));
+
+  // 버그 2: 서브도메인 실시간 중복/형식 확인 (디바운스 500ms).
+  const subCheck = useSubdomainCheck(draft.subdomain);
 
   const patch = (p: Partial<Draft>): void => setDraft((d) => ({ ...d, ...p }));
 
@@ -119,7 +213,12 @@ export function CreateWizard(): JSX.Element {
       case 0:
         return !!draft.provider && !!draft.repoUrl;
       case 1:
-        return draft.name.trim().length > 0 && draft.subdomain.length >= 3;
+        // 이름 + 3자 이상 + 중복확인이 "사용 가능"이어야 다음. TAKEN/INVALID/확인중이면 막는다.
+        return (
+          draft.name.trim().length > 0 &&
+          draft.subdomain.length >= 3 &&
+          subCheck.state === "available"
+        );
       case 2:
         return !!draft.presetId;
       case 3:
@@ -131,14 +230,14 @@ export function CreateWizard(): JSX.Element {
       default:
         return true;
     }
-  }, [step, draft]);
+  }, [step, draft, subCheck.state]);
 
   async function submit(): Promise<void> {
     const envVars: Record<string, string> = {};
     for (const e of draft.envVars) if (e.key) envVars[e.key] = e.value;
     const body: CreateAppRequest = {
       name: draft.name.trim(),
-      subdomain: draft.subdomain,
+      subdomain: sanitizeSubdomain(draft.subdomain), // 제출 직전 앞뒤/연속 하이픈 최종 정리
       provider: draft.provider!,
       repoUrl: draft.repoUrl,
       branch: draft.branch || "main",
@@ -186,9 +285,9 @@ export function CreateWizard(): JSX.Element {
         {step === 0 && (
           <StepRepo draft={draft} patch={patch} conns={conns.data ?? []} />
         )}
-        {step === 1 && <StepNameScheme draft={draft} patch={patch} />}
-        {step === 2 && <StepSize draft={draft} patch={patch} presets={presets.data ?? []} />}
-        {step === 3 && <StepType draft={draft} patch={patch} perms={perms.data ?? []} />}
+        {step === 1 && <StepNameScheme draft={draft} patch={patch} subCheck={subCheck} />}
+        {step === 2 && <StepSize draft={draft} patch={patch} presets={presets} />}
+        {step === 3 && <StepType draft={draft} patch={patch} perms={perms} />}
         {step === 4 && <StepEnv draft={draft} patch={patch} />}
         {step === 5 && <StepSleep draft={draft} patch={patch} />}
         {step === 6 && <StepKiro created={created} onDone={() => nav(created ? `/apps/${created.appId}` : "/")} />}
@@ -425,74 +524,57 @@ function CodeCommitRepoPicker({
       )}
 
       {creating && (
-        <NewRepoModal connId={connId} onClose={() => setCreating(false)} onCreated={onRepoCreated} />
+        <NewRepoModal
+          connId={connId}
+          onClose={() => setCreating(false)}
+          onCreated={onRepoCreated}
+          intro="AWS 저장소(CodeCommit)에 새 코드 저장소를 만들어요. 만든 뒤 바로 이 앱에 연결됩니다."
+          confirmLabel="만들고 선택하기"
+        />
       )}
     </div>
   );
 }
 
-// ── 새 CodeCommit 레포 만들기 모달 ──
-function NewRepoModal({
-  connId,
-  onClose,
-  onCreated,
-}: {
-  connId: string;
-  onClose: () => void;
-  onCreated: (repo: CodeCommitRepo) => void;
-}): JSX.Element {
-  const [name, setName] = useState("");
-  const createMut = useMutation<string, CodeCommitRepo>((a, repoName) => a.createRepo(connId, repoName));
-
-  // 계약 이름 규칙에 맞는지 즉시 힌트 (소문자·숫자로 시작·끝, 가운데 -/_/. 허용).
-  const trimmed = name.trim();
-  const looksValid =
-    trimmed.length > 0 && /^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$/.test(trimmed) && !trimmed.endsWith(".git");
-
-  async function submit(): Promise<void> {
-    try {
-      const repo = await createMut.run(trimmed);
-      onCreated(repo);
-    } catch {
-      /* 에러는 createMut.error 로 표시 (REPO_NAME_TAKEN 등) */
-    }
+// 접속 주소 확인 상태 표시 — 확인 중 스피너, 사용 가능(초록 Check), 중복/형식(빨강), 확인 실패.
+// 이모지 금지: 체크 표시는 Lucide Check.
+function SubdomainStatus({ state }: { state: SubCheckState }): JSX.Element | null {
+  if (state === "idle") return null;
+  if (state === "checking") {
+    return (
+      <div className="hint row" role="status" style={{ gap: 6, marginTop: 4 }}>
+        <Loader2 size={14} className="icon spin" />
+        주소를 확인하고 있어요…
+      </div>
+    );
   }
-
+  if (state === "available") {
+    return (
+      <div
+        className="hint row"
+        role="status"
+        style={{ gap: 6, marginTop: 4, color: "var(--success, #1f9d55)" }}
+      >
+        <Check size={14} className="icon" />
+        사용할 수 있는 주소예요
+      </div>
+    );
+  }
+  const msg =
+    state === "taken"
+      ? "이미 사용 중인 주소예요"
+      : state === "invalid"
+        ? "이 주소는 쓸 수 없어요. 소문자·숫자·하이픈으로 3~40자, 하이픈으로 시작·끝나지 않게 정해주세요."
+        : "주소를 확인하지 못했어요. 잠시 후 다시 시도해주세요.";
   return (
-    <Modal title="새 저장소 만들기" onClose={onClose}>
-      <p style={{ marginBottom: 12 }}>
-        AWS 저장소(CodeCommit)에 새 코드 저장소를 만들어요. 만든 뒤 바로 이 앱에 연결됩니다.
-      </p>
-      <div className="field">
-        <label htmlFor="new-repo-name">저장소 이름</label>
-        <input
-          id="new-repo-name"
-          className="input"
-          placeholder="예: customer-chatbot"
-          value={name}
-          autoFocus
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && looksValid && !createMut.loading) void submit();
-          }}
-        />
-        <div className="hint">소문자·숫자로 시작하고 끝나요. 가운데에는 -, _, . 를 쓸 수 있어요. (예: sales-board)</div>
-      </div>
-      {createMut.error && <ErrorNotice error={createMut.error} />}
-      <div className="modal-actions">
-        <button type="button" className="btn btn-ghost" onClick={onClose}>
-          취소
-        </button>
-        <button
-          type="button"
-          className="btn btn-primary"
-          disabled={!looksValid || createMut.loading}
-          onClick={submit}
-        >
-          {createMut.loading ? "만드는 중…" : "만들고 선택하기"}
-        </button>
-      </div>
-    </Modal>
+    <div
+      className="hint row"
+      role="alert"
+      style={{ gap: 6, marginTop: 4, color: "var(--error)" }}
+    >
+      <AlertTriangle size={14} className="icon" />
+      {msg}
+    </div>
   );
 }
 
@@ -500,10 +582,15 @@ function NewRepoModal({
 function StepNameScheme({
   draft,
   patch,
+  subCheck,
 }: {
   draft: Draft;
   patch: (p: Partial<Draft>) => void;
+  subCheck: { state: SubCheckState; check: (v: string) => void };
 }): JSX.Element {
+  // 사용자가 접속 주소를 직접 손댔는지 추적 — 손대기 전까지만 이름에서 자동 생성한다.
+  const [subTouched, setSubTouched] = useState(draft.subdomain.length > 0);
+
   return (
     <>
       <h3>앱 이름과 접속 범위를 정해주세요</h3>
@@ -517,10 +604,8 @@ function StepNameScheme({
           value={draft.name}
           onChange={(e) => {
             const name = e.target.value;
-            patch({
-              name,
-              subdomain: draft.subdomain || toSubdomain(name) ? toSubdomain(name) : "",
-            });
+            // 사용자가 접속 주소를 직접 만지기 전에는 이름에서 자동 생성(완전 정리 유지).
+            patch(subTouched ? { name } : { name, subdomain: toSubdomain(name) });
           }}
         />
       </div>
@@ -532,10 +617,21 @@ function StepNameScheme({
             className="input"
             style={{ maxWidth: 260 }}
             value={draft.subdomain}
-            onChange={(e) => patch({ subdomain: toSubdomain(e.target.value) })}
+            onChange={(e) => {
+              setSubTouched(true);
+              // 입력 중에는 소문자·허용문자·40자 제한만(끝/연속 하이픈 보존).
+              patch({ subdomain: subdomainTyping(e.target.value) });
+            }}
+            onBlur={() => {
+              // 포커스 아웃 시에만 앞뒤/연속 하이픈 최종 정리 후 그 값으로 재확인.
+              const finalValue = sanitizeSubdomain(draft.subdomain);
+              if (finalValue !== draft.subdomain) patch({ subdomain: finalValue });
+              subCheck.check(finalValue);
+            }}
           />
           <span className="mono muted">.apps.회사도메인</span>
         </div>
+        <SubdomainStatus state={subCheck.state} />
         <div className="hint">소문자·숫자·하이픈, 3~40자. 회사 안에서 유일한 주소여야 해요.</div>
       </div>
 
@@ -570,6 +666,8 @@ function StepNameScheme({
 }
 
 // ── 단계 3: 크기 ──
+// 버그 3: user용 /presets 사용. 로딩·에러를 삼키지 않고 표시하고, 목록이 비면
+// "관리자가 아직 크기를 준비하지 않았어요" 안내(다음 비활성 사유가 보이게).
 function StepSize({
   draft,
   patch,
@@ -577,33 +675,45 @@ function StepSize({
 }: {
   draft: Draft;
   patch: (p: Partial<Draft>) => void;
-  presets: ComputePreset[];
+  presets: QueryResult<ComputePreset[]>;
 }): JSX.Element {
+  const items = presets.data ?? [];
   return (
     <>
       <h3>앱을 얼마나 크게 돌릴까요?</h3>
       <div className="sub">사용량에 맞춰 관리자가 준비한 크기 중에서 고르세요. 나중에 관리자에게 변경을 요청할 수 있어요.</div>
-      <div className="choice-row" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))" }}>
-        {presets.map((p) => (
-          <button
-            key={p.presetId}
-            type="button"
-            className={`choice ${draft.presetId === p.presetId ? "sel" : ""}`}
-            onClick={() => patch({ presetId: p.presetId })}
-          >
-            <div className="ico">
-              <Cpu size={22} className="icon" />
-            </div>
-            <div className="t">{p.displayName}</div>
-            <div className="d">최소 {p.minCount}대 · 최대 {p.maxCount}대까지 자동 확장</div>
-          </button>
-        ))}
-      </div>
+      {presets.error ? (
+        <ErrorNotice error={presets.error} />
+      ) : presets.loading ? (
+        <Skeleton height={90} count={3} />
+      ) : items.length === 0 ? (
+        <InfoNotice>
+          관리자가 아직 크기를 준비하지 않았어요. 관리자에게 문의해주세요.
+        </InfoNotice>
+      ) : (
+        <div className="choice-row" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))" }}>
+          {items.map((p) => (
+            <button
+              key={p.presetId}
+              type="button"
+              className={`choice ${draft.presetId === p.presetId ? "sel" : ""}`}
+              onClick={() => patch({ presetId: p.presetId })}
+            >
+              <div className="ico">
+                <Cpu size={22} className="icon" />
+              </div>
+              <div className="t">{p.displayName}</div>
+              <div className="d">최소 {p.minCount}대 · 최대 {p.maxCount}대까지 자동 확장</div>
+            </button>
+          ))}
+        </div>
+      )}
     </>
   );
 }
 
 // ── 단계 4: 앱 유형(권한 템플릿) ──
+// 버그 3: user용 /permission-templates 사용(policyDocument 없음). 로딩·에러·빈목록 처리.
 function StepType({
   draft,
   patch,
@@ -611,27 +721,38 @@ function StepType({
 }: {
   draft: Draft;
   patch: (p: Partial<Draft>) => void;
-  perms: PermissionTemplate[];
+  perms: QueryResult<UserPermissionTemplate[]>;
 }): JSX.Element {
+  const items = perms.data ?? [];
   return (
     <>
       <h3>어떤 기능을 사용하는 앱인가요?</h3>
       <div className="sub">앱이 사용할 수 있는 기능 범위를 정해요. 잘 모르겠다면 '기본'을 고르세요.</div>
-      <div className="choice-row">
-        {perms.map((p) => (
-          <button
-            key={p.permId}
-            type="button"
-            className={`choice ${draft.permissionTemplateId === p.permId ? "sel" : ""}`}
-            onClick={() => patch({ permissionTemplateId: p.permId })}
-          >
-            <div className="ico">
-              <Rocket size={22} className="icon" />
-            </div>
-            <div className="t">{p.displayName}</div>
-          </button>
-        ))}
-      </div>
+      {perms.error ? (
+        <ErrorNotice error={perms.error} />
+      ) : perms.loading ? (
+        <Skeleton height={70} count={2} />
+      ) : items.length === 0 ? (
+        <InfoNotice>
+          관리자가 아직 앱 유형을 준비하지 않았어요. 관리자에게 문의해주세요.
+        </InfoNotice>
+      ) : (
+        <div className="choice-row">
+          {items.map((p) => (
+            <button
+              key={p.permId}
+              type="button"
+              className={`choice ${draft.permissionTemplateId === p.permId ? "sel" : ""}`}
+              onClick={() => patch({ permissionTemplateId: p.permId })}
+            >
+              <div className="ico">
+                <Rocket size={22} className="icon" />
+              </div>
+              <div className="t">{p.displayName}</div>
+            </button>
+          ))}
+        </div>
+      )}
     </>
   );
 }

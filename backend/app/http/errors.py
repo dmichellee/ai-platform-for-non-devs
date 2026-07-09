@@ -16,6 +16,7 @@ ERROR_CODES = frozenset(
         "SUBDOMAIN_INVALID",
         "SUBDOMAIN_TAKEN",
         "REPO_NAME_TAKEN",
+        "REPO_IN_USE",
         "QUOTA_EXCEEDED",
         "PRESET_NOT_FOUND",
         "PERMISSION_TEMPLATE_NOT_FOUND",
@@ -77,6 +78,15 @@ class _Errors:
             "REPO_NAME_TAKEN",
             "같은 이름의 저장소가 이미 있어요. 다른 이름을 입력해주세요.",
         )
+
+    @staticmethod
+    def repo_in_use(app_name: str | None = None) -> ApiError:
+        """삭제하려는 CodeCommit 레포를 사용 중인 앱이 있음(먼저 앱 삭제 필요)."""
+        if app_name:
+            message = f"이 저장소를 사용 중인 앱('{app_name}')이 있어요. 앱을 먼저 삭제해주세요."
+        else:
+            message = "이 저장소를 사용 중인 앱이 있어요. 앱을 먼저 삭제해주세요."
+        return ApiError(409, "REPO_IN_USE", message)
 
     @staticmethod
     def quota_exceeded(quota: int) -> ApiError:

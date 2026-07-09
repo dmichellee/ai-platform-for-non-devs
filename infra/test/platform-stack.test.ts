@@ -579,13 +579,13 @@ describe("platform 스택", () => {
       expect(actions).not.toContain("codecommit:GetRepository");
     });
 
-    it("GetRepository는 계정/리전 스코프 ARN으로 한정한다(리소스 레벨 지원, Resource:'*' 아님)", () => {
-      const stmts = stmtsBySid("CodeCommitRepoGet");
-      expect(stmts.length, "CodeCommitRepoGet statement가 존재해야 함").toBe(1);
+    it("GetRepository/DeleteRepository는 계정/리전 스코프 ARN으로 한정한다(리소스 레벨 지원, Resource:'*' 아님)", () => {
+      const stmts = stmtsBySid("CodeCommitRepoManage");
+      expect(stmts.length, "CodeCommitRepoManage statement가 존재해야 함").toBe(1);
       const st = stmts[0];
       const actions = asArray(st.Action);
       expect(actions).toEqual(
-        expect.arrayContaining(["codecommit:GetRepository"]),
+        expect.arrayContaining(["codecommit:GetRepository", "codecommit:DeleteRepository"]),
       );
       // Resource:"*" 아님 — codecommit 서비스+리전+계정 스코프 ARN이어야 한다.
       expect(isStar(st.Resource), `Resource는 "*"가 아니어야 함(현재: ${JSON.stringify(st.Resource)})`).toBe(false);

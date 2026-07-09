@@ -188,6 +188,7 @@ def make_event(
     body: Any = None,
     query: dict[str, str] | None = None,
     origin: str | None = None,
+    email: str | None = None,
 ) -> dict[str, Any]:
     """`/{proxy+}` 통합 이벤트. pathParameters.proxy 에 경로를 넣는다(라우터 우선 사용)."""
     claims: dict[str, Any] = {}
@@ -195,6 +196,8 @@ def make_event(
         claims["sub"] = user_id
     if groups is not None:
         claims["cognito:groups"] = groups
+    if email is not None:
+        claims["email"] = email
 
     headers: dict[str, str] = {}
     if origin is not None:

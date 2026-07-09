@@ -20,6 +20,8 @@ import type {
   Provider,
   RepoConnection,
   SingleEnvelope,
+  SubdomainCheck,
+  UserPermissionTemplate,
 } from "./types.js";
 
 /** 계약 에러 봉투를 던지는 오류. code로 분기, message는 그대로 노출 가능. */
@@ -54,6 +56,13 @@ export interface ApiClient {
   // 연결 하위 — CodeCommit(AWS 저장소) 레포 (계약: /connections/{connId}/repos)
   listRepos(connId: string): Promise<CodeCommitRepo[]>;
   createRepo(connId: string, repoName: string): Promise<CodeCommitRepo>;
+  // 계약(backend 병렬 구현): DELETE /connections/{connId}/repos/{repoName} → 204.
+  // 409 REPO_IN_USE(사용 중인 앱 있음), 404 NOT_FOUND. repoName 은 접두어 포함 최종명.
+  deleteRepo(connId: string, repoName: string): Promise<void>;
+  // 앱 생성 마법사용 (user 권한) — api-requests.md #1~3
+  checkSubdomain(value: string): Promise<SubdomainCheck>;
+  listPresets(): Promise<ComputePreset[]>;
+  listPermTemplates(): Promise<UserPermissionTemplate[]>;
   // 관리자
   adminGetSettings(): Promise<AdminSettings>;
   adminPutSettings(body: Omit<AdminSettings, "updatedAt">): Promise<AdminSettings>;
@@ -220,6 +229,27 @@ export class HttpApiClient implements ApiClient {
   }
   createRepo(connId: string, repoName: string): Promise<CodeCommitRepo> {
     return this.single<CodeCommitRepo>("POST", `/connections/${connId}/repos`, { repoName });
+  }
+  async deleteRepo(connId: string, repoName: string): Promise<void> {
+    // repoName 은 접두어 포함 최종명 — 경로에 안전하게 인코딩해 보낸다.
+    await this.request<void>(
+      "DELETE",
+      `/connections/${connId}/repos/${encodeURIComponent(repoName)}`,
+    );
+  }
+
+  // 앱 생성 마법사용 (user 권한) — api-requests.md #1~3
+  checkSubdomain(value: string): Promise<SubdomainCheck> {
+    return this.single<SubdomainCheck>(
+      "GET",
+      `/subdomains/check?value=${encodeURIComponent(value)}`,
+    );
+  }
+  listPresets(): Promise<ComputePreset[]> {
+    return this.list<ComputePreset>("GET", "/presets");
+  }
+  listPermTemplates(): Promise<UserPermissionTemplate[]> {
+    return this.list<UserPermissionTemplate>("GET", "/permission-templates");
   }
 
   // 관리자

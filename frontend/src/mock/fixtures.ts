@@ -49,7 +49,8 @@ export const mockApps: App[] = [
     name: "매출 대시보드",
     subdomain: "sales-board",
     provider: "codecommit",
-    repoUrl: "https://git.example.internal/sales-board",
+    // 이 앱은 AWS 저장소(CodeCommit) 레포 daeun-sales-board 를 쓴다 → 그 레포는 삭제 시 REPO_IN_USE.
+    repoUrl: "https://git-codecommit.example/v1/repos/daeun-sales-board",
     branch: "main",
     presetId: "preset-small",
     permissionTemplateId: "perm-basic",
@@ -252,10 +253,11 @@ export const mockConnections: RepoConnection[] = [
 
 // CodeCommit(AWS 저장소) 레포 — 사용자가 AppHub로 만든 것만 소유권 추적(계약).
 // key = connId. 조직 식별정보 금지 → example 호스트/가공명.
+// 저장 이름은 접두어 포함 최종 이름(서버가 {ownerPrefix}- 부착) — 목 세션(user) 접두어는 "daeun".
 export const mockRepos: Record<string, CodeCommitRepo[]> = {
   "conn-0003": [
-    { repoName: "sales-board", cloneUrlHttp: "https://git-codecommit.example/v1/repos/sales-board" },
-    { repoName: "meeting-notes", cloneUrlHttp: "https://git-codecommit.example/v1/repos/meeting-notes" },
+    { repoName: "daeun-sales-board", cloneUrlHttp: "https://git-codecommit.example/v1/repos/daeun-sales-board" },
+    { repoName: "daeun-meeting-notes", cloneUrlHttp: "https://git-codecommit.example/v1/repos/daeun-meeting-notes" },
   ],
 };
 

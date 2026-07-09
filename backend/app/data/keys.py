@@ -47,10 +47,14 @@ def alb_sk(alb_arn: str) -> str:
 
 
 def preset_sk(preset_id: str) -> str:
+    if not isinstance(preset_id, str) or preset_id.strip() == "":
+        raise ValueError("preset_sk: presetId 는 비어 있을 수 없습니다.")
     return f"PRESET#{preset_id}"
 
 
 def perm_sk(perm_id: str) -> str:
+    if not isinstance(perm_id, str) or perm_id.strip() == "":
+        raise ValueError("perm_sk: permId 는 비어 있을 수 없습니다.")
     return f"PERM#{perm_id}"
 
 

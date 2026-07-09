@@ -165,3 +165,105 @@ def test_admin_put_settings_invalid_provider(ddb_table, stub_clients):
         )
     )
     assert parse_result(res)["error"]["code"] == "VALIDATION_ERROR"
+
+
+# ── 버그1: 빈/공백 presetId 방어 ─────────────────────────────────────────────
+
+_VALID_PRESET_BODY = {
+    "displayName": "보통",
+    "cpu": 512,
+    "memory": 1024,
+    "minCount": 1,
+    "maxCount": 3,
+    "scaleMetric": "cpu",
+    "scaleThreshold": 70,
+}
+
+
+def test_admin_create_preset_empty_presetid_autogenerates(ddb_table, stub_clients):
+    """body 에 presetId="" 가 오면 거부되어야 한다(자동발급은 '키 부재'일 때만)."""
+    res = handler(
+        make_event(
+            "POST",
+            "/admin/presets",
+            user_id="a1",
+            groups=["admin"],
+            body={**_VALID_PRESET_BODY, "presetId": ""},
+        )
+    )
+    out = parse_result(res)
+    assert out["status"] == 400
+    assert out["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_admin_create_preset_blank_presetid_rejected(ddb_table, stub_clients):
+    """공백만 있는 presetId 도 거부(빈 SK 오염 방지)."""
+    res = handler(
+        make_event(
+            "POST",
+            "/admin/presets",
+            user_id="a1",
+            groups=["admin"],
+            body={**_VALID_PRESET_BODY, "presetId": "   "},
+        )
+    )
+    out = parse_result(res)
+    assert out["status"] == 400
+    assert out["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_admin_create_preset_no_presetid_autogenerates(ddb_table, stub_clients):
+    """presetId 키 자체가 없으면 8자 난수 자동 발급 + 정상 SK 저장."""
+    res = handler(
+        make_event(
+            "POST", "/admin/presets", user_id="a1", groups=["admin"], body=_VALID_PRESET_BODY
+        )
+    )
+    out = parse_result(res)
+    assert out["status"] == 201
+    pid = out["data"]["presetId"]
+    assert len(pid) == 8 and pid.isalnum()
+    # 빈 SK 아이템이 만들어지지 않았는지 확인
+    empty = ddb_table.get_item(Key={"PK": "CONFIG", "SK": "PRESET#"})
+    assert "Item" not in empty
+    stored = ddb_table.get_item(Key={"PK": "CONFIG", "SK": f"PRESET#{pid}"})
+    assert stored["Item"]["presetId"] == pid
+
+
+def test_admin_update_preset_uses_path_id_not_body(ddb_table, stub_clients):
+    """PUT 경로의 presetId 를 정본으로 사용 — body 의 presetId 는 무시(SK 불일치 방지)."""
+    res = handler(
+        make_event(
+            "PUT",
+            "/admin/presets/keepme",
+            user_id="a1",
+            groups=["admin"],
+            body={**_VALID_PRESET_BODY, "presetId": "ignored"},
+        )
+    )
+    out = parse_result(res)
+    assert out["status"] == 200
+    assert out["data"]["presetId"] == "keepme"
+    stored = ddb_table.get_item(Key={"PK": "CONFIG", "SK": "PRESET#keepme"})
+    assert stored["Item"]["presetId"] == "keepme"
+    # body 의 "ignored" 로는 저장되지 않음
+    assert "Item" not in ddb_table.get_item(Key={"PK": "CONFIG", "SK": "PRESET#ignored"})
+
+
+def test_admin_create_perm_empty_permid_rejected(ddb_table, stub_clients):
+    res = handler(
+        make_event(
+            "POST",
+            "/admin/permission-templates",
+            user_id="a1",
+            groups=["admin"],
+            body={
+                "displayName": "기본",
+                "policyDocument": {"Version": "2012-10-17", "Statement": []},
+                "permId": "",
+            },
+        )
+    )
+    out = parse_result(res)
+    assert out["status"] == 400
+    assert out["error"]["code"] == "VALIDATION_ERROR"

@@ -4,6 +4,7 @@
  * 실제 배포/실행 API는 호출하지 않는다(요구 제약).
  */
 import { ApiError, type ApiClient } from "../lib/api.js";
+import { computeOwnerPrefix, type UserSession } from "../auth/tokens.js";
 import type {
   AdminSettings,
   AlbRegistry,
@@ -18,11 +19,25 @@ import type {
   PlatformUser,
   Provider,
   RepoConnection,
+  SubdomainCheck,
+  UserPermissionTemplate,
 } from "../lib/types.js";
 import * as fx from "./fixtures.js";
 
 const delay = (ms = 220): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+
+// 목 모드에서 현재 세션을 읽는다 — AuthContext 와 동일한 localStorage 키.
+// 서버가 하듯 저장소 이름 접두어({ownerPrefix}-)를 계산하기 위해 email/sub 가 필요하다.
+const SESSION_STORAGE_KEY = "apphub-session";
+function currentSession(): UserSession | null {
+  try {
+    const raw = typeof localStorage !== "undefined" ? localStorage.getItem(SESSION_STORAGE_KEY) : null;
+    return raw ? (JSON.parse(raw) as UserSession) : null;
+  } catch {
+    return null;
+  }
+}
 
 export class MockApiClient implements ApiClient {
   private apps: App[] = clone(fx.mockApps);
@@ -211,29 +226,90 @@ export class MockApiClient implements ApiClient {
     this.codecommitConn(connId);
     return clone(this.repos[connId] ?? []);
   }
+  // 계약: body.repoName 은 **base 이름**. 서버(목)가 앞에 `{ownerPrefix}-` 를 붙여 최종 이름을 만들고,
+  // 응답 repoName 은 접두어 포함 최종 이름이다. (프론트 미리보기와 동일한 접두어 규칙을 목도 구현.)
   async createRepo(connId: string, repoName: string): Promise<CodeCommitRepo> {
     await delay(320);
     this.codecommitConn(connId);
-    // 이름 규칙(계약): 소문자·숫자로 시작·끝, 가운데 -/_/. 허용, 1~100자, .git 접미사 금지.
-    const valid = /^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$/.test(repoName) && repoName.length <= 100 && !repoName.endsWith(".git");
-    if (!valid) {
+    const base = repoName;
+    // base 이름 규칙(계약): 소문자·숫자로 시작·끝, 가운데 -/_/. 허용, .git 접미사 금지.
+    const baseValid =
+      /^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$/.test(base) && !base.endsWith(".git");
+    if (!baseValid) {
       throw new ApiError(
         "VALIDATION_ERROR",
         "저장소 이름은 소문자·숫자로 시작하고 끝나야 하며, 가운데에만 -, _, . 를 쓸 수 있어요.",
         400,
       );
     }
-    // 계정 전체 동명 레포 중복 → 409 (목: 모든 연결의 레포 이름을 통틀어 검사).
-    const taken = Object.values(this.repos).some((list) => list.some((r) => r.repoName === repoName));
+    // 서버측 접두어 강제 부착 — 현재 세션의 email/sub 로 접두어 계산(없으면 접두어 없이).
+    const prefix = computeOwnerPrefix(currentSession());
+    const finalName = prefix ? `${prefix}-${base}` : base;
+    // 전체(접두어+base) 길이 ≤ 100자.
+    if (finalName.length > 100) {
+      throw new ApiError(
+        "VALIDATION_ERROR",
+        "저장소 이름이 너무 길어요. 뒷부분을 줄여주세요.",
+        400,
+      );
+    }
+    // 계정 전체 동명 레포 중복 → 409 (목: 모든 연결의 최종 이름을 통틀어 검사).
+    const taken = Object.values(this.repos).some((list) => list.some((r) => r.repoName === finalName));
     if (taken) {
       throw new ApiError("REPO_NAME_TAKEN", "이미 같은 이름의 저장소가 있어요. 다른 이름을 써주세요.", 409);
     }
     const repo: CodeCommitRepo = {
-      repoName,
-      cloneUrlHttp: `https://git-codecommit.example/v1/repos/${repoName}`,
+      repoName: finalName,
+      cloneUrlHttp: `https://git-codecommit.example/v1/repos/${finalName}`,
     };
     this.repos[connId] = [...(this.repos[connId] ?? []), repo];
     return clone(repo);
+  }
+  // 계약(backend 병렬): DELETE /connections/{connId}/repos/{repoName} → 204.
+  // - 본인 codecommit 연결이 아니면 404(위 codecommitConn 규칙 재사용).
+  // - 해당 연결에 그 이름의 레포가 없으면 404 NOT_FOUND.
+  // - 그 레포(cloneUrlHttp)를 쓰는 앱이 하나라도 있으면 409 REPO_IN_USE(코드 삭제 방지).
+  async deleteRepo(connId: string, repoName: string): Promise<void> {
+    await delay(320);
+    this.codecommitConn(connId);
+    const list = this.repos[connId] ?? [];
+    const repo = list.find((r) => r.repoName === repoName);
+    if (!repo) throw new ApiError("NOT_FOUND", "저장소를 찾을 수 없어요.", 404);
+    // 이 레포를 쓰는 앱이 있으면 삭제 불가(본인+타인 전체 대조 — 서버도 계정 범위로 검사).
+    const inUse = [...this.apps, ...this.otherApps].some((a) => a.repoUrl === repo.cloneUrlHttp);
+    if (inUse) {
+      throw new ApiError(
+        "REPO_IN_USE",
+        "이 저장소를 사용 중인 앱이 있어요. 먼저 그 앱을 삭제한 뒤 다시 시도해주세요.",
+        409,
+      );
+    }
+    this.repos[connId] = list.filter((r) => r.repoName !== repoName);
+  }
+
+  // ── 앱 생성 마법사용 (user 권한) — api-requests.md #1~3 ──
+  // 서브도메인 형식 규칙: 3~40자, 소문자·숫자·하이픈, 앞뒤 하이픈 금지, 예약어 금지 (계약 POST /apps 검증과 정합).
+  private static readonly RESERVED_SUBDOMAINS = new Set(["www", "api", "admin", "app", "apps"]);
+  async checkSubdomain(value: string): Promise<SubdomainCheck> {
+    await delay(160);
+    const v = value.trim();
+    const validFormat = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(v);
+    if (!validFormat || v.length < 3 || v.length > 40 || MockApiClient.RESERVED_SUBDOMAINS.has(v)) {
+      return { available: false, reason: "INVALID" };
+    }
+    // 기존 목 앱(본인+타인 전체)의 서브도메인과 대조 → 전역 중복.
+    const taken = [...this.apps, ...this.otherApps].some((a) => a.subdomain === v);
+    if (taken) return { available: false, reason: "TAKEN" };
+    return { available: true };
+  }
+  async listPresets(): Promise<ComputePreset[]> {
+    await delay();
+    return clone(this.presets);
+  }
+  async listPermTemplates(): Promise<UserPermissionTemplate[]> {
+    await delay();
+    // user 응답은 policyDocument 제외 (admin과 동일 목록에서 민감 필드만 뺀다).
+    return this.permTemplates.map((t) => ({ permId: t.permId, displayName: t.displayName }));
   }
 
   async adminGetSettings(): Promise<AdminSettings> {

@@ -117,6 +117,20 @@ export interface PermissionTemplate {
   policyDocument: object;
 }
 
+// user용 권한 템플릿(앱 유형) 목록 항목 — GET /permission-templates.
+// admin과 달리 policyDocument는 내려오지 않는다(민감 정보 비노출, api-requests.md #3).
+export interface UserPermissionTemplate {
+  permId: string;
+  displayName: string;
+}
+
+// GET /subdomains/check 응답 — 서브도메인 실시간 중복/형식 확인 (api-requests.md #1).
+// available=true면 사용 가능(reason 없음). false면 reason으로 원인 분기.
+export interface SubdomainCheck {
+  available: boolean;
+  reason?: "INVALID" | "TAKEN";
+}
+
 export interface AdminSettings {
   enabledProviders: string[];
   registeredVpcs: { vpcId: string; label: string }[];

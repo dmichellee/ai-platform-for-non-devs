@@ -56,22 +56,24 @@ def get_presets(ctx: RouteContext) -> ProxyResult:
 def create_preset(ctx: RouteContext) -> ProxyResult:
     require_admin(ctx.identity)
     inp = parse_preset(ctx.event.get("body"))
+    # parse_preset 이 빈/공백 presetId 는 이미 거부한다. 없으면(키 부재) 자동 발급.
     preset_id = inp.get("presetId") or generate_id()
     return created(put_preset({**inp, "presetId": preset_id}))
 
 
 def update_preset(ctx: RouteContext) -> ProxyResult:
     require_admin(ctx.identity)
-    preset_id = ctx.params.get("presetId")
+    preset_id = (ctx.params.get("presetId") or "").strip()
     if not preset_id:
         raise errors.validation("프리셋 식별자가 필요해요.")
     inp = parse_preset(ctx.event.get("body"))
+    # 경로의 presetId 를 정본으로 사용(body 의 presetId 는 무시해 SK 불일치 방지).
     return ok(put_preset({**inp, "presetId": preset_id}))
 
 
 def remove_preset(ctx: RouteContext) -> ProxyResult:
     require_admin(ctx.identity)
-    preset_id = ctx.params.get("presetId")
+    preset_id = (ctx.params.get("presetId") or "").strip()
     if not preset_id:
         raise errors.validation("프리셋 식별자가 필요해요.")
     delete_preset(preset_id)
@@ -89,22 +91,24 @@ def get_permission_templates(ctx: RouteContext) -> ProxyResult:
 def create_permission_template(ctx: RouteContext) -> ProxyResult:
     require_admin(ctx.identity)
     inp = parse_permission_template(ctx.event.get("body"))
+    # parse 가 빈/공백 permId 는 이미 거부한다. 없으면(키 부재) 자동 발급.
     perm_id = inp.get("permId") or generate_id()
     return created(put_permission_template({**inp, "permId": perm_id}))
 
 
 def update_permission_template(ctx: RouteContext) -> ProxyResult:
     require_admin(ctx.identity)
-    perm_id = ctx.params.get("permId")
+    perm_id = (ctx.params.get("permId") or "").strip()
     if not perm_id:
         raise errors.validation("템플릿 식별자가 필요해요.")
     inp = parse_permission_template(ctx.event.get("body"))
+    # 경로의 permId 를 정본으로 사용(body 의 permId 는 무시해 SK 불일치 방지).
     return ok(put_permission_template({**inp, "permId": perm_id}))
 
 
 def remove_permission_template(ctx: RouteContext) -> ProxyResult:
     require_admin(ctx.identity)
-    perm_id = ctx.params.get("permId")
+    perm_id = (ctx.params.get("permId") or "").strip()
     if not perm_id:
         raise errors.validation("템플릿 식별자가 필요해요.")
     delete_permission_template(perm_id)

@@ -53,7 +53,18 @@ def list_cc_repos(owner_id: str) -> list[dict[str, Any]]:
     return [_to_repo(i) for i in res.get("Items", [])]  # type: ignore[misc]
 
 
+def get_cc_repo(owner_id: str, repo_name: str) -> dict[str, Any] | None:
+    """소유권 아이템 조회. 없으면 None. {repoName, cloneUrlHttp}(계약 shape)."""
+    res = table().get_item(Key={"PK": user_pk(owner_id), "SK": ccrepo_sk(repo_name)})
+    return _to_repo(res.get("Item"))
+
+
 def cc_repo_owned_by(owner_id: str, repo_name: str) -> bool:
     """해당 사용자가 이 레포의 소유자(AppHub로 만든 사람)인지 여부."""
     res = table().get_item(Key={"PK": user_pk(owner_id), "SK": ccrepo_sk(repo_name)})
     return res.get("Item") is not None
+
+
+def delete_cc_repo(owner_id: str, repo_name: str) -> None:
+    """소유권 아이템 삭제(멱등 — 없어도 예외 없음)."""
+    table().delete_item(Key={"PK": user_pk(owner_id), "SK": ccrepo_sk(repo_name)})

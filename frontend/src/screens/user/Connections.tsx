@@ -1,12 +1,25 @@
 /**
  * 레포 연결 관리 — 연결 목록·추가.
- * AWS 저장소(codecommit)는 즉시 사용 가능. GitHub/GitLab은 아직 웹에서 승인할 수 없어
- * PENDING 상태로 "준비 중"임을 정직하게 안내한다(카드는 그대로 두어 향후 웹 승인이 같은 자리에 들어감).
+ * AWS 저장소(codecommit)는 즉시 사용 가능하며, 카드 안에서 내가 만든 저장소 목록을 펼쳐 보고
+ * 새로 만들거나 삭제할 수 있다(코드가 사라지는 파괴적 작업이라 이름 입력 확인).
+ * GitHub/GitLab은 아직 웹에서 승인할 수 없어 PENDING 상태로 "준비 중"임을 정직하게 안내한다
+ * (카드는 그대로 두어 향후 웹 승인이 같은 자리에 들어감). 레포 관리는 codecommit 전용.
  * 용어 사전: CodeConnections/OAuth 같은 내부 용어, "AWS 콘솔/GitHub 화면에서 승인" 같은
  * 틀린·기술적 안내는 노출하지 않는다.
  */
 import { useState } from "react";
-import { Github, Gitlab, Plug, Plus, Server, Trash2 } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  FolderGit2,
+  Github,
+  Gitlab,
+  Loader2,
+  Plug,
+  Plus,
+  Server,
+  Trash2,
+} from "lucide-react";
 import { Badge } from "../../components/StatusBadge.js";
 import {
   EmptyState,
@@ -17,10 +30,11 @@ import {
   TopBar,
   relTime,
 } from "../../components/common.js";
+import { NewRepoModal } from "../../components/RepoManager.js";
 import { useMutation, useQuery } from "../../lib/ApiProvider.js";
 import { useAuth } from "../../auth/AuthContext.js";
 import { sessionInitial } from "../../auth/tokens.js";
-import type { Provider, RepoConnection } from "../../lib/types.js";
+import type { CodeCommitRepo, Provider, RepoConnection } from "../../lib/types.js";
 import {
   CONNECTION_LABEL,
   CONNECTION_TONE,
@@ -97,6 +111,13 @@ export function Connections(): JSX.Element {
               <DeleteConnBtn connId={c.connId} onDone={reload} />
             </div>
           </div>
+
+          {/* AWS 저장소(codecommit)이면서 사용 가능할 때만 내 저장소 목록·관리를 카드 안에 노출.
+              github/gitlab 은 레포 관리 대상이 아니다(기존 그대로). */}
+          {c.provider === "codecommit" && c.status === "AVAILABLE" && (
+            <RepoSection connId={c.connId} />
+          )}
+
           {c.status === "PENDING" && (
             <div className="mt3">
               <InfoNotice>
@@ -139,6 +160,190 @@ export function Connections(): JSX.Element {
         </Modal>
       )}
     </div>
+  );
+}
+
+// ── AWS 저장소(CodeCommit) 연결 카드 안: 내 저장소 목록 토글 + 만들기/삭제 ──
+// 접힘/펼침으로 카드 밀도를 낮춘다. 펼쳐야 목록을 불러온다(펼치기 전엔 조회하지 않음).
+function RepoSection({ connId }: { connId: string }): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  // 펼치기 전엔 목록을 불러오지 않는다(접힌 카드마다 조회 방지). open 이 되면 그때 조회.
+  const repos = useQuery<CodeCommitRepo[]>(
+    (a) => (open ? a.listRepos(connId) : Promise.resolve([])),
+    [connId, open],
+  );
+
+  const items = repos.data ?? [];
+  // 아직 안 펼쳤으면 개수 미상 → "내 저장소" 만. 펼친 뒤(로딩 끝)엔 개수 표기.
+  const countLabel = open && !repos.loading ? `내 저장소 ${items.length}개` : "내 저장소";
+
+  return (
+    <div className="repo-section">
+      <button
+        type="button"
+        className="repo-toggle"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {open ? (
+          <ChevronDown size={16} className="icon" />
+        ) : (
+          <ChevronRight size={16} className="icon" />
+        )}
+        <FolderGit2 size={15} className="icon" />
+        <span>{countLabel}</span>
+      </button>
+
+      {open && (
+        <div className="repo-body">
+          {repos.loading ? (
+            <div className="hint row" style={{ gap: 6 }}>
+              <Loader2 size={14} className="icon spin" />
+              저장소 목록을 불러오는 중…
+            </div>
+          ) : repos.error ? (
+            <ErrorNotice error={repos.error} />
+          ) : (
+            <>
+              {items.length === 0 ? (
+                <p className="muted" style={{ margin: "4px 0 10px" }}>
+                  아직 만든 저장소가 없어요. '새 저장소 만들기'로 시작해보세요.
+                </p>
+              ) : (
+                <div className="repo-list">
+                  {items.map((r) => (
+                    <RepoRow
+                      key={r.repoName}
+                      connId={connId}
+                      repo={r}
+                      onDeleted={() => repos.reload()}
+                    />
+                  ))}
+                </div>
+              )}
+              <button
+                type="button"
+                className="btn btn-ghost mt3"
+                onClick={() => setCreating(true)}
+              >
+                <Plus size={16} className="icon" />새 저장소 만들기
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {creating && (
+        <NewRepoModal
+          connId={connId}
+          onClose={() => setCreating(false)}
+          onCreated={() => {
+            setCreating(false);
+            repos.reload();
+          }}
+          intro="AWS 저장소(CodeCommit)에 새 코드 저장소를 만들어요. 만든 뒤 앱을 만들 때 이 저장소를 고를 수 있어요."
+          confirmLabel="만들기"
+        />
+      )}
+    </div>
+  );
+}
+
+// ── 저장소 한 줄 (이름 + 삭제) ──
+function RepoRow({
+  connId,
+  repo,
+  onDeleted,
+}: {
+  connId: string;
+  repo: CodeCommitRepo;
+  onDeleted: () => void;
+}): JSX.Element {
+  const [confirm, setConfirm] = useState(false);
+  return (
+    <div className="repo-item">
+      <FolderGit2 size={15} className="icon muted" />
+      <span className="repo-name mono">{repo.repoName}</span>
+      <button
+        type="button"
+        className="row-act"
+        aria-label={`${repo.repoName} 저장소 삭제`}
+        onClick={() => setConfirm(true)}
+      >
+        <Trash2 size={16} className="icon" />
+      </button>
+      {confirm && (
+        <DeleteRepoModal
+          connId={connId}
+          repo={repo}
+          onClose={() => setConfirm(false)}
+          onDeleted={() => {
+            setConfirm(false);
+            onDeleted();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── 저장소 삭제 확인 모달 (파괴적) ──
+// 코드가 사라지는 되돌릴 수 없는 작업이므로, 저장소 이름을 정확히 입력해야만 삭제 버튼이 활성화된다
+// (앱 삭제 확인과 동일 패턴). 사용 중인 앱이 있으면 서버가 409 REPO_IN_USE → 모달 안에서 안내.
+function DeleteRepoModal({
+  connId,
+  repo,
+  onClose,
+  onDeleted,
+}: {
+  connId: string;
+  repo: CodeCommitRepo;
+  onClose: () => void;
+  onDeleted: () => void;
+}): JSX.Element {
+  const del = useMutation<void, void>((a) => a.deleteRepo(connId, repo.repoName));
+  const [confirmText, setConfirmText] = useState("");
+  return (
+    <Modal title="저장소를 삭제할까요?" onClose={onClose}>
+      <p>
+        저장소를 삭제하면 안의 코드가 모두 사라지고 되돌릴 수 없어요. 확인을 위해 저장소 이름{" "}
+        <b className="mono">{repo.repoName}</b>을(를) 입력해주세요.
+      </p>
+      <input
+        className="input"
+        value={confirmText}
+        onChange={(e) => setConfirmText(e.target.value)}
+        placeholder={repo.repoName}
+        aria-label="삭제 확인 저장소 이름"
+        autoFocus
+      />
+      {del.error && (
+        <div className="mt3">
+          <ErrorNotice error={del.error} />
+        </div>
+      )}
+      <div className="modal-actions">
+        <button type="button" className="btn btn-ghost" onClick={onClose}>
+          취소
+        </button>
+        <button
+          type="button"
+          className="btn btn-danger"
+          disabled={confirmText !== repo.repoName || del.loading}
+          onClick={async () => {
+            try {
+              await del.run();
+              onDeleted();
+            } catch {
+              /* 에러(REPO_IN_USE 등)는 del.error 로 모달 안에서 표시 */
+            }
+          }}
+        >
+          {del.loading ? "삭제 중…" : "삭제할게요"}
+        </button>
+      </div>
+    </Modal>
   );
 }
 

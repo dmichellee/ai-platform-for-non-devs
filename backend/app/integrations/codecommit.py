@@ -9,7 +9,8 @@
 
 IAM(platform-stack, API Lambda 역할):
   codecommit:ListRepositories(Resource "*" — 리소스 레벨 미지원),
-  codecommit:CreateRepository, codecommit:GetRepository(레포 ARN 범위 지정 가능).
+  codecommit:CreateRepository, codecommit:GetRepository(레포 ARN 범위 지정 가능),
+  codecommit:DeleteRepository(레포 ARN 범위 지정 가능 — arn:aws:codecommit:{region}:{account}:*).
 """
 
 from __future__ import annotations
@@ -23,6 +24,13 @@ from .clients import client
 
 class RepositoryNameExists(Exception):
     """create_repository 시 동명 레포가 계정 전체에 이미 있음(RepositoryNameExistsException)."""
+
+
+class RepositoryDoesNotExist(Exception):
+    """delete/get 대상 레포가 CodeCommit 에 없음(RepositoryDoesNotExistException).
+
+    삭제 흐름에서는 "밖에서 이미 지워짐"을 의미하므로 호출부가 멱등 처리한다.
+    """
 
 
 def list_repositories() -> list[str]:
@@ -65,6 +73,21 @@ def create_repository(repo_name: str) -> dict[str, str]:
         "repoName": meta.get("repositoryName", repo_name),
         "cloneUrlHttp": meta.get("cloneUrlHttp", ""),
     }
+
+
+def delete_repository(repo_name: str) -> None:
+    """레포 삭제.
+
+    대상 레포가 이미 없으면(RepositoryDoesNotExistException) RepositoryDoesNotExist 를
+    올린다(호출부가 멱등 처리 — 소유권만 정리). 그 외 ClientError 는 그대로 전파.
+    """
+    try:
+        client("codecommit").delete_repository(repositoryName=repo_name)
+    except ClientError as err:
+        code = err.response.get("Error", {}).get("Code")
+        if code == "RepositoryDoesNotExistException":
+            raise RepositoryDoesNotExist(repo_name) from err
+        raise
 
 
 def get_repository(repo_name: str) -> dict[str, str] | None:

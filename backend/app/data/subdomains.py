@@ -47,6 +47,19 @@ def app_id_for_subdomain(subdomain: str) -> str | None:
     return app_id if isinstance(app_id, str) else None
 
 
+def subdomain_available(subdomain: str) -> bool:
+    """예약 아이템 존재 여부로 사용 가능 판정(마법사 실시간 확인용, 가벼운 단건 조회).
+
+    True = 아직 예약 안 됨(사용 가능). 형식 검증은 호출부(domain.subdomain)에서 별도 수행.
+    원자적 유일성 보장은 reserve_subdomain(앱 생성 시)에만 있다 — 여기는 참고용 확인.
+    """
+    res = table().get_item(
+        Key={"PK": _subdomain_pk(subdomain), "SK": _RESERVATION_SK},
+        ProjectionExpression="PK",
+    )
+    return res.get("Item") is None
+
+
 def release_subdomain(subdomain: str) -> None:
     """예약 해제(앱 삭제 시). 멱등 — 없어도 성공."""
     table().delete_item(Key={"PK": _subdomain_pk(subdomain), "SK": _RESERVATION_SK})

@@ -35,6 +35,33 @@ export function sessionInitial(session: UserSession | null): string {
   return (sessionDisplayName(session) ?? "나").slice(0, 1);
 }
 
+/**
+ * 저장소 이름 소유자 접두어 — 서버(POST /connections/{connId}/repos)가 base 이름 앞에
+ * `{ownerPrefix}-` 를 강제 부착한다. 프론트는 미리보기·목 생성에서 **동일 규칙**을 구현한다.
+ *
+ * 규칙(백엔드와 합의):
+ *  1) session.email 의 로컬파트(@ 앞)를 소문자화
+ *  2) `[a-z0-9._-]` 외 문자는 `-` 로 치환
+ *  3) 앞뒤 구분자(`-`,`.`,`_`) 제거
+ *  4) email 없거나 결과가 비면 → session.sub 앞 8자 (같은 정제 규칙 적용)
+ * 세션 자체가 없거나 둘 다 비면 빈 문자열("")을 돌려준다(호출 측이 접두어 없음으로 처리).
+ */
+export function computeOwnerPrefix(session: UserSession | null): string {
+  const sanitize = (raw: string): string =>
+    raw
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, "-")
+      .replace(/^[-._]+|[-._]+$/g, "");
+
+  const local = session?.email?.split("@")[0] ?? "";
+  const fromEmail = sanitize(local);
+  if (fromEmail) return fromEmail;
+
+  const sub = session?.sub ?? "";
+  const fromSub = sanitize(sub.slice(0, 8));
+  return fromSub;
+}
+
 interface IdTokenClaims {
   sub?: string;
   email?: string;
