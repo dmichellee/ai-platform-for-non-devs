@@ -1,11 +1,10 @@
 # 로컬 도구/IDE 폴더 (버전관리 제외)
 .omni/
+.claude/
 .cursor/
 .agents/
-# 하네스(.claude: 에이전트·스킬)와 Kiro 설정(.kiro)은 프로젝트 산출물 → 추적한다.
-# 로컬 전용 파일만 선별 제외:
-.claude/settings.local.json
 .mcp.json
+# Kiro 설정(.kiro)은 프로젝트 산출물 → 추적한다.
 
 # dependencies
 node_modules/
