@@ -5,7 +5,6 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowLeft,
   ExternalLink,
   History,
   Play,
@@ -17,6 +16,7 @@ import {
 } from "lucide-react";
 import { AppStatusBadge, Badge } from "../../components/StatusBadge.js";
 import {
+  BackLink,
   ErrorNotice,
   InfoNotice,
   Modal,
@@ -51,9 +51,7 @@ export function AppDetail({ appId }: { appId: string }): JSX.Element {
   return (
     <div className="wrap">
       <TopBar userInitial={userInitial} onLogout={logout} />
-      <button type="button" className="back-link" onClick={() => nav("/")}>
-        <ArrowLeft size={15} className="icon" />내 앱으로
-      </button>
+      <BackLink label="내 앱으로" onClick={() => nav("/")} />
 
       {loading && <Skeleton height={90} count={3} />}
       {error && <ErrorNotice error={error} />}

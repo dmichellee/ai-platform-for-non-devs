@@ -5,6 +5,7 @@
 | App                 | APP#{appId}        | META            |
 | Deployment          | APP#{appId}        | DEPLOY#{ts}     |
 | RepoConnection      | USER#{userId}      | CONN#{connId}   |
+| CodeCommitRepo      | USER#{userId}      | CCREPO#{repoName} |
 | AlbRegistry         | CONFIG             | ALB#{albArn}    |
 | ComputePreset       | CONFIG             | PRESET#{id}     |
 | PermissionTemplate  | CONFIG             | PERM#{id}       |
@@ -37,6 +38,10 @@ def conn_sk(conn_id: str) -> str:
     return f"CONN#{conn_id}"
 
 
+def ccrepo_sk(repo_name: str) -> str:
+    return f"CCREPO#{repo_name}"
+
+
 def alb_sk(alb_arn: str) -> str:
     return f"ALB#{alb_arn}"
 
@@ -53,6 +58,7 @@ def perm_sk(perm_id: str) -> str:
 class SkPrefix:
     DEPLOY = "DEPLOY#"
     CONN = "CONN#"
+    CCREPO = "CCREPO#"
     ALB = "ALB#"
     PRESET = "PRESET#"
     PERM = "PERM#"

@@ -6,6 +6,7 @@ import type {
   AdminSettings,
   AlbRegistry,
   App,
+  CodeCommitRepo,
   ComputePreset,
   Deployment,
   PermissionTemplate,
@@ -237,7 +238,26 @@ export const mockConnections: RepoConnection[] = [
     createdAt: iso(1000 * 60 * 10),
     updatedAt: iso(1000 * 60 * 10),
   },
+  {
+    connId: "conn-0003",
+    ownerId: MOCK_USER_SUB,
+    provider: "codecommit",
+    connectionArn: "arn:mock:connection/3",
+    status: "AVAILABLE",
+    displayName: "AWS 저장소",
+    createdAt: iso(1000 * 60 * 60 * 24 * 4),
+    updatedAt: iso(1000 * 60 * 60 * 24 * 4),
+  },
 ];
+
+// CodeCommit(AWS 저장소) 레포 — 사용자가 AppHub로 만든 것만 소유권 추적(계약).
+// key = connId. 조직 식별정보 금지 → example 호스트/가공명.
+export const mockRepos: Record<string, CodeCommitRepo[]> = {
+  "conn-0003": [
+    { repoName: "sales-board", cloneUrlHttp: "https://git-codecommit.example/v1/repos/sales-board" },
+    { repoName: "meeting-notes", cloneUrlHttp: "https://git-codecommit.example/v1/repos/meeting-notes" },
+  ],
+};
 
 export const mockPresets: ComputePreset[] = [
   { presetId: "preset-small", displayName: "작게", cpu: 512, memory: 1024, minCount: 1, maxCount: 2, scaleMetric: "cpu", scaleThreshold: 70 },

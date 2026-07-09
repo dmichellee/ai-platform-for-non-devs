@@ -7,6 +7,7 @@ import type {
   AdminSettings,
   AlbRegistry,
   App,
+  CodeCommitRepo,
   ComputePreset,
   CreateAppRequest,
   Deployment,
@@ -50,6 +51,9 @@ export interface ApiClient {
   listConnections(): Promise<RepoConnection[]>;
   createConnection(provider: Provider, displayName: string): Promise<RepoConnection>;
   deleteConnection(connId: string): Promise<void>;
+  // 연결 하위 — CodeCommit(AWS 저장소) 레포 (계약: /connections/{connId}/repos)
+  listRepos(connId: string): Promise<CodeCommitRepo[]>;
+  createRepo(connId: string, repoName: string): Promise<CodeCommitRepo>;
   // 관리자
   adminGetSettings(): Promise<AdminSettings>;
   adminPutSettings(body: Omit<AdminSettings, "updatedAt">): Promise<AdminSettings>;
@@ -173,6 +177,12 @@ export class HttpApiClient implements ApiClient {
   }
   async deleteConnection(connId: string): Promise<void> {
     await this.request<void>("DELETE", `/connections/${connId}`);
+  }
+  listRepos(connId: string): Promise<CodeCommitRepo[]> {
+    return this.list<CodeCommitRepo>("GET", `/connections/${connId}/repos`);
+  }
+  createRepo(connId: string, repoName: string): Promise<CodeCommitRepo> {
+    return this.single<CodeCommitRepo>("POST", `/connections/${connId}/repos`, { repoName });
   }
 
   // 관리자

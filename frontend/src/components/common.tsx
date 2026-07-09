@@ -3,7 +3,17 @@
  * 이모지 금지 → 전부 Lucide.
  */
 import type { ReactNode } from "react";
-import { AlertTriangle, Info, LayoutGrid, LogOut, Plug, ShieldCheck, X } from "lucide-react";
+import {
+  AlertTriangle,
+  ChevronLeft,
+  Info,
+  LayoutGrid,
+  LogOut,
+  Plug,
+  Settings2,
+  ShieldCheck,
+  X,
+} from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle.js";
 import { useNavigate, useRoute } from "../lib/router.js";
 import { useAuth } from "../auth/AuthContext.js";
@@ -39,6 +49,7 @@ export function TopBar({
   const { isAdmin } = useAuth();
   const isDash = route.path === "/" || route.segments[0] === "apps";
   const isConn = route.segments[0] === "connections";
+  const isKiro = route.segments[0] === "kiro-setup";
   return (
     <div className="app-topbar">
       <button
@@ -66,6 +77,16 @@ export function TopBar({
         <span className="row" style={{ gap: 6 }}>
           <Plug size={15} strokeWidth={2} className="icon" />
           저장소 연결
+        </span>
+      </button>
+      <button
+        type="button"
+        className={`topbar-link ${isKiro ? "active" : ""}`}
+        onClick={() => nav("/kiro-setup")}
+      >
+        <span className="row" style={{ gap: 6 }}>
+          <Settings2 size={15} strokeWidth={2} className="icon" />
+          Kiro 설정
         </span>
       </button>
       {isAdmin && (
@@ -101,6 +122,28 @@ export function TopBar({
         {userInitial}
       </span>
     </div>
+  );
+}
+
+/**
+ * "← 내 앱으로" 등 상단 뒤로가기 링크.
+ * 텍스트 링크 + 원형 아이콘 pill 로, 톤앤매너(부드러운 radius·hover)에 맞춘 secondary 스타일.
+ * 라이트/다크 모두 시맨틱 토큰만 사용.
+ */
+export function BackLink({
+  label,
+  onClick,
+}: {
+  label: string;
+  onClick: () => void;
+}): JSX.Element {
+  return (
+    <button type="button" className="back-link" onClick={onClick}>
+      <span className="back-link-ico" aria-hidden="true">
+        <ChevronLeft size={16} strokeWidth={2.2} className="icon" />
+      </span>
+      {label}
+    </button>
   );
 }
 

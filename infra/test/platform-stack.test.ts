@@ -269,30 +269,43 @@ describe("platform 스택", () => {
       expect(Object.keys(json.Outputs ?? {})).toContain("AssetsBucketName");
     });
 
-    it("provisioner 역할의 Resource:'*' statement는 최소(Describe* + 조건부 EC2 SG만)", () => {
+    it("Resource:'*' statement는 문서화된 예외 SID로만 허용된다(우발적 * 금지)", () => {
       const policies = template.findResources("AWS::IAM::Policy");
       // Resource가 문자열 "*" 또는 배열 ["*"] 두 형태 모두를 잡는다.
       const isStar = (r: unknown): boolean =>
         r === "*" || (Array.isArray(r) && r.length === 1 && r[0] === "*");
+      // 리소스 레벨 미지원 액션이라 IAM 상 "*" 필수인 정당한 예외 목록(전부 주석·문서로 정당화됨).
+      //  이 SID들 외에 "*" resource가 나타나면 실패한다(최소권한 회귀 가드).
+      const allowedStarSids = new Set([
+        "ReadOnlyDescribeStar", // provisioner: Describe*/List*/GetAuthorizationToken (리소스 레벨 미지원 조회)
+        "AppSecurityGroupManageInRegion", // provisioner: EC2 SG 생성/변경 (aws:RequestedRegion 조건, QA M-2)
+        "CodeConnectionsCreateList", // API: CreateConnection/ListConnections (리소스 레벨 미지원, IAM 시뮬레이터 검증)
+        "CodeCommitRepos", // API: ListRepositories/CreateRepository (리소스 레벨 미지원, IAM 시뮬레이터 검증)
+      ]);
       let star = 0;
       let starWithCondition = 0;
+      const unexpected: string[] = [];
       for (const pol of Object.values(policies)) {
         const doc = (
           pol.Properties as {
-            PolicyDocument?: { Statement?: Array<{ Resource?: unknown; Condition?: unknown }> };
+            PolicyDocument?: {
+              Statement?: Array<{ Sid?: string; Resource?: unknown; Condition?: unknown }>;
+            };
           }
         ).PolicyDocument;
         for (const st of doc?.Statement ?? []) {
           if (isStar(st.Resource)) {
             star++;
             if (st.Condition) starWithCondition++;
+            if (!(typeof st.Sid === "string" && allowedStarSids.has(st.Sid))) {
+              unexpected.push(String(st.Sid ?? "<no-sid>"));
+            }
           }
         }
       }
-      // ReadOnlyDescribeStar(리소스레벨 미지원 조회, 무조건) 1개 +
-      // AppSecurityGroupManageInRegion(EC2 SG 생성/변경, aws:RequestedRegion 조건, QA M-2 축소) 1개 = 2개.
-      expect(star).toBeLessThanOrEqual(2);
-      // provisioner 역할에는 * statement가 실제로 존재해야 한다(테스트 경로 유효성 가드).
+      // 예외 목록에 없는 "*" statement가 하나라도 있으면 실패(문서 갱신 없는 * 추가 차단).
+      expect(unexpected, `허용 목록 밖 Resource:"*" statement: ${unexpected.join(", ")}`).toEqual([]);
+      // 예외 statement는 실제로 존재해야 한다(테스트 경로 유효성 가드).
       expect(star).toBeGreaterThanOrEqual(1);
       // SG 조작 * statement는 반드시 리전 조건이 붙어야 한다(무제한 * 금지, QA M-2).
       expect(starWithCondition).toBeGreaterThanOrEqual(1);
@@ -396,6 +409,143 @@ describe("platform 스택", () => {
       expect(raw).toContain("codepipeline:StartPipelineExecution");
       // Resource:"*" 아님 — 앱 파이프라인 접두어 포함.
       expect(raw).toContain("apphub-dev-app-*");
+    });
+  });
+
+  describe("API 역할 — codeconnections (레포 연결 생성/조회/삭제)", () => {
+    // 회귀 방지: github/gitlab 연결 생성 시 AccessDenied(500). 근본 원인은 CreateConnection이
+    //  리소스 레벨 미지원(생성 시점 connection ARN 부재)인데 connection/* 로 한정한 것.
+    //  액션별 리소스 범위를 고정한다:
+    //   - CreateConnection / ListConnections → codeconnections 서비스 스코프(connection 세그먼트 없음).
+    //   - GetConnection / DeleteConnection → connection/* 로 한정.
+    type Stmt = { Sid?: string; Action?: unknown; Resource?: unknown };
+    function stmtsBySid(sidPart: string): Stmt[] {
+      const policies = template.findResources("AWS::IAM::Policy");
+      const out: Stmt[] = [];
+      for (const pol of Object.values(policies)) {
+        const doc = (
+          pol.Properties as { PolicyDocument?: { Statement?: Stmt[] } }
+        ).PolicyDocument;
+        for (const st of doc?.Statement ?? []) {
+          if (typeof st.Sid === "string" && st.Sid.includes(sidPart)) out.push(st);
+        }
+      }
+      return out;
+    }
+    const asArray = (a: unknown): string[] =>
+      Array.isArray(a) ? (a as string[]) : typeof a === "string" ? [a] : [];
+
+    it("CreateConnection/ListConnections는 Resource:'*' 여야 한다(리소스 레벨 미지원 → IAM 매칭 요건)", () => {
+      const stmts = stmtsBySid("CodeConnectionsCreateList");
+      expect(stmts.length, "CodeConnectionsCreateList statement가 존재해야 함").toBe(1);
+      const st = stmts[0];
+      const actions = asArray(st.Action);
+      expect(actions).toEqual(
+        expect.arrayContaining([
+          "codeconnections:CreateConnection",
+          "codeconnections:ListConnections",
+        ]),
+      );
+      // 근본 원인 회귀 방지: 이 두 액션은 리소스 레벨 미지원이라 IAM 상 진짜 전역 "*" 만 매칭된다.
+      //  계정/리전 한정 ARN(arn:...:*)이나 connection/* 로 좁히면 implicitDeny로 500이 재발한다.
+      //  (IAM 정책 시뮬레이터로 검증: `arn:...:*` → implicitDeny, `*` → allowed)
+      const isStar = (r: unknown): boolean =>
+        r === "*" || (Array.isArray(r) && r.length === 1 && r[0] === "*");
+      expect(isStar(st.Resource), `Resource는 "*" 여야 함(현재: ${JSON.stringify(st.Resource)})`).toBe(true);
+    });
+
+    it("GetConnection/DeleteConnection은 connection/* 로 범위를 유지한다(리소스 레벨 지원)", () => {
+      const stmts = stmtsBySid("CodeConnectionsGetDelete");
+      expect(stmts.length, "CodeConnectionsGetDelete statement가 존재해야 함").toBe(1);
+      const st = stmts[0];
+      const actions = asArray(st.Action);
+      expect(actions).toEqual(
+        expect.arrayContaining([
+          "codeconnections:GetConnection",
+          "codeconnections:DeleteConnection",
+        ]),
+      );
+      // 이 statement는 connection/* 로 한정된다.
+      const resJson = JSON.stringify(st.Resource);
+      expect(resJson).toContain("connection/");
+      // Create/List가 이 (범위 좁은) statement에 섞여 들어가면 안 된다(회귀 방지).
+      expect(actions).not.toContain("codeconnections:CreateConnection");
+      expect(actions).not.toContain("codeconnections:ListConnections");
+    });
+
+    it("API 역할에는 UseConnection/PassConnection을 부여하지 않는다(소스 소비는 CodePipeline 역할 몫)", () => {
+      const raw = JSON.stringify(
+        Object.values(template.findResources("AWS::IAM::Policy")),
+      );
+      // API 핸들러 역할 정책 문서 어디에도 UseConnection/PassConnection이 없다.
+      //  (앱 파이프라인은 별도 스택/construct라 이 platform 템플릿에 포함되지 않는다.)
+      expect(raw).not.toContain("codeconnections:UseConnection");
+      expect(raw).not.toContain("codeconnections:PassConnection");
+    });
+  });
+
+  describe("API 역할 — codecommit (레포 목록/생성/조회: GET/POST /connections/{connId}/repos)", () => {
+    // 회귀 방지: 레포 목록/생성 API가 codecommit boto3 호출 시 AccessDenied(500). 근본 원인은
+    //  ListRepositories/CreateRepository가 리소스 레벨 미지원(생성 시점 ARN 부재 / List는 계정 전역)인데
+    //  계정/리전 한정 ARN으로 좁힌 것. codeconnections(CreateConnection/ListConnections)와 동일한 교훈.
+    //  액션별 리소스 범위를 고정한다(IAM 정책 시뮬레이터 검증):
+    //   - ListRepositories / CreateRepository → Resource:"*" (arn:...:* 는 implicitDeny).
+    //   - GetRepository → 계정/리전 스코프 ARN(리소스 레벨 지원).
+    type Stmt = { Sid?: string; Action?: unknown; Resource?: unknown };
+    function stmtsBySid(sidPart: string): Stmt[] {
+      const policies = template.findResources("AWS::IAM::Policy");
+      const out: Stmt[] = [];
+      for (const pol of Object.values(policies)) {
+        const doc = (
+          pol.Properties as { PolicyDocument?: { Statement?: Stmt[] } }
+        ).PolicyDocument;
+        for (const st of doc?.Statement ?? []) {
+          if (typeof st.Sid === "string" && st.Sid.includes(sidPart)) out.push(st);
+        }
+      }
+      return out;
+    }
+    const asArray = (a: unknown): string[] =>
+      Array.isArray(a) ? (a as string[]) : typeof a === "string" ? [a] : [];
+    const isStar = (r: unknown): boolean =>
+      r === "*" || (Array.isArray(r) && r.length === 1 && r[0] === "*");
+
+    it("ListRepositories/CreateRepository는 Resource:'*' 여야 한다(리소스 레벨 미지원 → IAM 매칭 요건)", () => {
+      const stmts = stmtsBySid("CodeCommitRepos");
+      expect(stmts.length, "CodeCommitRepos statement가 존재해야 함").toBe(1);
+      const st = stmts[0];
+      const actions = asArray(st.Action);
+      expect(actions).toEqual(
+        expect.arrayContaining([
+          "codecommit:ListRepositories",
+          "codecommit:CreateRepository",
+        ]),
+      );
+      // 근본 원인 회귀 방지: 이 두 액션은 리소스 레벨 미지원이라 IAM 상 진짜 전역 "*" 만 매칭된다.
+      //  계정/리전 한정 ARN(arn:...:*)으로 좁히면 implicitDeny로 500이 재발한다.
+      //  (IAM 정책 시뮬레이터로 검증: `arn:...:*` → implicitDeny, `*` → allowed)
+      expect(isStar(st.Resource), `Resource는 "*" 여야 함(현재: ${JSON.stringify(st.Resource)})`).toBe(true);
+      // GetRepository(범위 좁은 statement)가 이 * statement에 섞여 들어가면 안 된다.
+      expect(actions).not.toContain("codecommit:GetRepository");
+    });
+
+    it("GetRepository는 계정/리전 스코프 ARN으로 한정한다(리소스 레벨 지원, Resource:'*' 아님)", () => {
+      const stmts = stmtsBySid("CodeCommitRepoGet");
+      expect(stmts.length, "CodeCommitRepoGet statement가 존재해야 함").toBe(1);
+      const st = stmts[0];
+      const actions = asArray(st.Action);
+      expect(actions).toEqual(
+        expect.arrayContaining(["codecommit:GetRepository"]),
+      );
+      // Resource:"*" 아님 — codecommit 서비스+리전+계정 스코프 ARN이어야 한다.
+      expect(isStar(st.Resource), `Resource는 "*"가 아니어야 함(현재: ${JSON.stringify(st.Resource)})`).toBe(false);
+      const resJson = JSON.stringify(st.Resource);
+      // formatArn(service:"codecommit")은 리전/계정을 채운 arn:aws:codecommit:{region}:{account}:* 형태.
+      expect(resJson).toContain("codecommit");
+      expect(resJson).toContain("ap-northeast-2"); // 배포 리전 한정
+      // Create/List(전역 * statement)가 이 좁은 statement에 섞여 들어가면 안 된다(회귀 방지).
+      expect(actions).not.toContain("codecommit:CreateRepository");
+      expect(actions).not.toContain("codecommit:ListRepositories");
     });
   });
 

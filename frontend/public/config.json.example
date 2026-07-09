@@ -6,5 +6,7 @@
   "cognitoDomain": "apphub-dev-ACCOUNT.auth.ap-northeast-2.amazoncognito.com",
   "region": "ap-northeast-2",
   "stage": "dev",
+  "_kiroConfigUrl_comment": "선택. 없으면 SPA가 기본 경로 /kiro-config/kiro-config.zip 로 폴백한다. platform Output KiroConfigUrlPath 값을 그대로 넣으면 됨(CloudFront 같은 오리진 서빙).",
+  "kiroConfigUrl": "/kiro-config/kiro-config.zip",
   "mock": false
 }

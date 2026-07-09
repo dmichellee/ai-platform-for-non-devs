@@ -14,9 +14,18 @@ export interface RuntimeConfig {
   region?: string;
   redirectUri?: string; // 로그인 콜백 (기본: 현재 origin)
   stage?: string;
+  /**
+   * Kiro 설정 번들(.zip) 다운로드 경로. CloudFront가 SPA와 같은 오리진에서
+   * `/kiro-config/*` behavior로 자산 버킷을 서빙하므로(platform Output KiroConfigUrlPath),
+   * 기본값은 SPA-상대 경로다. deploy.sh가 config.json에 넣어주면 그 값을 쓰고, 없으면 기본값.
+   */
+  kiroConfigUrl?: string;
   /** true면 API를 목으로 처리하고 로그인도 우회한다. QA/데모용. */
   mock: boolean;
 }
+
+/** Kiro 설정 다운로드 기본 경로(SPA-상대). config.json에 kiroConfigUrl이 없을 때 폴백. */
+export const DEFAULT_KIRO_CONFIG_URL = "/kiro-config/kiro-config.zip";
 
 const DEFAULT_MOCK_CONFIG: RuntimeConfig = {
   apiUrl: "",
@@ -57,6 +66,7 @@ export async function loadConfig(): Promise<RuntimeConfig> {
     };
     if (raw.cognitoDomain) cfg.cognitoDomain = raw.cognitoDomain;
     if (raw.region) cfg.region = raw.region;
+    if (raw.kiroConfigUrl) cfg.kiroConfigUrl = raw.kiroConfigUrl;
     cached = cfg;
     return cfg;
   } catch {

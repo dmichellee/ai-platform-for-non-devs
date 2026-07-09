@@ -7,6 +7,7 @@
  *   #/apps/:appId           (앱 상세)
  *   #/apps/:appId/deployments/:deploymentId  (배포 상세)
  *   #/connections           (레포 연결 관리)
+ *   #/kiro-setup            (Kiro 설정 다운로드 — 로그인한 모든 사용자)
  *   #/admin                 (관리자 — 탭 내부 전환: ?tab=)
  */
 import { useCallback, useEffect, useState } from "react";

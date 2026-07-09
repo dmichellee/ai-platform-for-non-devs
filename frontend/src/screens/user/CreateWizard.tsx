@@ -11,23 +11,26 @@ import {
   Check,
   Cpu,
   Download,
+  FolderGit2,
   Github,
   Gitlab,
   Globe,
   KeyRound,
   Building2,
+  Loader2,
   Plus,
   Rocket,
   Server,
   Trash2,
 } from "lucide-react";
-import { ErrorNotice, InfoNotice, Modal, TopBar } from "../../components/common.js";
+import { BackLink, ErrorNotice, InfoNotice, Modal, TopBar } from "../../components/common.js";
 import { useApi, useMutation, useQuery } from "../../lib/ApiProvider.js";
 import { useNavigate } from "../../lib/router.js";
 import { useAuth } from "../../auth/AuthContext.js";
 import { sessionInitial } from "../../auth/tokens.js";
 import type {
   App,
+  CodeCommitRepo,
   ComputePreset,
   CreateAppRequest,
   PermissionTemplate,
@@ -155,9 +158,7 @@ export function CreateWizard(): JSX.Element {
   return (
     <div className="wrap">
       <TopBar userInitial={userInitial} onLogout={logout} />
-      <button type="button" className="back-link" onClick={() => nav("/")}>
-        <ArrowLeft size={15} className="icon" />내 앱으로
-      </button>
+      <BackLink label="내 앱으로" onClick={() => nav("/")} />
 
       <div className="wizard">
         <div className="steps" aria-label="단계 진행">
@@ -227,7 +228,15 @@ export function CreateWizard(): JSX.Element {
   );
 }
 
-// ── 단계 1: 저장소 연결 ──
+// github/gitlab 저장소 주소 안내 (provider별).
+const REPO_URL_PLACEHOLDER: Record<"github" | "gitlab", string> = {
+  github: "https://github.com/계정/저장소",
+  gitlab: "https://gitlab.com/계정/저장소",
+};
+
+// ── 단계 1: 저장소 연결 (하이브리드) ──
+// codecommit(AWS 저장소): 본인 레포 드롭다운 + 새로 만들기 → cloneUrlHttp를 repoUrl로.
+// github/gitlab: 저장소 주소 자유 입력(provider별 placeholder·안내).
 function StepRepo({
   draft,
   patch,
@@ -239,6 +248,14 @@ function StepRepo({
 }): JSX.Element {
   const nav = useNavigate();
   const available = conns.filter((c) => c.status === "AVAILABLE");
+  const isCodeCommit = draft.provider === "codecommit";
+
+  // 연결이 바뀌면 이전에 고른 저장소 주소는 초기화(연결마다 저장소가 다름).
+  function selectConnection(c: RepoConnection): void {
+    if (draft.connection?.connId === c.connId) return;
+    patch({ connection: c, provider: c.provider, repoUrl: "" });
+  }
+
   return (
     <>
       <h3>어떤 코드 저장소를 배포할까요?</h3>
@@ -265,7 +282,7 @@ function StepRepo({
                 key={c.connId}
                 type="button"
                 className={`choice ${sel ? "sel" : ""}`}
-                onClick={() => patch({ connection: c, provider: c.provider })}
+                onClick={() => selectConnection(c)}
               >
                 <div className="ico">
                   {c.provider === "github" ? (
@@ -284,29 +301,188 @@ function StepRepo({
         </div>
       )}
 
-      <div className="grid-2 mt4">
-        <div className="field">
-          <label htmlFor="repoUrl">저장소 주소</label>
-          <input
-            id="repoUrl"
-            className="input"
-            placeholder="예: https://github.com/회사/앱"
-            value={draft.repoUrl}
-            onChange={(e) => patch({ repoUrl: e.target.value })}
-          />
+      {draft.connection && (
+        <div className="grid-2 mt4">
+          {isCodeCommit ? (
+            <CodeCommitRepoPicker
+              connId={draft.connection.connId}
+              value={draft.repoUrl}
+              onSelect={(repo) => patch({ repoUrl: repo.cloneUrlHttp })}
+            />
+          ) : (
+            <div className="field">
+              <label htmlFor="repoUrl">저장소 주소</label>
+              <input
+                id="repoUrl"
+                className="input"
+                placeholder={REPO_URL_PLACEHOLDER[draft.provider as "github" | "gitlab"]}
+                value={draft.repoUrl}
+                onChange={(e) => patch({ repoUrl: e.target.value })}
+              />
+              <div className="hint">연결한 계정의 저장소 주소를 붙여넣으세요.</div>
+            </div>
+          )}
+          <div className="field">
+            <label htmlFor="branch">배포할 브랜치</label>
+            <input
+              id="branch"
+              className="input"
+              placeholder="main"
+              value={draft.branch}
+              onChange={(e) => patch({ branch: e.target.value })}
+            />
+            <div className="hint">보통 main 이에요. 다른 브랜치를 쓰면 이름을 적어주세요.</div>
+          </div>
         </div>
-        <div className="field">
-          <label htmlFor="branch">배포할 브랜치</label>
-          <input
-            id="branch"
-            className="input"
-            placeholder="main"
-            value={draft.branch}
-            onChange={(e) => patch({ branch: e.target.value })}
-          />
-        </div>
-      </div>
+      )}
     </>
+  );
+}
+
+// ── CodeCommit(AWS 저장소) 레포 드롭다운 + 새로 만들기 ──
+// 본인이 AppHub로 만든 레포만 목록에 온다(계약). 선택 시 cloneUrlHttp를 위로 올린다.
+function CodeCommitRepoPicker({
+  connId,
+  value,
+  onSelect,
+}: {
+  connId: string;
+  value: string;
+  onSelect: (repo: CodeCommitRepo) => void;
+}): JSX.Element {
+  const repos = useQuery<CodeCommitRepo[]>((a) => a.listRepos(connId), [connId]);
+  const [creating, setCreating] = useState(false);
+
+  const items = repos.data ?? [];
+  // 현재 repoUrl(cloneUrlHttp)에 해당하는 레포 이름을 select value로.
+  const selectedName = items.find((r) => r.cloneUrlHttp === value)?.repoName ?? "";
+
+  function onRepoCreated(repo: CodeCommitRepo): void {
+    setCreating(false);
+    repos.reload(); // 목록 갱신
+    onSelect(repo); // 자동 선택
+  }
+
+  return (
+    <div className="field">
+      <label htmlFor="repo-select">배포할 저장소</label>
+      {repos.loading ? (
+        <div className="hint row" style={{ gap: 6 }}>
+          <Loader2 size={14} className="icon spin" />
+          저장소 목록을 불러오는 중…
+        </div>
+      ) : repos.error ? (
+        <ErrorNotice error={repos.error} />
+      ) : (
+        <>
+          <div className="row" style={{ gap: 8 }}>
+            <div className="select-wrap" style={{ flex: 1 }}>
+              <FolderGit2 size={15} className="icon select-ico" />
+              <select
+                id="repo-select"
+                className="input select"
+                value={selectedName}
+                onChange={(e) => {
+                  const repo = items.find((r) => r.repoName === e.target.value);
+                  if (repo) onSelect(repo);
+                }}
+              >
+                <option value="" disabled>
+                  {items.length === 0 ? "아직 만든 저장소가 없어요" : "저장소를 골라주세요"}
+                </option>
+                {items.map((r) => (
+                  <option key={r.repoName} value={r.repoName}>
+                    {r.repoName}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              style={{ whiteSpace: "nowrap" }}
+              onClick={() => setCreating(true)}
+            >
+              <Plus size={16} className="icon" />새 저장소 만들기
+            </button>
+          </div>
+          <div className="hint">
+            {items.length === 0
+              ? "AppHub로 만든 저장소가 여기 나와요. '새 저장소 만들기'로 시작해보세요."
+              : "원하는 저장소가 없다면 '새 저장소 만들기'로 추가할 수 있어요."}
+          </div>
+        </>
+      )}
+
+      {creating && (
+        <NewRepoModal connId={connId} onClose={() => setCreating(false)} onCreated={onRepoCreated} />
+      )}
+    </div>
+  );
+}
+
+// ── 새 CodeCommit 레포 만들기 모달 ──
+function NewRepoModal({
+  connId,
+  onClose,
+  onCreated,
+}: {
+  connId: string;
+  onClose: () => void;
+  onCreated: (repo: CodeCommitRepo) => void;
+}): JSX.Element {
+  const [name, setName] = useState("");
+  const createMut = useMutation<string, CodeCommitRepo>((a, repoName) => a.createRepo(connId, repoName));
+
+  // 계약 이름 규칙에 맞는지 즉시 힌트 (소문자·숫자로 시작·끝, 가운데 -/_/. 허용).
+  const trimmed = name.trim();
+  const looksValid =
+    trimmed.length > 0 && /^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$/.test(trimmed) && !trimmed.endsWith(".git");
+
+  async function submit(): Promise<void> {
+    try {
+      const repo = await createMut.run(trimmed);
+      onCreated(repo);
+    } catch {
+      /* 에러는 createMut.error 로 표시 (REPO_NAME_TAKEN 등) */
+    }
+  }
+
+  return (
+    <Modal title="새 저장소 만들기" onClose={onClose}>
+      <p style={{ marginBottom: 12 }}>
+        AWS 저장소(CodeCommit)에 새 코드 저장소를 만들어요. 만든 뒤 바로 이 앱에 연결됩니다.
+      </p>
+      <div className="field">
+        <label htmlFor="new-repo-name">저장소 이름</label>
+        <input
+          id="new-repo-name"
+          className="input"
+          placeholder="예: customer-chatbot"
+          value={name}
+          autoFocus
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && looksValid && !createMut.loading) void submit();
+          }}
+        />
+        <div className="hint">소문자·숫자로 시작하고 끝나요. 가운데에는 -, _, . 를 쓸 수 있어요. (예: sales-board)</div>
+      </div>
+      {createMut.error && <ErrorNotice error={createMut.error} />}
+      <div className="modal-actions">
+        <button type="button" className="btn btn-ghost" onClick={onClose}>
+          취소
+        </button>
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={!looksValid || createMut.loading}
+          onClick={submit}
+        >
+          {createMut.loading ? "만드는 중…" : "만들고 선택하기"}
+        </button>
+      </div>
+    </Modal>
   );
 }
 

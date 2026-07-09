@@ -1,7 +1,9 @@
 /**
- * 레포 연결 관리 — 연결 목록·추가. GitHub/GitLab은 외부 승인(PENDING) 흐름 안내,
- * AWS 저장소(codecommit)는 즉시 사용 가능.
- * 용어 사전: CodeConnections/OAuth 같은 내부 용어는 노출하지 않는다.
+ * 레포 연결 관리 — 연결 목록·추가.
+ * AWS 저장소(codecommit)는 즉시 사용 가능. GitHub/GitLab은 아직 웹에서 승인할 수 없어
+ * PENDING 상태로 "준비 중"임을 정직하게 안내한다(카드는 그대로 두어 향후 웹 승인이 같은 자리에 들어감).
+ * 용어 사전: CodeConnections/OAuth 같은 내부 용어, "AWS 콘솔/GitHub 화면에서 승인" 같은
+ * 틀린·기술적 안내는 노출하지 않는다.
  */
 import { useState } from "react";
 import { Github, Gitlab, Plug, Plus, Server, Trash2 } from "lucide-react";
@@ -98,8 +100,10 @@ export function Connections(): JSX.Element {
           {c.status === "PENDING" && (
             <div className="mt3">
               <InfoNotice>
-                이 연결은 아직 <b>승인 대기 중</b>이에요. {PROVIDER_LABEL[c.provider]} 화면에서 접근을 승인해야
-                사용할 수 있어요. 승인을 마친 뒤 이 페이지를 새로고침하면 '사용 가능'으로 바뀝니다.
+                {PROVIDER_LABEL[c.provider]} 연결 방식은 아직 준비 중이에요. 지금은 관리자를 통해 연결을 완료해야
+                사용할 수 있어요. 곧 이 화면에서 바로 연결을 마칠 수 있도록 준비하고 있어요.
+                <br />
+                바로 앱을 만들고 싶다면 <b>AWS 저장소(CodeCommit)</b>를 사용하시길 권장해요.
               </InfoNotice>
             </div>
           )}
@@ -118,11 +122,14 @@ export function Connections(): JSX.Element {
       )}
 
       {pendingResult && (
-        <Modal title="승인이 필요해요" onClose={() => setPendingResult(null)}>
+        <Modal title="연결을 만들었어요" onClose={() => setPendingResult(null)}>
           <p>
-            <b>{pendingResult.displayName}</b> 연결이 만들어졌어요. 이제{" "}
-            {PROVIDER_LABEL[pendingResult.provider]} 화면에서 AppHub의 접근을 승인해주세요. 승인을 마치면 이 저장소로
-            앱을 만들 수 있어요.
+            <b>{pendingResult.displayName}</b> 연결이 만들어졌어요. 다만{" "}
+            {PROVIDER_LABEL[pendingResult.provider]} 연결 방식은 아직 준비 중이라, 지금은 관리자를 통해 연결을
+            완료해야 이 저장소로 앱을 만들 수 있어요. 곧 이 화면에서 바로 마칠 수 있도록 준비하고 있어요.
+          </p>
+          <p style={{ marginTop: 10 }}>
+            바로 시작하고 싶다면 <b>AWS 저장소(CodeCommit)</b> 연결을 추가해보세요. 만들면 바로 사용할 수 있어요.
           </p>
           <div className="modal-actions">
             <button type="button" className="btn btn-primary" onClick={() => setPendingResult(null)}>
@@ -215,7 +222,7 @@ function AddConnectionModal({
         <div className="hint">
           {provider === "codecommit"
             ? "AWS 저장소(CodeCommit)는 바로 사용할 수 있어요."
-            : "연결을 만든 뒤 외부 화면에서 접근을 승인해야 사용할 수 있어요."}
+            : "이 연결 방식은 아직 준비 중이에요. 지금 만들면 관리자를 통해 연결을 완료해야 사용할 수 있어요. 바로 시작하려면 AWS 저장소(CodeCommit)를 권장해요."}
         </div>
       </div>
       {create.error && <ErrorNotice error={create.error} />}

@@ -30,8 +30,10 @@ from .handlers.apps import (
     patch_app,
 )
 from .handlers.connections import (
+    create_connection_repo,
     create_my_connection,
     delete_my_connection,
+    list_connection_repos,
     list_my_connections,
 )
 from .handlers.deployments import (
@@ -65,6 +67,8 @@ def build_router() -> Router:
     r.get("/connections", list_my_connections)
     r.post("/connections", create_my_connection)
     r.delete("/connections/:connId", delete_my_connection)
+    r.get("/connections/:connId/repos", list_connection_repos)
+    r.post("/connections/:connId/repos", create_connection_repo)
 
     # ── 관리자: 플랫폼 설정 ─────────────────────────────────────────────────
     r.get("/admin/settings", get_settings)

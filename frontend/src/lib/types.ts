@@ -93,6 +93,13 @@ export interface RepoConnection {
   needsAuthorization?: boolean; // POST 응답에만
 }
 
+// GET/POST /connections/{connId}/repos 응답 항목 — CodeCommit(AWS 저장소) 전용.
+// 계약: 그 외 필드 없음. cloneUrlHttp를 앱 생성 body의 repoUrl로 사용한다.
+export interface CodeCommitRepo {
+  repoName: string;
+  cloneUrlHttp: string;
+}
+
 export interface ComputePreset {
   presetId: string;
   displayName: string;

@@ -11,8 +11,9 @@
 #   1. 사전 점검(자격증명/리전/hosted zone/docker/node/cdk). 실패 시 아무것도 바꾸지 않고 종료.
 #   2. cdk bootstrap (이미 되어 있으면 통과).
 #   3. cdk deploy apphub-{stage}-network apphub-{stage}-platform (변경 없으면 no-op).
+#      이어서 provisioner 자산(검증기·CDK소스)과 Kiro 설정 zip을 자산 버킷 고정 키로 업로드.
 #   4. 최초 관리자 계정 생성(존재하면 통과), SPA(frontend/) 빌드 → config.json 생성 →
-#      S3 sync → CloudFront invalidation.
+#      S3 sync → CloudFront invalidation(/* — kiro-config 포함).
 #   5. 완료 출력(웹 URL, 다음 단계).
 set -euo pipefail
 
@@ -94,6 +95,8 @@ require_cmd pnpm
 require_cmd docker
 # backend/build.sh 가 Lambda 자산 동기화에 rsync 를 쓴다(D-M8, 순수 boto3 — pip install 불필요).
 require_cmd rsync
+# build-kiro-bundle.sh 가 Kiro 설정 zip 을 만드는 데 zip 이 필요하다(3c 단계).
+require_cmd zip
 
 # Node 버전(>=22)
 NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
@@ -257,6 +260,28 @@ else
   log "provisioner 자산 업로드 OK"
 fi
 
+# ── 3c. Kiro 설정 zip 자동 빌드·업로드 (P-M7-01) ─────────────────────────────
+# 프론트 "Kiro 설정 다운로드"가 서빙하는 정적 zip을 자산 버킷 고정 키로 올린다:
+#   s3://{AssetsBucketName}/kiro-config/kiro-config.zip
+# CloudFront `/kiro-config/*` behavior(P-M7-01)가 이 오브젝트를 서빙한다. 과거에는 수동
+#  (build-kiro-bundle.sh --upload)이라 새 환경 배포 시 zip이 없어 다운로드가 깨졌다 → 자동화.
+# 멱등: build-kiro-bundle.sh 는 zip을 결정적으로 재생성하고 동일 고정 키를 덮어쓴다(재실행 안전).
+# 실패 방침(경고+계속): kiro zip 업로드 실패는 "Kiro 설정 다운로드" 페이지만 깨뜨릴 뿐
+#  플랫폼 자체 기동에는 영향이 없으므로 전체 배포를 중단하지 않는다. 대신 명확히 경고하고
+#  사용자에게 수동 재실행 방법을 안내한다(배포 exit 코드는 성공 유지).
+step "3c/5 Kiro 설정 zip 자동 업로드 (build-kiro-bundle.sh --upload)"
+KIRO_UPLOAD_OK="false"
+if [[ -z "${ASSETS_BUCKET}" ]]; then
+  log "경고: AssetsBucketName Output 없음 — Kiro 설정 zip 업로드 건너뜀."
+elif bash "${ROOT_DIR}/scripts/build-kiro-bundle.sh" --upload --stage "${STAGE}" --region "${REGION}"; then
+  KIRO_UPLOAD_OK="true"
+  log "Kiro 설정 zip 업로드 OK → s3://${ASSETS_BUCKET}/kiro-config/kiro-config.zip"
+else
+  log "경고: Kiro 설정 zip 업로드 실패 — 배포는 계속합니다."
+  log "      다운로드 페이지가 깨질 수 있으니 아래를 수동 실행하세요:"
+  log "      bash scripts/build-kiro-bundle.sh --upload --stage ${STAGE} --region ${REGION}"
+fi
+
 # ── 4. 최초 관리자(존재하면 통과) + SPA 업로드 ───────────────────────────────
 step "4/5 최초 관리자 + SPA 업로드"
 
@@ -363,7 +388,14 @@ echo "AppHub(${STAGE}) 설치 완료."
 [[ -n "${CF_DOMAIN}" ]] && echo "  웹 URL          : https://${CF_DOMAIN}"
 echo "  앱 도메인       : *.${APPS_DOMAIN}"
 echo "  User Pool       : ${USER_POOL_ID:-<n/a>}"
-[[ -n "${CF_DOMAIN}" ]] && echo "  Kiro 설정 다운로드 : https://${CF_DOMAIN}/kiro-config/kiro-config.zip (build-kiro-bundle.sh --upload 후)"
+if [[ -n "${CF_DOMAIN}" ]]; then
+  if [[ "${KIRO_UPLOAD_OK}" == "true" ]]; then
+    echo "  Kiro 설정 다운로드 : https://${CF_DOMAIN}/kiro-config/kiro-config.zip (자동 업로드됨)"
+  else
+    echo "  Kiro 설정 다운로드 : https://${CF_DOMAIN}/kiro-config/kiro-config.zip"
+    echo "                       (경고: 자동 업로드 실패 — 'bash scripts/build-kiro-bundle.sh --upload --stage ${STAGE} --region ${REGION}' 수동 실행 필요)"
+  fi
+fi
 echo
 echo "다음 단계:"
 echo "  1) 관리자 화면에서 VPC 등록(서로 다른 AZ 서브넷 2개 + 이미지 pull 경로)."

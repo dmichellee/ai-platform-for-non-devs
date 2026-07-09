@@ -15,6 +15,7 @@ ERROR_CODES = frozenset(
         "VALIDATION_ERROR",
         "SUBDOMAIN_INVALID",
         "SUBDOMAIN_TAKEN",
+        "REPO_NAME_TAKEN",
         "QUOTA_EXCEEDED",
         "PRESET_NOT_FOUND",
         "PERMISSION_TEMPLATE_NOT_FOUND",
@@ -67,6 +68,14 @@ class _Errors:
     def subdomain_taken() -> ApiError:
         return ApiError(
             409, "SUBDOMAIN_TAKEN", "이미 사용 중인 주소예요. 다른 이름을 입력해주세요."
+        )
+
+    @staticmethod
+    def repo_name_taken() -> ApiError:
+        return ApiError(
+            409,
+            "REPO_NAME_TAKEN",
+            "같은 이름의 저장소가 이미 있어요. 다른 이름을 입력해주세요.",
         )
 
     @staticmethod

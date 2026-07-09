@@ -8,6 +8,7 @@ import type {
   AdminSettings,
   AlbRegistry,
   App,
+  CodeCommitRepo,
   ComputePreset,
   CreateAppRequest,
   Deployment,
@@ -28,6 +29,7 @@ export class MockApiClient implements ApiClient {
   private otherApps: App[] = clone(fx.mockOtherApps);
   private deployments: Record<string, Deployment[]> = clone(fx.mockDeployments);
   private connections: RepoConnection[] = clone(fx.mockConnections);
+  private repos: Record<string, CodeCommitRepo[]> = clone(fx.mockRepos);
   private presets: ComputePreset[] = clone(fx.mockPresets);
   private permTemplates: PermissionTemplate[] = clone(fx.mockPermTemplates);
   private settings: AdminSettings = clone(fx.mockSettings);
@@ -191,6 +193,47 @@ export class MockApiClient implements ApiClient {
   async deleteConnection(connId: string): Promise<void> {
     await delay();
     this.connections = this.connections.filter((c) => c.connId !== connId);
+    delete this.repos[connId];
+  }
+
+  // ── CodeCommit(AWS 저장소) 레포 — 계약 /connections/{connId}/repos ──
+  private codecommitConn(connId: string): RepoConnection {
+    const conn = this.connections.find((c) => c.connId === connId);
+    // 본인 연결이 아니면 존재 여부를 흘리지 않고 404 (계약).
+    if (!conn) throw new ApiError("NOT_FOUND", "저장소 연결을 찾을 수 없어요.", 404);
+    if (conn.provider !== "codecommit") {
+      throw new ApiError("VALIDATION_ERROR", "AWS 저장소 연결에서만 목록을 불러올 수 있어요.", 400);
+    }
+    return conn;
+  }
+  async listRepos(connId: string): Promise<CodeCommitRepo[]> {
+    await delay();
+    this.codecommitConn(connId);
+    return clone(this.repos[connId] ?? []);
+  }
+  async createRepo(connId: string, repoName: string): Promise<CodeCommitRepo> {
+    await delay(320);
+    this.codecommitConn(connId);
+    // 이름 규칙(계약): 소문자·숫자로 시작·끝, 가운데 -/_/. 허용, 1~100자, .git 접미사 금지.
+    const valid = /^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$/.test(repoName) && repoName.length <= 100 && !repoName.endsWith(".git");
+    if (!valid) {
+      throw new ApiError(
+        "VALIDATION_ERROR",
+        "저장소 이름은 소문자·숫자로 시작하고 끝나야 하며, 가운데에만 -, _, . 를 쓸 수 있어요.",
+        400,
+      );
+    }
+    // 계정 전체 동명 레포 중복 → 409 (목: 모든 연결의 레포 이름을 통틀어 검사).
+    const taken = Object.values(this.repos).some((list) => list.some((r) => r.repoName === repoName));
+    if (taken) {
+      throw new ApiError("REPO_NAME_TAKEN", "이미 같은 이름의 저장소가 있어요. 다른 이름을 써주세요.", 409);
+    }
+    const repo: CodeCommitRepo = {
+      repoName,
+      cloneUrlHttp: `https://git-codecommit.example/v1/repos/${repoName}`,
+    };
+    this.repos[connId] = [...(this.repos[connId] ?? []), repo];
+    return clone(repo);
   }
 
   async adminGetSettings(): Promise<AdminSettings> {

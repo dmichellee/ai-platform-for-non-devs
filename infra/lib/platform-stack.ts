@@ -271,17 +271,43 @@ export class PlatformStack extends Stack {
       }),
     );
 
-    // (3) codeconnections — 레포 연결 생성/조회/삭제. 계정 내 connection ARN으로 한정.
-    //     GetConnection은 특정 connection ARN, CreateConnection/ListConnections는 리소스
-    //     레벨을 부분 지원하나 계정 스코프 와일드카드(connection/*)로 좁힌다.
+    // (3) codeconnections — 레포 연결 생성/조회/삭제. 액션별 리소스 레벨 지원 여부에 따라 분리한다.
+    //     (AWS Service Authorization Reference: list_awscodeconnections)
+    //
+    //     ┌ 리소스 레벨 미지원(Resource types 열 공백) → Resource:"*" 필수 ─────────────────┐
+    //     │ - CreateConnection: 생성 시점엔 connection ARN이 없어 리소스 레벨 미지원(AWS 문서).
+    //     │   connection/* 로 한정하면 AccessDenied(요구 리소스가 codeconnections:...:*)로 거부된다.
+    //     │ - ListConnections: List 액션(계정 전체 목록 반환). connection 리소스는 문서상 optional이나
+    //     │   계정 스코프 조회이므로 보수적으로 * 로 둔다.
+    //     │ ⇒ D17/최소권한 원칙의 정당한 예외. 서비스(codeconnections) + 배포 리전/계정으로만 좁힌다.
+    //     └────────────────────────────────────────────────────────────────────────────────┘
     apiHandler.addToRolePolicy(
       new iam.PolicyStatement({
-        sid: "CodeConnections",
+        sid: "CodeConnectionsCreateList",
         actions: [
           "codeconnections:CreateConnection",
+          "codeconnections:ListConnections",
+        ],
+        // 리소스 레벨 미지원(AWS 문서) → Resource:"*" 필수.
+        //  주의: 계정/리전 한정 ARN(arn:aws:codeconnections:{region}:{account}:*)조차
+        //  IAM 상 "모든 리소스"로 인정되지 않아 매칭 실패(implicitDeny)한다.
+        //  IAM 정책 시뮬레이터로 검증: `arn:...:*` → implicitDeny, `*` → allowed.
+        //  따라서 이 두 액션만은 진짜 전역 "*"를 쓴다(D17/최소권한 원칙의 정당한 예외).
+        //  범위 축소는 리소스가 아니라 조건 키(codeconnections:ProviderType 등)로만 가능하다.
+        resources: ["*"],
+      }),
+    );
+    //     ┌ 리소스 레벨 지원(Resource types: Connection*) → connection/* 로 범위 유지 ──────────┐
+    //     │ - GetConnection / DeleteConnection: 특정 connection ARN 대상 → 계정 스코프 connection/*.
+    //     │   UseConnection/PassConnection은 소스에서 연결을 소비하는 CodePipeline 역할이 필요로 하며
+    //     │   (CodeStarConnectionsSourceAction가 app-pipeline에서 자동 부여), API 역할엔 불필요 → 미포함.
+    //     └────────────────────────────────────────────────────────────────────────────────┘
+    apiHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "CodeConnectionsGetDelete",
+        actions: [
           "codeconnections:GetConnection",
           "codeconnections:DeleteConnection",
-          "codeconnections:ListConnections",
         ],
         resources: [
           this.formatArn({
@@ -289,6 +315,50 @@ export class PlatformStack extends Stack {
             resource: "connection",
             resourceName: "*",
             arnFormat: ArnFormat.SLASH_RESOURCE_NAME,
+          }),
+        ],
+      }),
+    );
+
+    // (3b) codecommit — 레포 목록/생성/조회(GET/POST /connections/{connId}/repos). 액션별 리소스 레벨
+    //     지원 여부에 따라 분리한다. codeconnections(3)과 동일하게 IAM 정책 시뮬레이터로 검증했다:
+    //       - simulate-custom-policy 결과(2026-07-09, ap-northeast-2, account 111122223333):
+    //         · ListRepositories / CreateRepository @ `arn:aws:codecommit:{region}:{account}:*` → implicitDeny
+    //         · ListRepositories / CreateRepository @ `*`                                       → allowed
+    //         · GetRepository @ `arn:aws:codecommit:{region}:{account}:some-repo`               → allowed
+    //
+    //     ┌ 리소스 레벨 미지원 → Resource:"*" 필수 (D17/최소권한 원칙의 정당한 예외, conventions 7장) ┐
+    //     │ - ListRepositories: List 액션(계정 전역 목록 반환) — 특정 repo 리소스에 매칭되지 않는다.
+    //     │   계정/리전 한정 ARN(arn:...:*)조차 IAM 상 매칭 실패(implicitDeny) → 진짜 전역 "*" 필요.
+    //     │ - CreateRepository: 생성 시점엔 repo ARN이 아직 없어 리소스 레벨 미지원. arn:...:* 로 좁히면
+    //     │   implicitDeny(500 재발). codeconnections:CreateConnection과 동일한 이유.
+    //     └───────────────────────────────────────────────────────────────────────────────────────┘
+    apiHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "CodeCommitRepos",
+        actions: [
+          "codecommit:ListRepositories",
+          "codecommit:CreateRepository",
+        ],
+        // 리소스 레벨 미지원(IAM 시뮬레이터 검증) → Resource:"*" 필수.
+        //  계정/리전 한정 ARN조차 implicitDeny(codeconnections:CreateConnection/ListConnections와 동일).
+        //  범위 축소는 리소스가 아니라 조건 키로만 가능하다.
+        resources: ["*"],
+      }),
+    );
+    //     ┌ 리소스 레벨 지원 → 계정/리전 한정 ARN 유지 ─────────────────────────────────────────────┐
+    //     │ - GetRepository: 특정 repo ARN 대상 → 계정/리전 스코프로 한정(IAM 시뮬레이터 allowed 확인).
+    //     │   앱 레포 명명 규약이 아직 없어 계정 리전 전체(*)로 두되, 서비스+리전+계정으로는 좁힌다.
+    //     │   레포 명명 규약이 생기면 resourceName을 그 접두어로 더 좁힌다(후속).
+    //     └───────────────────────────────────────────────────────────────────────────────────────┘
+    apiHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "CodeCommitRepoGet",
+        actions: ["codecommit:GetRepository"],
+        resources: [
+          this.formatArn({
+            service: "codecommit",
+            resource: "*",
           }),
         ],
       }),

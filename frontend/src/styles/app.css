@@ -508,6 +508,52 @@ textarea {
   resize: vertical;
 }
 
+/* ── 커스텀 셀렉트(드롭다운) — 왼쪽 아이콘 + 오른쪽 화살표 ── */
+.select-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.select-wrap .select-ico {
+  position: absolute;
+  left: 12px;
+  color: var(--on-surface-subtle);
+  pointer-events: none;
+}
+.select-wrap::after {
+  content: "";
+  position: absolute;
+  right: 14px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--on-surface-muted);
+  border-bottom: 2px solid var(--on-surface-muted);
+  transform: translateY(-2px) rotate(45deg);
+  pointer-events: none;
+}
+.select-wrap .select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-left: 34px;
+  padding-right: 34px;
+  cursor: pointer;
+  font-family: var(--font);
+}
+
+/* 인라인 스피너(아이콘 회전) — 로딩 힌트용. reduced-motion 존중. */
+.icon.spin {
+  animation: spin 0.9s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .icon.spin {
+    animation: none;
+  }
+  .back-link,
+  .back-link .back-link-ico {
+    transition: none;
+  }
+}
+
 /* ── 섹션 라벨 / 페이지 헤더 ── */
 .page-head {
   display: flex;
@@ -530,18 +576,46 @@ textarea {
   font-size: 14px;
   margin-top: 3px;
 }
+/* 뒤로가기 링크 — 아이콘 pill + 텍스트. 톤앤매너(부드러움) 반영, 라이트/다크 공통. */
 .back-link {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  background: transparent;
+  border: 1px solid transparent;
   color: var(--on-surface-muted);
+  font-family: var(--font);
   font-size: 13px;
   font-weight: 600;
+  padding: 6px 12px 6px 6px;
+  border-radius: 999px;
   cursor: pointer;
-  margin-bottom: var(--s3);
+  margin-bottom: var(--s4);
+  transition: color 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+}
+.back-link .back-link-ico {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--surface-hover);
+  color: var(--on-surface-muted);
+  transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease;
 }
 .back-link:hover {
   color: var(--on-surface);
+  background: var(--surface-hover);
+  border-color: var(--border);
+}
+.back-link:hover .back-link-ico {
+  background: var(--primary-soft);
+  color: var(--primary);
+  transform: translateX(-2px);
+}
+.back-link:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
 /* ── 카드/패널 (사용자) ── */
@@ -1182,5 +1256,153 @@ tbody tr:hover {
   .grid-2,
   .choice-row {
     grid-template-columns: 1fr;
+  }
+}
+
+/* ── Kiro 설정 다운로드 페이지 (사용자, 부드러움) ── */
+.kiro-hero {
+  background: linear-gradient(135deg, var(--primary-soft), var(--secondary-soft));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-soft-lg);
+  padding: var(--s6);
+  margin-bottom: var(--s5);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s5);
+  flex-wrap: wrap;
+}
+.kiro-hero .lead {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+.kiro-hero h2 {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.kiro-hero .desc {
+  color: var(--on-surface-muted);
+  font-size: 15px;
+  margin-top: 8px;
+  max-width: 52ch;
+}
+.btn-download {
+  background: var(--primary);
+  color: var(--on-primary);
+  padding: 15px 26px;
+  border-radius: var(--radius-soft);
+  font-size: 15px;
+  font-weight: 700;
+  box-shadow: var(--shadow);
+}
+.btn-download:hover {
+  filter: brightness(1.08);
+}
+.btn-download .fname {
+  font-weight: 500;
+  opacity: 0.85;
+  font-size: 13px;
+}
+
+/* 설치 3단계 카드 */
+.step-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--s3);
+}
+.step-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-soft);
+  padding: var(--s4);
+}
+.step-card .badge-num {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  font-weight: 800;
+  background: var(--primary);
+  color: var(--on-primary);
+  margin-bottom: var(--s3);
+}
+.step-card .t {
+  font-weight: 700;
+  font-size: 15px;
+  margin-bottom: 5px;
+}
+.step-card .d {
+  font-size: 13px;
+  color: var(--on-surface-muted);
+  line-height: 1.55;
+}
+.step-card code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--surface-hover);
+  border-radius: 6px;
+  padding: 1px 6px;
+}
+
+/* 폴더 구조 시각화 */
+.tree {
+  font-family: var(--mono);
+  font-size: 13px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-soft);
+  padding: var(--s4) var(--s5);
+  color: var(--on-surface-muted);
+  line-height: 1.9;
+  overflow-x: auto;
+}
+.tree .root {
+  color: var(--on-surface);
+  font-weight: 700;
+}
+.tree .dir {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+/* 들어있는 파일 2열 */
+.kiro-file {
+  display: flex;
+  gap: var(--s3);
+  align-items: flex-start;
+}
+.kiro-file .fico {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: var(--primary-soft);
+  color: var(--primary);
+  flex: none;
+}
+.kiro-file .t {
+  font-weight: 700;
+  font-size: 14px;
+  margin-bottom: 3px;
+}
+.kiro-file .d {
+  font-size: 13px;
+  color: var(--on-surface-muted);
+  line-height: 1.55;
+}
+@media (max-width: 860px) {
+  .step-cards {
+    grid-template-columns: 1fr;
+  }
+  .kiro-hero {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }

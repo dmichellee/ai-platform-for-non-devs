@@ -3,8 +3,9 @@
  * failureCategory → 안내 문구 매핑은 lib/labels.ts (apphub-conventions §4).
  */
 import { useEffect, useState } from "react";
-import { AlertTriangle, ArrowLeft, Check, RotateCcw } from "lucide-react";
+import { AlertTriangle, Check, RotateCcw } from "lucide-react";
 import {
+  BackLink,
   ErrorNotice,
   Modal,
   Skeleton,
@@ -63,9 +64,7 @@ export function DeploymentDetail({
   return (
     <div className="wrap">
       <TopBar userInitial={userInitial} onLogout={logout} />
-      <button type="button" className="back-link" onClick={() => nav(`/apps/${appId}`)}>
-        <ArrowLeft size={15} className="icon" />앱 상세로
-      </button>
+      <BackLink label="앱 상세로" onClick={() => nav(`/apps/${appId}`)} />
 
       {loading && <Skeleton height={80} count={2} />}
       {error && <ErrorNotice error={error} />}

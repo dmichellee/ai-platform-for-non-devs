@@ -4,7 +4,7 @@
  *
  * 경로:
  *   #/login, #/, #/apps/new, #/apps/:id, #/apps/:id/deployments/:depId,
- *   #/connections, #/admin(?tab=)
+ *   #/connections, #/kiro-setup, #/admin(?tab=)
  */
 import { AuthProvider, useAuth } from "./auth/AuthContext.js";
 import { ApiProvider } from "./lib/ApiProvider.js";
@@ -17,6 +17,7 @@ import { CreateWizard } from "./screens/user/CreateWizard.js";
 import { AppDetail } from "./screens/user/AppDetail.js";
 import { DeploymentDetail } from "./screens/user/DeploymentDetail.js";
 import { Connections } from "./screens/user/Connections.js";
+import { KiroSetup } from "./screens/user/KiroSetup.js";
 import { AdminShell } from "./screens/admin/AdminShell.js";
 
 export default function App({ config }: { config: RuntimeConfig }): JSX.Element {
@@ -63,6 +64,9 @@ function Router({ isAdmin }: { isAdmin: boolean }): JSX.Element {
   }
 
   if (seg[0] === "connections") return <Connections />;
+
+  // Kiro 설정 다운로드 — 로그인한 모든 사용자(user/admin) 공통.
+  if (seg[0] === "kiro-setup") return <KiroSetup />;
 
   if (seg[0] === "apps") {
     if (seg[1] === "new") return <CreateWizard />;
