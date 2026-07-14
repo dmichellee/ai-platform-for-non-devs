@@ -240,7 +240,6 @@ def seed_settings(table, **overrides: Any) -> None:
         "registeredVpcs": [{"vpcId": "vpc-123", "label": "기본"}],
         "userAppQuota": 3,
         "allowInternetFacing": True,
-        "allowedBaseImages": [],
         "logRetentionDays": 30,
         "updatedAt": "2026-01-01T00:00:00.000Z",
     }

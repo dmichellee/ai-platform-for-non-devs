@@ -9,6 +9,8 @@ import type {
   CodeCommitRepo,
   ComputePreset,
   Deployment,
+  MetricPoint,
+  MetricRange,
   PermissionTemplate,
   PlatformUser,
   RepoConnection,
@@ -287,7 +289,6 @@ export const mockSettings: AdminSettings = {
   registeredVpcs: [{ vpcId: "vpc-01", label: "메인 VPC (ap-northeast-2)" }],
   userAppQuota: 5,
   allowInternetFacing: true,
-  allowedBaseImages: ["public.ecr.aws/docker/library/node", "public.ecr.aws/docker/library/python"],
   logRetentionDays: 30,
   updatedAt: iso(1000 * 60 * 60 * 24 * 2),
 };
@@ -303,3 +304,38 @@ export const mockUsers: PlatformUser[] = [
   { username: "admin-0001", email: "admin@example.com", enabled: true, status: "CONFIRMED", groups: ["admin", "user"], createdAt: iso(1000 * 60 * 60 * 24 * 60) },
   { username: "user-0003", email: "jimin@example.com", enabled: false, status: "CONFIRMED", groups: ["user"], createdAt: iso(1000 * 60 * 60 * 24 * 3) },
 ];
+
+// ── 모니터링 지표(목) — range별 그럴듯한 시계열 (api-requests.md #6) ──
+// 버킷 개수/간격은 range에 따라 달라진다. 값은 결정적 sine+노이즈로 "살아 있는" 그래프처럼 보이게.
+const RANGE_BUCKETS: Record<MetricRange, { points: number; stepMs: number }> = {
+  "1h": { points: 30, stepMs: 2 * 60 * 1000 }, // 2분 간격 × 30 = 1시간
+  "6h": { points: 36, stepMs: 10 * 60 * 1000 }, // 10분 간격 × 36 = 6시간
+  "24h": { points: 48, stepMs: 30 * 60 * 1000 }, // 30분 간격 × 48 = 24시간
+  "7d": { points: 42, stepMs: 4 * 60 * 60 * 1000 }, // 4시간 간격 × 42 = 7일
+};
+
+/** 결정적 시계열 생성기 — 외부 랜덤 없이 재현 가능한 값. seed로 series별 위상 차이를 준다. */
+function series(points: number, stepMs: number, seed: number, base: number, amp: number, max: number): MetricPoint[] {
+  const end = now;
+  const start = end - (points - 1) * stepMs;
+  return Array.from({ length: points }, (_, i) => {
+    const t = start + i * stepMs;
+    const wave = Math.sin((i + seed) / 4) * amp + Math.sin((i + seed) / 1.7) * (amp / 3);
+    const drift = Math.cos((i + seed) / 9) * (amp / 2);
+    const v = Math.max(0, Math.min(max, Math.round(base + wave + drift)));
+    return { t, v };
+  });
+}
+
+export function buildMockMetrics(range: MetricRange): {
+  requests: MetricPoint[];
+  cpu: MetricPoint[];
+  memory: MetricPoint[];
+} {
+  const { points, stepMs } = RANGE_BUCKETS[range];
+  return {
+    requests: series(points, stepMs, 0, 120, 90, 400), // 요청 수
+    cpu: series(points, stepMs, 3, 42, 22, 100), // CPU 사용률 %
+    memory: series(points, stepMs, 6, 58, 12, 100), // 메모리 사용률 %
+  };
+}

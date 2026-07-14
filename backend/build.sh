@@ -9,7 +9,8 @@
 #    P3 infra 가 이 경로를 Code.fromAsset + runtime=PYTHON_3_13, handler="handler.handler" 로 참조.
 # 2) Dockerfile 검증기 CLI: 자립 스크립트(dockerfile.py + dockerfile_validator.py)를
 #    backend/dist/validator/ 로 산출 → P3 deploy.sh 가 플랫폼 자산 버킷 고정 키로 업로드,
-#    buildspec 이 `python dockerfile_validator.py <path> --allowed-base-images-json -` 로 호출.
+#    buildspec 이 `python dockerfile_validator.py <path>` 로 호출.
+#    (베이스 이미지 허용목록 기능 제거 — CLI 는 Dockerfile 경로만 받는다.)
 #
 # 멱등: 대상 디렉토리를 깨끗이 비우고 다시 채운다. 서드파티 의존성을 싣지 않는다(boto3는 런타임 기본).
 set -euo pipefail
@@ -77,4 +78,4 @@ cp "${APP_SRC}/validator/cli.py" "${DIST_VALIDATOR_DIR}/dockerfile_validator.py"
 echo "[backend/build] 완료."
 echo "  - API 자산:   ${API_ASSET_DIR} (handler.py + app/)"
 echo "  - task/wake 자산: ${LAMBDA_ROOT}/{provision-task,delete-task,waker,wake-restore,sleep-transition} (handler.py + app/)"
-echo "  - 검증기 CLI: ${DIST_VALIDATOR_DIR}/dockerfile_validator.py (python <...> --allowed-base-images-json -)"
+echo "  - 검증기 CLI: ${DIST_VALIDATOR_DIR}/dockerfile_validator.py (python dockerfile_validator.py <path>)"

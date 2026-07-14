@@ -6,12 +6,13 @@
 #          dockerfile_validator.py + dockerfile.py). 단위 테스트와 동일한 코드(app/validator/dockerfile.py)를 실행한다.
 #  이미지 태그: commit SHA(CODEBUILD_RESOLVED_SOURCE_VERSION). ECR push.
 #  실패 분류(failureCategory)는 검증기 JSON(failureCategory) 또는 단계별로 결정하고 DDB에 기록.
-#  단계: 1) Dockerfile 정적 검증(C1/C2/C6/금지항목) 2) docker build(BUILD_FAILED)
+#  단계: 1) Dockerfile 정적 검증(C1 존재/C2 EXPOSE 8080/금지항목) 2) docker build(BUILD_FAILED)
 #        3) 스모크 /health 200(C3+C9, HEALTHCHECK_FAILED) 4) ECR push(태그=commitSha)
 #  출력(exported-variables): IMAGE_TAG — 다음 스테이지(Deploy)가 소비.
 #
 # 환경변수(프로젝트에서 주입): STAGE, APP_ID, AWS_ACCOUNT_ID, AWS_DEFAULT_REGION,
-#                              ECR_REPO_NAME, TABLE_NAME, AUTO_DEPLOY
+#                              ECR_REPO_NAME, AUTO_DEPLOY
+#  (TABLE_NAME/DDB GetItem 은 더 이상 필요 없음 — 베이스 이미지 허용목록 조회 제거)
 #  VALIDATOR_S3_URI — Python 검증기 자산 위치. 디렉토리 prefix(s3://.../validator/)를 가리키며
 #                     2파일(dockerfile_validator.py, dockerfile.py)을 재귀 복사한다(D-M8).
 version: 0.2
@@ -53,25 +54,16 @@ phases:
     commands:
       - export IMAGE_TAG="${CODEBUILD_RESOLVED_SOURCE_VERSION:-latest}"
       - echo "이미지 태그(commit SHA)=${IMAGE_TAG}"
-      # 관리자 허용 베이스 이미지 목록을 AdminSettings(DDB CONFIG/SETTINGS)에서 읽어 검증기에 전달.
-      - |
-        ALLOWED_JSON="$(aws dynamodb get-item \
-          --table-name "${TABLE_NAME}" \
-          --key '{"PK":{"S":"CONFIG"},"SK":{"S":"SETTINGS"}}' \
-          --query 'Item.allowedBaseImages.L[*].S' --output json 2>/dev/null || echo '[]')"
-        echo "${ALLOWED_JSON}" > /tmp/allowed-base-images.json
-        echo "허용 베이스 이미지: ${ALLOWED_JSON}"
 
   build:
     commands:
       # (1) Dockerfile 정적 검증 — 검증기 종료코드가 실패면 파이프라인 중단.
       #     검증기 JSON을 파싱해 실패 시 FAILURE_CATEGORY 를 export(배포 이력 기록용).
-      #     D-M8: Python 검증기. 허용 베이스 이미지 JSON은 stdin(`-`)으로 전달(파일 IO 불필요).
-      #     CLI 인터페이스는 Node판과 동일(stdout JSON 한 줄, exit 0/1, failureCategory).
+      #     D-M8: Python 검증기. Dockerfile 경로만 넘긴다(베이스 이미지 허용목록 기능 제거).
+      #     검사: C1 존재 / C2 EXPOSE 8080 / 금지항목 / non-root(경고). stdout JSON 한 줄, exit 0/1, failureCategory.
       - |
         set +e
-        VALIDATE_JSON="$(python3 ./validator/dockerfile_validator.py ./Dockerfile \
-          --allowed-base-images-json - < /tmp/allowed-base-images.json)"
+        VALIDATE_JSON="$(python3 ./validator/dockerfile_validator.py ./Dockerfile)"
         VALIDATE_RC=$?
         set -e
         echo "검증 결과: ${VALIDATE_JSON}"

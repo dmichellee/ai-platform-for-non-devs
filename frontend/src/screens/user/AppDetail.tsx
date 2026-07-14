@@ -1,13 +1,24 @@
 /**
- * 앱 상세 — 상태(runtimeState 포함), 접속 URL, 배포 이력, 실시간 로그 뷰어,
- * 설정 탭(환경변수·가동 방식·자동배포), 수동 배포/재시작/삭제.
+ * 앱 상세 — 4개 탭으로 재편:
+ *   개요       : 상태(runtimeState 포함)·접속 URL·앱 정보 요약·실패 사유(FailureNotice)
+ *   배포 이력  : 성공/실패 모든 배포 리스트(→ 배포 상세) + "실행 로그 보기" 접이식 섹션
+ *   모니터링   : 접속량/CPU 사용률/메모리 사용률 시계열 차트(range 선택)
+ *   설정       : 환경변수·가동 방식·자동배포
  * WAKING 상태면 "깨우는 중" 대기 안내를 상단에 보여준다.
+ * 탭은 ?tab= 쿼리로 딥링크 가능(관리자 화면과 동일한 방식).
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Activity,
   AlertTriangle,
+  BarChart3,
+  ChevronDown,
+  ChevronRight,
+  Cpu,
   ExternalLink,
   History,
+  Info,
+  MemoryStick,
   Play,
   RefreshCw,
   Rocket,
@@ -26,31 +37,62 @@ import {
   TopBar,
   relTime,
 } from "../../components/common.js";
+import { Sparkline } from "../../components/Sparkline.js";
 import { useApi, useMutation, useQuery } from "../../lib/ApiProvider.js";
 import {
   DEFAULT_SCHEDULE,
   ScheduleEditor,
   isScheduleValid,
 } from "../../components/ScheduleEditor.js";
-import { useNavigate } from "../../lib/router.js";
+import { navigate, useNavigate, useRoute } from "../../lib/router.js";
 import { useAuth } from "../../auth/AuthContext.js";
 import { appsDomainLabel } from "../../lib/config.js";
 import { sessionInitial } from "../../auth/tokens.js";
-import type { App, Deployment, LogEvent, PatchAppRequest, Schedule, SleepMode } from "../../lib/types.js";
+import type {
+  App,
+  AppMetrics,
+  Deployment,
+  LogEvent,
+  MetricPoint,
+  MetricRange,
+  PatchAppRequest,
+  Schedule,
+  SleepMode,
+} from "../../lib/types.js";
 import {
   DEPLOY_STATUS_LABEL,
+  METRIC_RANGE_LABEL,
+  METRIC_RANGE_ORDER,
   SCHEME_LABEL,
   SLEEP_MODE_DESC,
   SLEEP_MODE_LABEL,
   statusHint,
 } from "../../lib/labels.js";
 
-type Tab = "overview" | "logs" | "settings";
+type Tab = "overview" | "deployments" | "monitoring" | "settings";
+
+const TAB_ORDER: Tab[] = ["overview", "deployments", "monitoring", "settings"];
+const TAB_META: Record<Tab, { label: string; icon: JSX.Element }> = {
+  overview: { label: "개요", icon: <Info size={15} className="icon" /> },
+  deployments: { label: "배포 이력", icon: <History size={15} className="icon" /> },
+  monitoring: { label: "모니터링", icon: <Activity size={15} className="icon" /> },
+  settings: { label: "설정", icon: <Settings size={15} className="icon" /> },
+};
+
+function isTab(v: string | null): v is Tab {
+  return v !== null && (TAB_ORDER as string[]).includes(v);
+}
 
 export function AppDetail({ appId }: { appId: string }): JSX.Element {
   const nav = useNavigate();
+  const route = useRoute();
   const { session, logout } = useAuth();
-  const [tab, setTab] = useState<Tab>("overview");
+  // 딥링크: ?tab= 값이 유효하면 그 탭에서 시작. 없으면 개요.
+  const routeTab = route.query.get("tab");
+  const tab: Tab = isTab(routeTab) ? routeTab : "overview";
+  // 탭 전환 = 같은 경로에 ?tab= 쿼리만 바꿔 이동(뒤로가기로 탭 이동 취소 가능, 새로고침에도 유지).
+  const setTab = (t: Tab): void => navigate(`/apps/${appId}${t === "overview" ? "" : `?tab=${t}`}`);
+
   const { data: app, loading, error, reload } = useQuery<App>((a) => a.getApp(appId), [appId]);
 
   const userInitial = sessionInitial(session);
@@ -105,46 +147,26 @@ export function AppDetail({ appId }: { appId: string }): JSX.Element {
           )}
 
           <div className="tabs" role="tablist">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={tab === "overview"}
-              className={`tab ${tab === "overview" ? "active" : ""}`}
-              onClick={() => setTab("overview")}
-            >
-              <span className="row" style={{ gap: 6 }}>
-                <History size={15} className="icon" />
-                개요·배포 이력
-              </span>
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={tab === "logs"}
-              className={`tab ${tab === "logs" ? "active" : ""}`}
-              onClick={() => setTab("logs")}
-            >
-              <span className="row" style={{ gap: 6 }}>
-                <ScrollText size={15} className="icon" />
-                로그
-              </span>
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={tab === "settings"}
-              className={`tab ${tab === "settings" ? "active" : ""}`}
-              onClick={() => setTab("settings")}
-            >
-              <span className="row" style={{ gap: 6 }}>
-                <Settings size={15} className="icon" />
-                설정
-              </span>
-            </button>
+            {TAB_ORDER.map((t) => (
+              <button
+                key={t}
+                type="button"
+                role="tab"
+                aria-selected={tab === t}
+                className={`tab ${tab === t ? "active" : ""}`}
+                onClick={() => setTab(t)}
+              >
+                <span className="row" style={{ gap: 6 }}>
+                  {TAB_META[t].icon}
+                  {TAB_META[t].label}
+                </span>
+              </button>
+            ))}
           </div>
 
           {tab === "overview" && <OverviewTab app={app} />}
-          {tab === "logs" && <LogsTab appId={appId} />}
+          {tab === "deployments" && <DeploymentsTab appId={appId} />}
+          {tab === "monitoring" && <MonitoringTab app={app} />}
           {tab === "settings" && <SettingsTab app={app} onSaved={reload} />}
         </>
       )}
@@ -262,79 +284,132 @@ function AppActions({ app, onChanged }: { app: App; onChanged: () => void }): JS
   );
 }
 
-// ── 개요 + 배포 이력 ──
+// ── 개요 — 상태·접속·앱 정보 요약 ──
 function OverviewTab({ app }: { app: App }): JSX.Element {
-  const nav = useNavigate();
-  const { data: deps, loading } = useQuery<Deployment[]>(
-    (a) => a.listDeployments(app.appId),
-    [app.appId],
-  );
-
+  const url = `https://${app.subdomain}.${appsDomainLabel()}`;
   return (
-    <div className="detail-grid">
-      <div>
-        <div className="panel">
-          <h4>
-            <History size={16} className="icon" />
-            배포 이력
-          </h4>
-          {loading && <Skeleton height={40} count={3} />}
-          {!loading && (!deps || deps.length === 0) && (
-            <p className="muted">아직 배포 기록이 없어요. '지금 배포'로 첫 배포를 시작할 수 있어요.</p>
-          )}
-          {deps?.map((d) => (
-            <button
-              key={d.deploymentId}
-              type="button"
-              className="deploy-row"
-              style={{ width: "100%", background: "transparent", border: 0, textAlign: "left" }}
-              onClick={() => nav(`/apps/${app.appId}/deployments/${encodeURIComponent(d.deploymentId)}`)}
-            >
-              <DeployBadge status={d.status} />
-              <div>
-                <div className="msg">{d.commitMessage ?? "배포"}</div>
-                {d.commitSha && <div className="sha">{d.commitSha}</div>}
-              </div>
-              <span className="when">{relTime(d.createdAt)}</span>
-            </button>
-          ))}
-        </div>
+    <div className="panel">
+      <h4>앱 정보</h4>
+      <div className="kv">
+        <span className="k">상태</span>
+        <span className="v">
+          <AppStatusBadge status={app.status} runtimeState={app.runtimeState} variant="pill" />
+        </span>
       </div>
-
-      <div>
-        <div className="panel">
-          <h4>앱 정보</h4>
-          <div className="kv">
-            <span className="k">공개 범위</span>
-            <span className="v">{SCHEME_LABEL[app.scheme]}</span>
-          </div>
-          <div className="kv">
-            <span className="k">가동 방식</span>
-            <span className="v">{SLEEP_MODE_LABEL[app.sleepMode]}</span>
-          </div>
-          <div className="kv">
-            <span className="k">자동 배포</span>
-            <span className="v">{app.autoDeployEnabled ? "켜짐 (코드 push 시 자동)" : "꺼짐"}</span>
-          </div>
-          <div className="kv">
-            <span className="k">브랜치</span>
-            <span className="v mono">{app.branch}</span>
-          </div>
-          {app.cognitoProtect && (
-            <div className="kv">
-              <span className="k">접근 보호</span>
-              <span className="v">로그인한 사람만 접속</span>
-            </div>
+      <div className="kv">
+        <span className="k">접속 주소</span>
+        <span className="v">
+          {app.status === "ACTIVE" ? (
+            <a href={url} target="_blank" rel="noreferrer" className="row" style={{ gap: 5, justifyContent: "flex-end" }}>
+              <span className="mono" style={{ fontWeight: 500 }}>{app.subdomain}.{appsDomainLabel()}</span>
+              <ExternalLink size={14} className="icon" />
+            </a>
+          ) : (
+            <span className="mono" style={{ fontWeight: 500 }}>{app.subdomain}.{appsDomainLabel()}</span>
           )}
-          <div className="kv">
-            <span className="k">만든 날</span>
-            <span className="v">{relTime(app.createdAt)}</span>
-          </div>
+        </span>
+      </div>
+      <div className="kv">
+        <span className="k">저장소</span>
+        <span className="v mono">{app.repoUrl}</span>
+      </div>
+      <div className="kv">
+        <span className="k">브랜치</span>
+        <span className="v mono">{app.branch}</span>
+      </div>
+      <div className="kv">
+        <span className="k">크기</span>
+        <span className="v">{presetSizeLabel(app.presetId)}</span>
+      </div>
+      <div className="kv">
+        <span className="k">공개 범위</span>
+        <span className="v">{SCHEME_LABEL[app.scheme]}</span>
+      </div>
+      <div className="kv">
+        <span className="k">가동 방식</span>
+        <span className="v">{SLEEP_MODE_LABEL[app.sleepMode]}</span>
+      </div>
+      {app.cognitoProtect && (
+        <div className="kv">
+          <span className="k">접근 보호</span>
+          <span className="v">로그인한 사람만 접속</span>
         </div>
+      )}
+      <div className="kv">
+        <span className="k">자동 배포</span>
+        <span className="v">{app.autoDeployEnabled ? "켜짐 (코드 올리면 자동 배포)" : "꺼짐"}</span>
+      </div>
+      <div className="kv">
+        <span className="k">만든 날</span>
+        <span className="v">{relTime(app.createdAt)}</span>
       </div>
     </div>
   );
 }
+
+// 프리셋 id → 사용자 크기 라벨(작게/보통/크게). id 접두 규칙에 의존하지 않고 알 수 없으면 그대로 노출 안 함.
+function presetSizeLabel(presetId: string): string {
+  if (presetId.includes("small")) return "작게";
+  if (presetId.includes("medium")) return "보통";
+  if (presetId.includes("large")) return "크게";
+  return "관리자 지정 크기";
+}
+
+// ── 배포 이력 — 성공/실패 모든 배포 + 실행 로그 접이식 ──
+function DeploymentsTab({ appId }: { appId: string }): JSX.Element {
+  const nav = useNavigate();
+  const { data: deps, loading } = useQuery<Deployment[]>(
+    (a) => a.listDeployments(appId),
+    [appId],
+  );
+
+  return (
+    <>
+      <div className="panel">
+        <h4>
+          <History size={16} className="icon" />
+          배포 이력
+        </h4>
+        <p className="muted" style={{ marginTop: -4, marginBottom: 12, fontSize: 13 }}>
+          성공한 배포와 실패한 배포를 모두 최신순으로 보여줘요. 항목을 누르면 진행 단계와 로그를 볼 수 있어요.
+        </p>
+        {loading && <Skeleton height={40} count={3} />}
+        {!loading && (!deps || deps.length === 0) && (
+          <p className="muted">아직 배포 기록이 없어요. '지금 배포'로 첫 배포를 시작할 수 있어요.</p>
+        )}
+        {deps?.map((d) => (
+          <button
+            key={d.deploymentId}
+            type="button"
+            className="deploy-row"
+            style={{ width: "100%", background: "transparent", border: 0, textAlign: "left" }}
+            onClick={() => nav(`/apps/${appId}/deployments/${encodeURIComponent(d.deploymentId)}`)}
+          >
+            <DeployBadge status={d.status} />
+            <div>
+              <div className="msg">{d.commitMessage ?? "배포"}</div>
+              <div className="sha">
+                {TRIGGER_LABEL[d.trigger]}
+                {d.commitSha ? ` · ${d.commitSha}` : ""}
+              </div>
+            </div>
+            <span className="when">{relTime(d.createdAt)}</span>
+            <ChevronRight size={16} className="icon" style={{ opacity: 0.5 }} />
+          </button>
+        ))}
+      </div>
+
+      {/* 컨테이너 실시간 로그(디버깅 맥락) — 배포 이력 탭 하단에 접이식으로 유지 */}
+      <RuntimeLogsSection appId={appId} />
+    </>
+  );
+}
+
+const TRIGGER_LABEL: Record<Deployment["trigger"], string> = {
+  auto: "자동",
+  manual: "수동",
+  rollback: "되돌리기",
+};
 
 function DeployBadge({ status }: { status: Deployment["status"] }): JSX.Element {
   if (status === "SUCCEEDED") return <Badge tone="running" label="완료" variant="pill" />;
@@ -342,8 +417,35 @@ function DeployBadge({ status }: { status: Deployment["status"] }): JSX.Element 
   return <Badge tone="waking" label={DEPLOY_STATUS_LABEL[status]} variant="pill" />;
 }
 
-// ── 로그 뷰어 (자동 새로고침) ──
-function LogsTab({ appId }: { appId: string }): JSX.Element {
+// ── 실행 로그 접이식 섹션 (기존 로그 탭 내용 — 디버깅 맥락으로 이동) ──
+function RuntimeLogsSection({ appId }: { appId: string }): JSX.Element {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="panel">
+      <button
+        type="button"
+        className="collapse-head"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {open ? <ChevronDown size={16} className="icon" /> : <ChevronRight size={16} className="icon" />}
+        <ScrollText size={16} className="icon" />
+        실행 로그 보기
+        <span className="muted" style={{ fontWeight: 400, fontSize: 13, marginLeft: 6 }}>
+          앱이 실행되며 남기는 기록이에요. 문제 원인을 찾을 때 확인하세요.
+        </span>
+      </button>
+      {open && (
+        <div style={{ marginTop: 12 }}>
+          <RuntimeLogViewer appId={appId} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// 로그 뷰어 (자동 새로고침) — getLogs 재사용. 열렸을 때만 폴링한다.
+function RuntimeLogViewer({ appId }: { appId: string }): JSX.Element {
   const api = useApi();
   const [events, setEvents] = useState<LogEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -375,12 +477,8 @@ function LogsTab({ appId }: { appId: string }): JSX.Element {
   }, [events, auto]);
 
   return (
-    <div className="panel">
-      <div className="row" style={{ justifyContent: "space-between", marginBottom: 12 }}>
-        <h4 style={{ margin: 0 }}>
-          <ScrollText size={16} className="icon" />
-          실시간 로그
-        </h4>
+    <>
+      <div className="row" style={{ justifyContent: "flex-end", marginBottom: 10 }}>
         <label className="row" style={{ gap: 8, fontSize: 13 }}>
           <Toggle on={auto} onChange={setAuto} label="자동 새로고침" />
           자동 새로고침 (5초)
@@ -400,6 +498,120 @@ function LogsTab({ appId }: { appId: string }): JSX.Element {
           ))}
         </div>
       )}
+    </>
+  );
+}
+
+// ── 모니터링 — 접속량 / CPU 사용률 / 메모리 사용률 시계열 차트 ──
+function MonitoringTab({ app }: { app: App }): JSX.Element {
+  const [range, setRange] = useState<MetricRange>("1h");
+  const { data, loading, error } = useQuery<AppMetrics>(
+    (a) => a.getMetrics(app.appId, range),
+    [app.appId, range],
+  );
+
+  const empty =
+    !!data &&
+    data.series.requests.length === 0 &&
+    data.series.cpu.length === 0 &&
+    data.series.memory.length === 0;
+
+  return (
+    <div className="panel">
+      <div className="row" style={{ justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 12 }}>
+        <h4 style={{ margin: 0 }}>
+          <BarChart3 size={16} className="icon" />
+          모니터링
+        </h4>
+        <div className="segmented" role="group" aria-label="조회 기간">
+          {METRIC_RANGE_ORDER.map((r) => (
+            <button
+              key={r}
+              type="button"
+              className={`seg ${range === r ? "on" : ""}`}
+              aria-pressed={range === r}
+              onClick={() => setRange(r)}
+            >
+              {METRIC_RANGE_LABEL[r]}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {loading && <Skeleton height={120} count={3} />}
+      {error && <ErrorNotice error={error} />}
+
+      {data && empty && (
+        <div className="notice info" role="status">
+          <Info size={18} className="icon" />
+          <div>
+            잠자는 중이거나 아직 데이터가 없어요. 앱을 사용하면 접속량과 사용률이 여기에 나타나요.
+          </div>
+        </div>
+      )}
+
+      {data && !empty && (
+        <div className="metric-grid">
+          <MetricCard
+            title="접속량"
+            unit="요청 수"
+            icon={<Activity size={16} className="icon" />}
+            points={data.series.requests}
+            formatValue={(v) => `${v.toLocaleString("ko-KR")}회`}
+          />
+          <MetricCard
+            title="CPU 사용률"
+            unit="%"
+            icon={<Cpu size={16} className="icon" />}
+            points={data.series.cpu}
+            max={100}
+            formatValue={(v) => `${v}%`}
+          />
+          <MetricCard
+            title="메모리 사용률"
+            unit="%"
+            icon={<MemoryStick size={16} className="icon" />}
+            points={data.series.memory}
+            max={100}
+            formatValue={(v) => `${v}%`}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MetricCard({
+  title,
+  unit,
+  icon,
+  points,
+  max,
+  formatValue,
+}: {
+  title: string;
+  unit: string;
+  icon: JSX.Element;
+  points: MetricPoint[];
+  max?: number;
+  formatValue: (v: number) => string;
+}): JSX.Element {
+  const latest = points.length ? points[points.length - 1]!.v : 0;
+  const peak = points.length ? Math.max(...points.map((p) => p.v)) : 0;
+  return (
+    <div className="metric-card">
+      <div className="metric-head">
+        <span className="metric-title">
+          {icon}
+          {title}
+        </span>
+        <span className="metric-latest">{formatValue(latest)}</span>
+      </div>
+      <Sparkline points={points} {...(max !== undefined ? { max } : {})} formatValue={formatValue} ariaLabel={title} />
+      <div className="metric-foot muted">
+        <span>단위: {unit}</span>
+        <span>최고 {formatValue(peak)}</span>
+      </div>
     </div>
   );
 }

@@ -379,6 +379,17 @@ export class PlatformStack extends Stack {
         ],
       }),
     );
+    // (5) 모니터링 메트릭 (GET /apps/{id}/metrics — 접속량/CPU/메모리 시계열)
+    //     - cloudwatch:GetMetricData: 리소스 레벨 권한 미지원 → Resource:"*" (정당 예외, conventions 7장)
+    //     - elasticloadbalancing:DescribeTargetGroups: Describe 계열은 리소스 레벨 미지원 → "*"
+    //       (network-stack 복원/sleep 역할의 동일 액션 예외와 같은 근거. read-only)
+    apiHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "AppMetricsRead",
+        actions: ["cloudwatch:GetMetricData", "elasticloadbalancing:DescribeTargetGroups"],
+        resources: ["*"],
+      }),
+    );
 
     const api = new apigw.RestApi(this, "Api", {
       restApiName: `${prefix}-api`,

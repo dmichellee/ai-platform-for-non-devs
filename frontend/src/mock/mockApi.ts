@@ -9,11 +9,13 @@ import type {
   AdminSettings,
   AlbRegistry,
   App,
+  AppMetrics,
   CodeCommitRepo,
   ComputePreset,
   CreateAppRequest,
   Deployment,
   LogEvent,
+  MetricRange,
   PatchAppRequest,
   PermissionTemplate,
   PlatformUser,
@@ -182,6 +184,18 @@ export class MockApiClient implements ApiClient {
   ): Promise<{ events: LogEvent[]; nextToken?: string }> {
     await delay(180);
     return { events: clone(fx.mockLogs[appId] ?? []) };
+  }
+
+  // 모니터링 지표(목) — 계약 shape 그대로. RUNNING 앱은 그럴듯한 시계열,
+  // 그 외(SLEEPING/CREATING/FAILED)는 빈 series 로 "데이터 없음" 상태를 재현한다.
+  async getMetrics(appId: string, range: MetricRange): Promise<AppMetrics> {
+    await delay(240);
+    const app = this.findApp(appId);
+    const hasData = app.status === "ACTIVE" && app.runtimeState === "RUNNING";
+    if (!hasData) {
+      return { range, series: { requests: [], cpu: [], memory: [] } };
+    }
+    return { range, series: fx.buildMockMetrics(range) };
   }
 
   async listConnections(): Promise<RepoConnection[]> {

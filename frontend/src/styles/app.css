@@ -965,6 +965,106 @@ textarea {
   margin-right: 10px;
 }
 
+/* ── 접이식 섹션 헤더 (실행 로그 보기 등) ── */
+.collapse-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--on-surface);
+  text-align: left;
+}
+.collapse-head:hover {
+  color: var(--primary);
+}
+
+/* ── 모니터링 — 기간 선택(segmented) ── */
+.segmented {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.segmented .seg {
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 0;
+  background: transparent;
+  color: var(--on-surface-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.segmented .seg:hover {
+  color: var(--on-surface);
+}
+.segmented .seg.on {
+  background: var(--primary);
+  color: #fff;
+}
+[data-theme="dark"] .segmented .seg.on {
+  color: #1e1e1e;
+}
+
+/* ── 모니터링 — 지표 카드 + SVG 스파크라인 ── */
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--s4);
+}
+@media (max-width: 860px) {
+  .metric-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.metric-card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: var(--s4);
+  background: var(--surface-2);
+  /* 스파크라인의 currentColor(면/선 색) 기준 */
+  color: var(--primary);
+}
+.metric-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s3);
+  margin-bottom: var(--s3);
+}
+.metric-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--on-surface-muted);
+}
+.metric-latest {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--on-surface);
+}
+.spark {
+  display: block;
+  width: 100%;
+  height: 88px;
+}
+.metric-foot {
+  display: flex;
+  justify-content: space-between;
+  margin-top: var(--s2);
+  font-size: 12px;
+}
+
 /* ── 대기 페이지(WAKING) ── */
 .wake-box {
   text-align: center;
@@ -1468,8 +1568,14 @@ tbody tr:hover {
   font-size: 13px;
 }
 
-/* 설치 3단계 카드 */
+/* 설치 단계 카드 (반응형: 넓으면 4열, 좁으면 자동 줄바꿈) */
 .step-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--s3);
+}
+/* 들어있는 파일 3열 (steering / 커밋 검사 / 설치 스크립트) */
+.grid-3 {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: var(--s3);
@@ -1557,8 +1663,18 @@ tbody tr:hover {
   color: var(--on-surface-muted);
   line-height: 1.55;
 }
-@media (max-width: 860px) {
+/* 중간 폭: 4단계 카드와 3열 안내는 2열로 접는다 */
+@media (max-width: 1040px) {
   .step-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .grid-3 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 860px) {
+  .step-cards,
+  .grid-3 {
     grid-template-columns: 1fr;
   }
   .kiro-hero {

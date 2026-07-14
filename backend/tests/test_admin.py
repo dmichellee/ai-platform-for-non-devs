@@ -28,7 +28,6 @@ def test_user_put_settings_forbidden_no_write(ddb_table, stub_clients):
                 "registeredVpcs": [],
                 "userAppQuota": 5,
                 "allowInternetFacing": True,
-                "allowedBaseImages": [],
             },
         )
     )
@@ -69,6 +68,19 @@ def test_admin_get_settings_default(ddb_table, stub_clients):
     out = parse_result(res)
     assert out["status"] == 200
     assert out["data"]["userAppQuota"] == 5  # DEFAULT
+    # 베이스 이미지 허용목록 기능 제거 — 기본 응답에 필드가 없어야 한다.
+    assert "allowedBaseImages" not in out["data"]
+
+
+def test_admin_get_settings_drops_legacy_base_images(ddb_table, stub_clients):
+    """구 스키마 잔여 allowedBaseImages 가 DDB 에 있어도 응답에서 무시된다(스키마리스)."""
+    from .conftest import seed_settings
+
+    seed_settings(ddb_table, allowedBaseImages=["public.ecr.aws/docker/library/node:20"])
+    res = handler(make_event("GET", "/admin/settings", user_id="a1", groups=["admin"]))
+    out = parse_result(res)
+    assert out["status"] == 200
+    assert "allowedBaseImages" not in out["data"]
 
 
 # ── 프리셋 검증(Fargate 유효 조합) ───────────────────────────────────────────
@@ -135,7 +147,6 @@ def test_admin_put_settings_ok(ddb_table, stub_clients):
                 "registeredVpcs": [{"vpcId": "vpc-1", "label": "기본"}],
                 "userAppQuota": 10,
                 "allowInternetFacing": True,
-                "allowedBaseImages": ["public.ecr.aws/docker/library/node:20"],
                 "logRetentionDays": 30,
             },
         )
@@ -160,7 +171,6 @@ def test_admin_put_settings_invalid_provider(ddb_table, stub_clients):
                 "registeredVpcs": [],
                 "userAppQuota": 5,
                 "allowInternetFacing": False,
-                "allowedBaseImages": [],
             },
         )
     )

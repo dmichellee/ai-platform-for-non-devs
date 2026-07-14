@@ -7,6 +7,7 @@ import type {
   ConnectionStatus,
   DeploymentStatus,
   FailureCategory,
+  MetricRange,
   Provider,
   RuntimeState,
   Scheme,
@@ -104,6 +105,16 @@ export const SLEEP_MODE_DESC: Record<SleepMode, string> = {
     "쓰지 않을 땐 잠들고, 접속하면 자동으로 깨어나요. 처음 접속 시 30초~1분 정도 걸릴 수 있어요.",
   schedule: "정해둔 시간대에만 켜져 있어요. (예: 평일 09:00–19:00)",
 };
+
+// ── 모니터링 기간(range) → 사용자 라벨. AWS 서비스명 없이 기간만 노출 ──
+export const METRIC_RANGE_LABEL: Record<MetricRange, string> = {
+  "1h": "1시간",
+  "6h": "6시간",
+  "24h": "24시간",
+  "7d": "7일",
+};
+
+export const METRIC_RANGE_ORDER: MetricRange[] = ["1h", "6h", "24h", "7d"];
 
 // ── scheme → 공개 범위 라벨 (용어 사전: internet-facing/internal 금지) ──
 export const SCHEME_LABEL: Record<Scheme, string> = {

@@ -11,6 +11,8 @@ inclusion: always
 - 포트는 환경변수 `PORT`를 읽고, 없으면 기본값 8080을 쓴다.
   - Node: `const PORT = Number(process.env.PORT ?? 8080)`
   - Python: `port = int(os.environ.get("PORT", "8080"))`
+- Dockerfile의 `EXPOSE`는 **8080 하나만** 둔다. 다른 포트를 EXPOSE하지 않는다
+  (플랫폼은 8080만 라우팅한다). `8080/tcp` 프로토콜 표기는 허용된다.
 
 ## 2. 헬스체크
 - `GET /health` 엔드포인트를 만들고 **200**을 반환한다. 본문은 자유(`{"status":"ok"}` 등).
@@ -19,9 +21,7 @@ inclusion: always
 
 ## 3. Dockerfile (레포 루트)
 - 레포 루트에 `Dockerfile`을 유지한다.
-- **허용된 공식 베이스 이미지**만 사용한다(예: `public.ecr.aws/docker/library/node:22-slim`,
-  `public.ecr.aws/docker/library/python:3.12-slim`). 허용 목록은 플랫폼 관리자가 정한다.
-- `EXPOSE 8080`을 포함한다.
+- `EXPOSE 8080` **하나만** 둔다(다른 포트 EXPOSE 금지).
 - **non-root 사용자**로 실행한다(`USER` 지시자, 예: `USER node`).
 - 특권 실행(`--privileged`), 호스트 도커 소켓(`/var/run/docker.sock`), 호스트 네트워크
   (`--network host`), 추가 커널 권한(`--cap-add`), 호스트 경로 바인드 마운트는 **금지**한다.
@@ -40,13 +40,24 @@ inclusion: always
 - 로그는 표준 출력(`console.log` / `print`)으로만 남긴다.
 - 파일 로그를 만들지 않는다(플랫폼이 파일 로그를 수집하지 못한다).
 
-## 7. "배포 표준에 맞춰줘" 요청 대응
+## 7. git 커밋 훅 설치 (pre-commit)
+이 번들에는 커밋 직전에 배포 표준을 자동 점검하는 **git pre-commit 훅**이 들어 있다
+(`hooks/pre-commit`). 코드를 만들거나 수정할 때 다음을 확인하고, 필요하면 대신 설치한다:
+- 이 프로젝트에 `.git/hooks/pre-commit`이 **없거나** 번들의 `hooks/pre-commit`과 **다르면**,
+  프로젝트 루트에서 `sh install-hooks.sh`를 실행한다(또는 `hooks/pre-commit`을
+  `.git/hooks/pre-commit`으로 복사하고 `chmod +x` 한다).
+- 이 훅은 커밋할 때 Dockerfile 존재·`EXPOSE 8080`(하나만)·금지 항목·고신뢰 시크릿 패턴을
+  점검한다. 걸리면 한국어로 사유를 안내하며 커밋을 멈춘다.
+
+## 8. "배포 표준에 맞춰줘" 요청 대응
 사용자가 "배포 표준에 맞춰줘" 또는 "이 앱을 배포 표준에 맞게 준비해줘"라고 요청하면
 위 1~6 항목을 **전부 점검**하고 미비점을 수정한다. 특히:
 - Dockerfile이 없으면 생성한다(위 3 규칙 준수).
-- 리슨 포트가 8080이 아니면 8080으로 바꾸고 `EXPOSE 8080`을 맞춘다.
+- 리슨 포트가 8080이 아니면 8080으로 바꾸고 `EXPOSE 8080` **하나만** 남긴다
+  (8080 외 다른 EXPOSE가 있으면 제거한다).
 - `/health` 라우트가 없으면 추가한다(200 반환).
 - 하드코딩된 시크릿을 환경변수로 옮기고 README에 목록을 기록한다.
+- 위 7의 pre-commit 훅이 설치돼 있지 않으면 설치한다.
 
 ## 참고: 최종 검증은 플랫폼이 한다
 이 지침은 코드가 **처음부터 배포 가능한 형태**로 만들어지도록 돕는 보조 수단이다.

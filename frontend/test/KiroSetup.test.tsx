@@ -55,8 +55,52 @@ describe("Kiro 설정 다운로드 페이지", () => {
     renderWithProviders(<KiroSetup />);
     expect(await screen.findByText("Kiro 설정 다운로드")).toBeInTheDocument();
     expect(screen.getByText(/왜 필요한가요/)).toBeInTheDocument();
-    expect(screen.getByText(/설치하는 법/)).toBeInTheDocument();
     expect(screen.getByText(/무엇이 들어있나요/)).toBeInTheDocument();
+  });
+
+  it("설치 안내가 4단계로, 커밋 검사(pre-commit) 방식으로 표시된다", async () => {
+    renderWithProviders(<KiroSetup />);
+    await screen.findByText("Kiro 설정 다운로드");
+    // 3단계 → 4단계로 갱신됨.
+    expect(screen.getByText(/설치하는 법 \(4단계\)/)).toBeInTheDocument();
+    // 4개 단계 카드의 제목이 모두 보인다.
+    expect(screen.getByText("받은 파일 압축 풀기")).toBeInTheDocument();
+    expect(screen.getByText("프로젝트 맨 위에 복사")).toBeInTheDocument();
+    expect(screen.getByText("검사 설치 한 번 실행")).toBeInTheDocument();
+    expect(screen.getByText("이제부터 자동 검사")).toBeInTheDocument();
+    // 설치 스크립트 실행 명령 안내(여러 섹션에 등장하므로 존재만 확인).
+    expect(screen.getAllByText(/install-hooks\.sh/).length).toBeGreaterThan(0);
+    // 비개발자 대안(Kiro에게 요청) 문구.
+    expect(screen.getByText(/커밋 검사 설치해줘/)).toBeInTheDocument();
+  });
+
+  it("폴더 트리에 새 번들 구성(steering + hooks/pre-commit + install-hooks.sh)이 반영된다", async () => {
+    renderWithProviders(<KiroSetup />);
+    await screen.findByText("Kiro 설정 다운로드");
+    const tree = screen.getByLabelText("폴더 구조 예시");
+    const treeText = tree.textContent ?? "";
+    expect(treeText).toContain(".kiro/");
+    expect(treeText).toContain("steering/");
+    expect(treeText).toContain("deployment-standard.md");
+    expect(treeText).toContain("hooks/");
+    expect(treeText).toContain("pre-commit");
+    expect(treeText).toContain("install-hooks.sh");
+    // 옛 Kiro hook 파일은 더 이상 트리에 없다.
+    expect(treeText).not.toContain("validate-deploy-ready.kiro.hook");
+  });
+
+  it("'무엇이 들어있나요'에 커밋 검사와 설치 스크립트가 안내된다", async () => {
+    renderWithProviders(<KiroSetup />);
+    await screen.findByText("Kiro 설정 다운로드");
+    expect(screen.getByText(/배포 표준 지침 \(steering\)/)).toBeInTheDocument();
+    expect(screen.getByText(/커밋 검사 \(pre-commit\)/)).toBeInTheDocument();
+    expect(screen.getByText(/설치 스크립트 \(install-hooks\.sh\)/)).toBeInTheDocument();
+  });
+
+  it("팁에 '커밋이 멈췄을 때 안내를 Kiro에게 붙여넣기' 가이드가 있다", async () => {
+    renderWithProviders(<KiroSetup />);
+    await screen.findByText("Kiro 설정 다운로드");
+    expect(screen.getByText(/커밋이 멈췄을 때/)).toBeInTheDocument();
   });
 
   it("config에 kiroConfigUrl이 없으면 기본 경로로 다운로드 링크를 건다", async () => {

@@ -17,6 +17,8 @@ from .keys import (
 )
 
 _CONFIG_DROP = ("PK", "SK", "entityType")
+# AdminSettings 응답에서 추가로 떨어뜨릴 폐기 필드(구 스키마 잔여) — allowedBaseImages 제거.
+_SETTINGS_DROP = (*_CONFIG_DROP, "allowedBaseImages")
 
 # 플랫폼 기본 설정(부트스트랩용). GET 시 없으면 이 값으로 응답.
 DEFAULT_ADMIN_SETTINGS: dict[str, Any] = {
@@ -24,7 +26,6 @@ DEFAULT_ADMIN_SETTINGS: dict[str, Any] = {
     "registeredVpcs": [],
     "userAppQuota": 5,
     "allowInternetFacing": False,
-    "allowedBaseImages": [],
     "logRetentionDays": 30,
     "updatedAt": "1970-01-01T00:00:00.000Z",
 }
@@ -38,7 +39,8 @@ def get_admin_settings() -> dict[str, Any]:
     item = res.get("Item")
     if not item:
         return dict(DEFAULT_ADMIN_SETTINGS)
-    return strip_item(item, _CONFIG_DROP)  # type: ignore[return-value]
+    # 구 스키마 잔여 allowedBaseImages 는 응답에서 무시(스키마리스 — 저장은 무해).
+    return strip_item(item, _SETTINGS_DROP)  # type: ignore[return-value]
 
 
 def put_admin_settings(settings: dict[str, Any]) -> dict[str, Any]:

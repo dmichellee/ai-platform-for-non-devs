@@ -9,10 +9,16 @@ buildspec에서 빌드된 이미지를 실행해 확인하는 영역이라 검�
 
 검사(KIRO-STANDARDS 3장 표):
  - C1 Dockerfile 존재            → 없으면 DOCKERFILE_MISSING
- - C2 EXPOSE 8080 존재           → 없거나 포트 불일치면 DOCKERFILE_INVALID
- - C6 베이스 이미지 허용목록 대조 → 허용목록 밖이면 DOCKERFILE_INVALID
+ - C2 EXPOSE 8080 **하나만**      → 없거나 8080이 아니거나 8080 외 다른 포트가 함께 있으면 DOCKERFILE_INVALID
  - 금지 항목(privileged/host mount 등) → 있으면 DOCKERFILE_INVALID
  - C7 non-root(USER 지시자)       → 없으면 경고(차단하지 않음)
+
+EXPOSE는 8080 **하나만** 허용한다(사용자 결정). 플랫폼은 8080만 라우팅하므로 다른 포트를
+EXPOSE하면 오해를 부르고, ALB/타깃그룹 계약과 어긋난다. 8080에 더해 다른 포트가 있으면
+차단한다(`8080/tcp` 프로토콜 표기는 허용).
+
+베이스 이미지는 검사하지 않는다(허용목록 기능 제거 — 사용자 결정). 베이스 이미지는
+멀티스테이지 런타임 스테이지 기준으로 파싱해 결과(baseImage)에 참고용으로만 담는다.
 
 반환은 apphub-conventions 4장 failureCategory(DOCKERFILE_MISSING / DOCKERFILE_INVALID)와
 사람이 읽을 수 있는 사유 목록. 통과해도 경고(warnings)는 별도로 담아 반환한다.
@@ -175,37 +181,13 @@ def _has_non_root_user(instructions: list[str]) -> bool:
     return True
 
 
-def _repo_of(ref: str) -> str:
-    """digest(@sha256:...) 제거 후 태그 콜론과 포트 콜론을 구별해 리포지토리만 추출."""
-    no_digest = ref.split("@")[0]
-    last_colon = no_digest.rfind(":")
-    last_slash = no_digest.rfind("/")
-    if last_colon > last_slash:
-        return no_digest[:last_colon]
-    return no_digest
-
-
-def _is_base_image_allowed(base_image: str, allowed: list[str]) -> bool:
-    base_repo = _repo_of(base_image)
-    for a in allowed:
-        if a == base_image:  # 정확 일치(태그 포함)
-            return True
-        allowed_has_tag = _repo_of(a) != a.split("@")[0]
-        if not allowed_has_tag and _repo_of(a) == base_repo:  # 리포지토리 일치(태그 무관)
-            return True
-    return False
-
-
-def validate_dockerfile(
-    content: str | None,
-    allowed_base_images: list[str] | None = None,
-) -> DockerfileValidationResult:
+def validate_dockerfile(content: str | None) -> DockerfileValidationResult:
     """Dockerfile을 정적 검증한다.
 
     차단 사유가 하나라도 있으면 ok=false + failureCategory.
     DOCKERFILE_MISSING은 내용이 아예 없을 때만. 그 외 규칙 위반은 DOCKERFILE_INVALID.
+    베이스 이미지는 검사하지 않는다(허용목록 기능 제거) — baseImage는 참고용으로만 반환.
     """
-    allowed = list(allowed_base_images or [])
     reasons: list[str] = []
     warnings: list[str] = []
 
@@ -225,31 +207,16 @@ def validate_dockerfile(
     instructions = _normalize_instructions(content)
 
     # ── FROM / 베이스 이미지 ────────────────────────────────────────────────────
+    # 베이스 이미지 허용목록 검사는 제거됨(사용자 결정) — baseImage는 참고용으로만 파싱.
     froms = [f for f in (_parse_from(i) for i in instructions) if f is not None]
     if not froms:
         reasons.append("Dockerfile에 FROM 지시자가 없어요. 베이스 이미지를 지정해야 해요.")
     base_image = _resolve_runtime_base_image(froms)
 
-    # ── C6: 베이스 이미지 허용목록 대조 ──────────────────────────────────────────
-    if base_image is not None:
-        if not allowed:
-            warnings.append(
-                "허용 베이스 이미지 목록이 설정되어 있지 않아 베이스 이미지 검사를 건너뛰었어요"
-                "(관리자 설정 필요)."
-            )
-        elif base_image.lower() == "scratch":
-            if not _is_base_image_allowed(base_image, allowed):
-                reasons.append(
-                    "베이스 이미지 'scratch'는 허용 목록에 없어요. "
-                    "관리자 허용 목록의 공식 이미지를 사용하세요."
-                )
-        elif not _is_base_image_allowed(base_image, allowed):
-            reasons.append(
-                f"베이스 이미지 '{base_image}'가 허용 목록에 없어요. "
-                f"허용된 이미지(예: {', '.join(allowed[:2])})를 사용하세요."
-            )
-
-    # ── C2: EXPOSE 8080 ──────────────────────────────────────────────────────────
+    # ── C2: EXPOSE는 8080 하나만 ─────────────────────────────────────────────────
+    # 플랫폼은 8080만 라우팅한다. 8080이 없으면/다르면 물론, 8080에 더해 다른 포트가
+    # 함께 EXPOSE돼 있어도 차단한다(`8080/tcp` 프로토콜 표기는 _parse_exposed_ports가
+    # 포트 번호만 뽑으므로 허용됨).
     exposed_ports = _parse_exposed_ports(instructions)
     if not exposed_ports:
         reasons.append(
@@ -262,6 +229,15 @@ def validate_dockerfile(
             f"(현재 EXPOSE: {', '.join(str(p) for p in exposed_ports)}). "
             f"'EXPOSE {REQUIRED_EXPOSE_PORT}'가 필요해요."
         )
+    else:
+        # 8080은 있으나 다른 포트도 함께 EXPOSE된 경우 → 8080 하나만 허용.
+        extra_ports = sorted({p for p in exposed_ports if p != REQUIRED_EXPOSE_PORT})
+        if extra_ports:
+            reasons.append(
+                f"EXPOSE는 {REQUIRED_EXPOSE_PORT} 하나만 허용돼요. "
+                f"다른 포트({', '.join(str(p) for p in extra_ports)})도 EXPOSE돼 있어요. "
+                f"'EXPOSE {REQUIRED_EXPOSE_PORT}'만 남기고 나머지 EXPOSE는 제거하세요."
+            )
 
     # ── 금지 항목 ────────────────────────────────────────────────────────────────
     for pat in _FORBIDDEN_PATTERNS:

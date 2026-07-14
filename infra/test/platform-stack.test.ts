@@ -331,6 +331,7 @@ describe("platform 스택", () => {
         "AppSecurityGroupManageInRegion", // provisioner: EC2 SG 생성/변경 (aws:RequestedRegion 조건, QA M-2)
         "CodeConnectionsCreateList", // API: CreateConnection/ListConnections (리소스 레벨 미지원, IAM 시뮬레이터 검증)
         "CodeCommitRepos", // API: ListRepositories/CreateRepository (리소스 레벨 미지원, IAM 시뮬레이터 검증)
+        "AppMetricsRead", // API: GetMetricData/DescribeTargetGroups (리소스 레벨 미지원 read-only, 모니터링 탭)
       ]);
       let star = 0;
       let starWithCondition = 0;

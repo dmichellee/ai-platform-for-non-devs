@@ -146,7 +146,6 @@ export interface AdminSettings {
   registeredVpcs: { vpcId: string; label: string }[];
   userAppQuota: number;
   allowInternetFacing: boolean;
-  allowedBaseImages: string[];
   logRetentionDays: number;
   updatedAt?: string;
 }
@@ -170,6 +169,24 @@ export interface PlatformUser {
 export interface LogEvent {
   timestamp: number;
   message: string;
+}
+
+// ── 모니터링 지표 (GET /apps/{id}/metrics — api-requests.md #6, backend 병렬 구현) ──
+// 계약 shape: {data:{range, series:{requests:[{t,v}], cpu:[{t,v}], memory:[{t,v}]}}}.
+export type MetricRange = "1h" | "6h" | "24h" | "7d";
+
+export interface MetricPoint {
+  t: number; // epoch ms (버킷 시작 시각)
+  v: number; // requests=요청 수(정수), cpu/memory=사용률 백분율(0~100)
+}
+
+export interface AppMetrics {
+  range: MetricRange;
+  series: {
+    requests: MetricPoint[];
+    cpu: MetricPoint[];
+    memory: MetricPoint[];
+  };
 }
 
 // ── 응답 봉투 (계약 3장) ──

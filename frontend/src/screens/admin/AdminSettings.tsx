@@ -1,6 +1,6 @@
 /**
  * 관리자 플랫폼 설정 — provider 활성화, VPC 등록, internet-facing 허용,
- * 베이스 이미지 허용 목록, 사용자당 앱 쿼터, 로그 보존 기간.
+ * 사용자당 앱 쿼터, 로그 보존 기간.
  * GET /admin/settings, PUT /admin/settings (계약).
  */
 import { useEffect, useState } from "react";
@@ -139,20 +139,6 @@ export function AdminSettingsTab(): JSX.Element {
           <Plus size={14} className="icon" />
           VPC 추가
         </button>
-      </section>
-
-      <section>
-        <h4 style={{ marginBottom: 8 }}>허용 베이스 이미지</h4>
-        <textarea
-          className="textarea"
-          style={{ minHeight: 90 }}
-          value={form.allowedBaseImages.join("\n")}
-          onChange={(e) =>
-            patch({ allowedBaseImages: e.target.value.split("\n").map((s) => s.trim()).filter(Boolean) })
-          }
-          aria-label="허용 베이스 이미지 (줄바꿈 구분)"
-        />
-        <div className="hint">줄바꿈으로 구분. Dockerfile FROM 검증에 사용됩니다.</div>
       </section>
 
       {saveMut.error && <ErrorNotice error={saveMut.error} />}

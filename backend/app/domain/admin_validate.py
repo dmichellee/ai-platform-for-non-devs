@@ -94,22 +94,16 @@ def parse_admin_settings(raw: str | None) -> dict[str, Any]:
     if not isinstance(allow_internet_facing, bool):
         raise errors.validation("회사 밖 접속 허용 값은 true/false여야 해요.")
 
-    allowed_base_images = body.get("allowedBaseImages")
-    if not isinstance(allowed_base_images, list) or not all(
-        isinstance(i, str) for i in allowed_base_images
-    ):
-        raise errors.validation("허용 베이스 이미지 목록이 올바르지 않아요.")
-
     log_retention_days = body.get("logRetentionDays", 30)
     if not _is_number(log_retention_days) or log_retention_days <= 0:
         raise errors.validation("로그 보존 기간이 올바르지 않아요.")
 
+    # allowedBaseImages 는 제거됨(베이스 이미지 허용목록 기능 폐기). body 에 와도 무시한다.
     return {
         "enabledProviders": enabled_providers,
         "registeredVpcs": registered_vpcs,
         "userAppQuota": user_app_quota,
         "allowInternetFacing": allow_internet_facing,
-        "allowedBaseImages": allowed_base_images,
         "logRetentionDays": log_retention_days,
     }
 

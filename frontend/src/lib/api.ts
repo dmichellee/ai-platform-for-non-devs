@@ -7,6 +7,7 @@ import type {
   AdminSettings,
   AlbRegistry,
   App,
+  AppMetrics,
   CodeCommitRepo,
   ComputePreset,
   CreateAppRequest,
@@ -14,6 +15,7 @@ import type {
   ListEnvelope,
   LogEvent,
   LogsEnvelope,
+  MetricRange,
   PatchAppRequest,
   PermissionTemplate,
   PlatformUser,
@@ -50,6 +52,8 @@ export interface ApiClient {
   rollback(appId: string, deploymentId: string): Promise<Deployment>;
   // 로그
   getLogs(appId: string, opts?: { limit?: number; nextToken?: string; startTime?: number }): Promise<{ events: LogEvent[]; nextToken?: string }>;
+  // 모니터링 지표 (api-requests.md #6, backend 병렬 구현)
+  getMetrics(appId: string, range: MetricRange): Promise<AppMetrics>;
   // 연결
   listConnections(): Promise<RepoConnection[]>;
   createConnection(provider: Provider, displayName: string): Promise<RepoConnection>;
@@ -217,6 +221,11 @@ export class HttpApiClient implements ApiClient {
     if (opts?.startTime) q.set("startTime", String(opts.startTime));
     const env = await this.request<LogsEnvelope>("GET", `/apps/${appId}/logs?${q.toString()}`);
     return env.data;
+  }
+
+  // 모니터링 지표 — 계약 언랩: {data: AppMetrics}
+  getMetrics(appId: string, range: MetricRange): Promise<AppMetrics> {
+    return this.single<AppMetrics>("GET", `/apps/${appId}/metrics?range=${range}`);
   }
 
   // 연결
