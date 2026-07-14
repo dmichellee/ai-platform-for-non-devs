@@ -2,8 +2,17 @@
  * Stage별 설정 타입 + 로더.
  *
  * [P] 플랫폼 개발·설치 규칙 (docs/PLATFORM-ENGINEERING.md):
- *  - 계정/리전/도메인/hostedZoneId 등 환경 리터럴은 오직 이 파일에만 둔다. 다른 코드에 하드코딩 금지.
+ *  - 계정/리전/도메인/hostedZoneId 등 환경 리터럴은 **하드코딩하지 않는다**. 퍼블릭 애셋이므로
+ *    설치자마다 값이 다르다(cdk-authoring "cdk.context.json에 환경 값 커밋 금지"와 동일 취지).
+ *  - 이 값들은 최초 배포 시 주입받는다:
+ *      · appsDomain   : deploy.sh `--domain`(필수) → `cdk -c domain=...` (CDK context 1순위)
+ *      · hostedZoneId : deploy.sh `--hosted-zone-id`(선택, 미지정 시 Route53 자동 조회) → `-c hostedZoneId=...`
+ *      · account/region : CDK 표준(`CDK_DEFAULT_ACCOUNT`/`CDK_DEFAULT_REGION` — aws 자격증명·--region에서 자동)
+ *  - loadConfig는 순수 함수다(App 비의존). bin/apphub.ts가 context/env에서 값을 읽어 overrides로 넘긴다.
+ *    누락 시 여기서 친절한 한국어 에러를 던져 synth가 명확히 실패한다(하위호환/검증).
  *  - 모든 스택은 여기서 나온 StageConfig를 주입받아 리소스명을 `apphub-${stage}-*`로 짓는다.
+ *  - 앱 스택(app-runtime/app-pipeline)은 이 로더를 쓰지 않는다 — domain/hostedZone을 network 스택이
+ *    발행한 SSM(`/apphub/{stage}/network/*`)에서 읽으므로 buildspec에 domain 주입이 불필요하다.
  *
  * SG ingress 규칙 (D17, PLATFORM-ENGINEERING.md 2장):
  *  - 플랫폼 소유 SG의 ingress에 `0.0.0.0/0`·`::/0` 금지. 개방이 필요하면 대역을 한정한다.
@@ -34,13 +43,6 @@ export interface StageConfig {
    */
   readonly allowedIngressCidrs: readonly string[];
 }
-
-/** 스테이지 무관 고정값. 환경 리터럴의 단일 원본. */
-const ACCOUNT = "111122223333";
-const REGION = "ap-northeast-2";
-const HOSTED_ZONE_ID = "Z0EXAMPLEHOSTEDZONE";
-const PROD_APPS_DOMAIN = "apps.example.com";
-const DEV_APPS_DOMAIN = "apps-dev.example.com";
 
 /** D17 위반: 전 개방 대역. 플랫폼 소유 SG ingress에 절대 허용하지 않는다. */
 const FORBIDDEN_OPEN_CIDRS: readonly string[] = ["0.0.0.0/0", "::/0"];
@@ -74,27 +76,92 @@ export function parseStage(raw: string | undefined): Stage {
   );
 }
 
+/** loadConfig가 받는 설치 시점 주입값. 하드코딩 리터럴을 대체한다. */
+export interface ConfigInputs {
+  /**
+   * 사용자 앱 apex 도메인(필수). deploy.sh `--domain` → `-c domain=...`.
+   * 예: prod=`apps.example.com`, dev=`apps-dev.example.com`(스테이지 도메인을 명시 지정).
+   */
+  readonly appsDomain?: string;
+  /**
+   * appsDomain을 관장하는 Route53 public hosted zone ID(선택).
+   * 미지정 시 deploy.sh가 Route53에서 자동 조회해 `-c hostedZoneId=...`로 주입한다.
+   */
+  readonly hostedZoneId?: string;
+  /** 배포 대상 계정(필수). CDK 표준 `CDK_DEFAULT_ACCOUNT`에서 온다. */
+  readonly account?: string;
+  /** 배포 리전(필수). CDK 표준 `CDK_DEFAULT_REGION`(또는 --region)에서 온다. */
+  readonly region?: string;
+  /** 플랫폼 소유 SG ingress 허용 대역. 전 개방 대역은 거부(D17). */
+  readonly allowedIngressCidrs?: readonly string[];
+}
+
+/**
+ * 필수 문자열 입력을 검증한다. 누락 시 설치자가 이해할 수 있는 한국어 에러로 synth를 멈춘다.
+ */
+function requireInput(
+  value: string | undefined,
+  label: string,
+  howToProvide: string,
+): string {
+  const v = value?.trim();
+  if (!v) {
+    throw new Error(
+      `${label}가 지정되지 않았습니다. ${howToProvide}`,
+    );
+  }
+  return v;
+}
+
 /**
  * stage 설정을 로드한다.
+ *
+ * 환경 리터럴(account/region/domain/hostedZoneId)은 하드코딩하지 않고 `inputs`로 주입받는다.
+ * bin/apphub.ts가 CDK context(`-c domain=... -c hostedZoneId=...`)와 CDK 표준 env
+ * (`CDK_DEFAULT_ACCOUNT`/`CDK_DEFAULT_REGION`)에서 값을 읽어 이 로더에 넘긴다.
+ *
  * @param stage 대상 스테이지
- * @param overrides 선택 오버라이드. allowedIngressCidrs 등 설치 시점 주입값.
- * @throws {Error} allowedIngressCidrs에 전 개방 대역이 섞여 있으면 (assertNoOpenCidr).
+ * @param inputs 설치 시점 주입값(도메인/계정/리전/hostedZoneId/CIDR).
+ * @throws {Error} appsDomain/account/region 누락 시(친절한 한국어 안내).
+ * @throws {Error} allowedIngressCidrs에 전 개방 대역이 섞여 있으면(assertNoOpenCidr).
  */
-export function loadConfig(
-  stage: Stage,
-  overrides?: { readonly allowedIngressCidrs?: readonly string[] },
-): StageConfig {
-  const allowedIngressCidrs = overrides?.allowedIngressCidrs ?? [];
+export function loadConfig(stage: Stage, inputs?: ConfigInputs): StageConfig {
+  const allowedIngressCidrs = inputs?.allowedIngressCidrs ?? [];
 
   // D17 강제: 환경 주입 시점에 전 개방 대역을 차단한다(스택 synth 이전).
   assertNoOpenCidr(allowedIngressCidrs);
 
+  const appsDomain = requireInput(
+    inputs?.appsDomain,
+    "앱 도메인(appsDomain)",
+    "설치 시 `--domain <apps.example.com>` 인자로 도메인을 지정하세요" +
+      "(내부적으로 `cdk -c domain=...`로 전달됩니다).",
+  );
+  const account = requireInput(
+    inputs?.account,
+    "배포 대상 계정(account)",
+    "AWS 자격 증명을 설정하세요(CDK 표준 CDK_DEFAULT_ACCOUNT). deploy.sh가 자동 주입합니다.",
+  );
+  const region = requireInput(
+    inputs?.region,
+    "배포 리전(region)",
+    "`--region <region>`을 지정하거나 AWS 기본 리전을 설정하세요(CDK 표준 CDK_DEFAULT_REGION).",
+  );
+  // hostedZoneId는 선택 — 미지정 시 deploy.sh가 Route53 자동 조회로 채운다.
+  //  그럼에도 synth 시점에 값이 있어야 존 참조가 유효하므로, 최종적으로 없으면 안내한다.
+  const hostedZoneId = requireInput(
+    inputs?.hostedZoneId,
+    `'${appsDomain}'의 Route53 hosted zone ID(hostedZoneId)`,
+    "`--hosted-zone-id <id>`로 지정하거나, 해당 도메인의 public hosted zone을 계정에 두면 " +
+      "deploy.sh가 자동 조회합니다(PLATFORM-ENGINEERING.md 5.1).",
+  );
+
   return {
     stage,
-    account: ACCOUNT,
-    region: REGION,
-    appsDomain: stage === "prod" ? PROD_APPS_DOMAIN : DEV_APPS_DOMAIN,
-    hostedZoneId: HOSTED_ZONE_ID,
+    account,
+    region,
+    appsDomain,
+    hostedZoneId,
     allowedIngressCidrs,
   };
 }

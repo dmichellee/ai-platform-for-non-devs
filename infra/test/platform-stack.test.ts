@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { App } from "aws-cdk-lib";
 import { Template, Match } from "aws-cdk-lib/assertions";
-import { loadConfig } from "../lib/config";
 import { PlatformStack } from "../lib/platform-stack";
 import { assertNoOpenIngress } from "./helpers/sg-ingress";
+import { testConfig, testEnv } from "./helpers/config";
 
 /**
  * L2 — platform 스택 CDK assertions.
@@ -12,11 +12,11 @@ import { assertNoOpenIngress } from "./helpers/sg-ingress";
  */
 function synth(): Template {
   const app = new App();
-  const config = loadConfig("dev");
+  const config = testConfig("dev");
   const stack = new PlatformStack(app, "apphub-dev-platform", {
     stage: "dev",
     config,
-    env: { account: config.account, region: config.region },
+    env: testEnv(config),
   });
   return Template.fromStack(stack);
 }

@@ -5,6 +5,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlertTriangle,
   ExternalLink,
   History,
   Play,
@@ -91,8 +92,11 @@ export function AppDetail({ appId }: { appId: string }): JSX.Element {
             <AppActions app={app} onChanged={reload} />
           </div>
 
-          {app.status !== "ACTIVE" && statusHint(app.status) && (
-            <InfoNotice>{statusHint(app.status)}</InfoNotice>
+          {app.status === "FAILED" && app.failureReason ? (
+            <FailureNotice reason={app.failureReason} />
+          ) : (
+            app.status !== "ACTIVE" &&
+            statusHint(app.status) && <InfoNotice>{statusHint(app.status)}</InfoNotice>
           )}
           {app.status === "ACTIVE" && app.runtimeState === "WAKING" && (
             <InfoNotice>
@@ -144,6 +148,23 @@ export function AppDetail({ appId }: { appId: string }): JSX.Element {
           {tab === "settings" && <SettingsTab app={app} onSaved={reload} />}
         </>
       )}
+    </div>
+  );
+}
+
+// ── 실패 사유 안내 (status=FAILED + failureReason) ──
+// 배포 이력에 잡히기 전 단계(자리 배정/빌드 환경 구성/첫 배포) 실패도 여기서 원인을 본다.
+// 실패한 앱은 되살릴 수 없으므로(상태 기계상 FAILED→DELETING만) 삭제 후 다시 만들도록 안내한다.
+function FailureNotice({ reason }: { reason: string }): JSX.Element {
+  return (
+    <div className="notice error" role="alert">
+      <AlertTriangle size={18} className="icon" />
+      <div>
+        <div>{reason}</div>
+        <div className="muted mt3" style={{ fontSize: 13 }}>
+          이 앱은 되살릴 수 없어요. 위 '삭제' 버튼으로 정리한 뒤 다시 만들어주세요.
+        </div>
+      </div>
     </div>
   );
 }

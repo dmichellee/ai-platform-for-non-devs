@@ -267,3 +267,49 @@ def test_list_only_own_apps(ddb_table, stub_clients):
     # 내부 키(PK/SK/entityType)는 응답에서 제거
     assert "PK" not in items[0]
     assert "entityType" not in items[0]
+
+
+# ── 실패 사유 노출 정책 (failureReason: 모두, failureDetail: admin 전용) ──────────
+
+_FAILED_FIELDS = {
+    "status": "FAILED",
+    "failureReason": "앱 주소/자리 배정 중 문제가 발생했어요. 다시 시도하거나 관리자에게 문의해주세요.",
+    "failureDetail": "단계: allocate-slot | boom",
+}
+
+
+def test_get_failed_app_owner_sees_reason_not_detail(ddb_table, stub_clients):
+    # user(소유자)는 failureReason 은 보되 failureDetail(기술 상세)은 못 본다.
+    seed_app(ddb_table, "app00001", OWNER, **_FAILED_FIELDS)
+    res = handler(make_event("GET", "/apps/app00001", user_id=OWNER, groups=["user"]))
+    data = parse_result(res)["data"]
+    assert data["failureReason"] == _FAILED_FIELDS["failureReason"]
+    assert "failureDetail" not in data
+
+
+def test_get_failed_app_admin_sees_detail(ddb_table, stub_clients):
+    # admin 은 failureDetail(단계·정제된 예외)까지 본다(디버깅용).
+    seed_app(ddb_table, "app00001", OWNER, **_FAILED_FIELDS)
+    res = handler(make_event("GET", "/apps/app00001", user_id="admin-1", groups=["admin"]))
+    data = parse_result(res)["data"]
+    assert data["failureReason"] == _FAILED_FIELDS["failureReason"]
+    assert data["failureDetail"] == _FAILED_FIELDS["failureDetail"]
+
+
+def test_admin_list_apps_includes_detail(ddb_table, stub_clients):
+    # GET /admin/apps 는 admin 전용 → failureDetail 포함.
+    seed_app(ddb_table, "app00001", OWNER, subdomain="a1", **_FAILED_FIELDS)
+    res = handler(
+        make_event("GET", "/admin/apps", user_id="admin-1", groups=["admin"], query={"status": "FAILED"})
+    )
+    items = parse_result(res)["data"]["items"]
+    assert len(items) == 1
+    assert items[0]["failureDetail"] == _FAILED_FIELDS["failureDetail"]
+
+
+def test_list_my_apps_strips_detail_for_user(ddb_table, stub_clients):
+    seed_app(ddb_table, "app00001", OWNER, subdomain="a1", **_FAILED_FIELDS)
+    res = handler(make_event("GET", "/apps", user_id=OWNER, groups=["user"]))
+    items = parse_result(res)["data"]["items"]
+    assert items[0]["failureReason"] == _FAILED_FIELDS["failureReason"]
+    assert "failureDetail" not in items[0]

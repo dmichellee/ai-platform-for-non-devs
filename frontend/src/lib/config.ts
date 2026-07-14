@@ -80,6 +80,7 @@ export async function loadConfig(): Promise<RuntimeConfig> {
     if (raw.cognitoDomain) cfg.cognitoDomain = raw.cognitoDomain;
     if (raw.region) cfg.region = raw.region;
     if (raw.kiroConfigUrl) cfg.kiroConfigUrl = raw.kiroConfigUrl;
+    if (raw.appsDomain) cfg.appsDomain = raw.appsDomain;
     cached = cfg;
     return cfg;
   } catch {

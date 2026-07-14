@@ -15,12 +15,13 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from ..data.alb_registry import allocate_alb_slot
-from ..data.apps import get_app, transition_status, update_app
+from ..data.apps import clear_failure, get_app, set_failure, transition_status, update_app
 from ..data.deployments import put_deployment
 from ..integrations.codebuild import get_build_status, start_provisioner_build
 from ..integrations.codepipeline import start_pipeline
 from ..integrations.ssm import alb_arn_for_scheme, platform_param
 from . import stage
+from .failure import build_failure
 
 
 def _require_app(app_id: str) -> dict[str, Any]:
@@ -104,15 +105,23 @@ def first_deploy(e: dict[str, Any]) -> dict[str, Any]:
 
 
 def finalize(e: dict[str, Any]) -> dict[str, Any]:
-    """상태 전이 확정. 실패면 CREATING→FAILED, 성공이면 CREATING→ACTIVE(조건부·멱등)."""
+    """상태 전이 확정. 실패면 CREATING→FAILED, 성공이면 CREATING→ACTIVE(조건부·멱등).
+
+    실패 시 App 레코드에 failureReason/failureDetail 을 남겨 앱 상세에서 사유를 볼 수 있게 한다
+    (배포 이력에 잡히기 전 단계 실패도 화면 노출). 성공 시 이전 실패 사유 잔재를 제거한다.
+    """
     app_id = e["appId"]
     if e.get("outcome") == "failure":
+        failure = build_failure(e, flow="provision")
+        # 사유 기록은 상태 전이 성패와 독립(멱등). 전이는 조건부라 이미 다른 상태면 삼킨다.
+        set_failure(app_id, failure["failureReason"], failure["failureDetail"])
         try:
             transition_status(app_id, "FAILED", ["CREATING"])
         except Exception:  # noqa: BLE001 - 이미 다른 상태면 전이 실패를 삼킴(멱등)
             pass
         return {"step": "finalize", "appId": app_id, "status": "FAILED"}
     transition_status(app_id, "ACTIVE", ["CREATING"])
+    clear_failure(app_id)  # 재시도 성공 후 잔재 제거.
     app = get_app(app_id)
     runtime_state = (app or {}).get("runtimeState") or "SLEEPING"
     return {"step": "finalize", "appId": app_id, "status": "ACTIVE", "runtimeState": runtime_state}

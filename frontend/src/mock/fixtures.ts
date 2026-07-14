@@ -109,6 +109,9 @@ export const mockApps: App[] = [
     secretArns: {},
     status: "FAILED",
     runtimeState: "SLEEPING",
+    failureReason:
+      "배포 준비(빌드 환경 구성) 중 문제가 발생했어요. 다시 시도하거나 관리자에게 문의해주세요.",
+    // failureDetail 은 admin 응답에만 — 목 데이터에는 user 관점을 기본으로 둔다(있어도 무해).
     cognitoProtect: false,
     createdAt: iso(1000 * 60 * 60 * 24 * 1),
     updatedAt: iso(1000 * 60 * 5),

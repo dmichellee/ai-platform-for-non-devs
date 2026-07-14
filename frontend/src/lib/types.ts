@@ -59,6 +59,9 @@ export interface App {
   secretArns: Record<string, string>;
   status: AppStatus;
   runtimeState: RuntimeState;
+  // status=FAILED일 때만 채워짐. 재시도 성공 시 사라지므로 optional.
+  failureReason?: string; // 사용자용 한국어 요약(user·admin 모두 노출)
+  failureDetail?: string; // 기술 상세 — admin 응답에만 포함(user 응답에는 없음)
   albArn?: string; // 내부용, 화면 미노출
   rulePriority?: number; // 내부용
   cognitoProtect: boolean;

@@ -60,6 +60,16 @@ describe("사용자 화면 금지 용어 노출 검출", () => {
     assertNoForbidden();
   });
 
+  it("앱 상세(FAILED 앱 — 실패 사유 노출)에 AWS 용어가 없다", async () => {
+    // 픽스처 99887766: status=FAILED + failureReason(사용자용 한국어 요약).
+    setHash("/apps/99887766");
+    renderWithProviders(<AppDetail appId="99887766" />);
+    await waitFor(() => expect(screen.getByText("재고 알림봇")).toBeInTheDocument());
+    // 실패 사유 문구가 실제로 노출된 상태에서 금지 용어를 스캔한다.
+    expect(screen.getByText(/배포 준비\(빌드 환경 구성\) 중 문제가 발생했어요/)).toBeInTheDocument();
+    assertNoForbidden();
+  });
+
   it("저장소 연결 관리에 AWS 용어(및 OAuth/CodeConnections)가 없다", async () => {
     setHash("/connections");
     renderWithProviders(<Connections />);

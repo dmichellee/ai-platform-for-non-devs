@@ -34,15 +34,28 @@ from ..integrations.sfn import start_delete, start_provision
 
 _VALID_STATUS = ("CREATING", "ACTIVE", "FAILED", "DELETING")
 
+# 기술 정보 최소화: failureDetail(실패 단계·정제된 예외 메시지)은 관리자에게만 노출.
+# failureReason(사용자용 한국어 요약)은 user/admin 모두에게 노출(앱 상세에서 원인 확인 — UX 갭 해소).
+_ADMIN_ONLY_APP_FIELDS = ("failureDetail",)
+
+
+def _view_app(app: dict[str, Any], is_admin: bool) -> dict[str, Any]:
+    """응답용 App 뷰. admin 이 아니면 관리자 전용 필드를 제거한다(원본 불변)."""
+    if is_admin:
+        return app
+    return {k: v for k, v in app.items() if k not in _ADMIN_ONLY_APP_FIELDS}
+
 
 def list_my_apps(ctx: RouteContext) -> ProxyResult:
     """GET /apps — 본인 앱 목록(admin도 자기 소유만; 전체는 /admin/apps)."""
-    return list_response(list_apps_by_owner(ctx.identity.user_id))
+    apps = list_apps_by_owner(ctx.identity.user_id)
+    return list_response([_view_app(a, ctx.identity.is_admin) for a in apps])
 
 
 def get_app_detail(ctx: RouteContext) -> ProxyResult:
-    """GET /apps/{id} — 소유자/관리자만."""
-    return ok(_load_owned_app(ctx))
+    """GET /apps/{id} — 소유자/관리자만. failureDetail 은 admin 에게만."""
+    app = _load_owned_app(ctx)
+    return ok(_view_app(app, ctx.identity.is_admin))
 
 
 def create_app(ctx: RouteContext) -> ProxyResult:
@@ -151,7 +164,7 @@ def patch_app(ctx: RouteContext) -> ProxyResult:
         raise errors.invalid_state("삭제 중인 앱은 설정을 변경할 수 없어요.")
     patch = parse_patch_app(ctx.event.get("body"))
     updated = update_app(app["appId"], patch)
-    return ok(updated)
+    return ok(_view_app(updated, ctx.identity.is_admin))
 
 
 def delete_app(ctx: RouteContext) -> ProxyResult:

@@ -4,8 +4,15 @@
 # [P] PLATFORM-ENGINEERING.md 4장 동작 그대로.
 #
 # 사용:
-#   ./scripts/deploy.sh --stage dev|prod [--region <region>] \
+#   ./scripts/deploy.sh --stage dev|prod --domain <apps.example.com> \
+#       [--hosted-zone-id <ZID>] [--region <region>] \
 #       [--admin-email <email>] [--admin-name <name>] [--internal-cidrs "10.0.0.0/16,..."] [--skip-spa]
+#
+# 환경 값(도메인/hostedZone/계정/리전)은 하드코딩하지 않고 여기서 주입한다(퍼블릭 애셋 — 설치자마다 다름):
+#   - --domain          (필수) 사용자 앱 apex 도메인. prod/dev 공통 명시 지정(dev는 apps-dev.example.com 등).
+#                       CDK context `-c domain=...`로 전달(1순위 소스).
+#   - --hosted-zone-id  (선택) 미지정 시 Route53에서 `--domain`(및 상위 라벨)로 자동 조회.
+#   - 계정/리전         CDK 표준(CDK_DEFAULT_ACCOUNT/CDK_DEFAULT_REGION) — aws 자격증명·--region에서 자동.
 #
 # 동작(몇 번을 실행해도 같은 결과):
 #   1. 사전 점검(자격증명/리전/hosted zone/docker/node/cdk). 실패 시 아무것도 바꾸지 않고 종료.
@@ -26,6 +33,8 @@ FRONTEND_DIR="${ROOT_DIR}/frontend"
 # ── 기본값 / 인자 파싱 ──────────────────────────────────────────────────────
 STAGE=""
 REGION="ap-northeast-2"
+APPS_DOMAIN=""          # --domain (필수). CDK context domain=... 의 원본.
+HOSTED_ZONE_ID=""       # --hosted-zone-id (선택). 미지정 시 Route53 자동 조회.
 ADMIN_EMAIL=""
 ADMIN_NAME=""
 INTERNAL_CIDRS=""
@@ -33,19 +42,29 @@ SKIP_SPA="false"
 
 usage() {
   cat <<'USAGE'
-사용법: deploy.sh --stage <dev|prod> [옵션]
+사용법: deploy.sh --stage <dev|prod> --domain <apps.example.com> [옵션]
   --stage <dev|prod>          (필수) 배포 스테이지
+  --domain <apps.example.com> (필수) 사용자 앱 apex 도메인. prod/dev 공통 명시 지정
+                              (dev는 apps-dev.example.com 처럼 스테이지 도메인을 직접 지정).
+  --hosted-zone-id <ZID>      (선택) 도메인의 Route53 public hosted zone ID.
+                              미지정 시 --domain(및 상위 라벨)로 자동 조회.
   --region <region>           배포 리전 (기본: ap-northeast-2)
   --admin-email <email>       최초 관리자 이메일(존재하면 통과). 미지정 시 대화형 질문.
   --admin-name <name>         최초 관리자 표시 이름. 미지정 시 이메일 @ 앞부분을 사용.
   --internal-cidrs "a,b"      internal ALB ingress 허용 대역(콤마 구분). 미지정 시 VPC CIDR.
   --skip-spa                  SPA 빌드/업로드 생략(인프라만 갱신할 때)
+
+예:
+  ./scripts/deploy.sh --stage prod --domain apps.example.com --admin-email admin@example.com
+  ./scripts/deploy.sh --stage dev  --domain apps-dev.example.com --region us-east-1
 USAGE
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --stage)          STAGE="${2:-}"; shift 2 ;;
+    --domain)         APPS_DOMAIN="${2:-}"; shift 2 ;;
+    --hosted-zone-id) HOSTED_ZONE_ID="${2:-}"; shift 2 ;;
     --region)         REGION="${2:-}"; shift 2 ;;
     --admin-email)    ADMIN_EMAIL="${2:-}"; shift 2 ;;
     --admin-name)     ADMIN_NAME="${2:-}"; shift 2 ;;
@@ -61,6 +80,12 @@ if [[ "${STAGE}" != "dev" && "${STAGE}" != "prod" ]]; then
   usage; exit 2
 fi
 
+if [[ -z "${APPS_DOMAIN}" ]]; then
+  echo "오류: --domain 인자로 사용자 앱 도메인을 지정하세요(예: --domain apps.example.com)." >&2
+  echo "      환경 값은 하드코딩하지 않습니다 — 설치자마다 다릅니다." >&2
+  usage; exit 2
+fi
+
 PREFIX="apphub-${STAGE}"
 NETWORK_STACK="${PREFIX}-network"
 PLATFORM_STACK="${PREFIX}-platform"
@@ -68,8 +93,13 @@ PLATFORM_STACK="${PREFIX}-platform"
 log()  { echo "[deploy] $*"; }
 step() { echo; echo "===== $* ====="; }
 
-# CDK 컨텍스트 인자 조립(-c stage=..., 선택적으로 allowedIngressCidrs)
-CDK_CTX=(-c "stage=${STAGE}")
+# CDK 컨텍스트 인자 조립.
+#  환경 값의 원본은 이 스크립트의 인자다(config.ts 하드코딩 제거 → 역방향 의존 제거).
+#   -c domain=...     : --domain (필수). config 로더의 appsDomain 원본(1순위).
+#   -c region=...     : --region. CDK 표준 CDK_DEFAULT_REGION 대신 명시 주입(자격증명 리전에 안 휘둘림).
+#   -c allowedIngressCidrs=... : --internal-cidrs (선택).
+#   -c hostedZoneId=... / -c account=... : 사전 점검 뒤(자동 조회/자격증명 확인 후) 아래에서 추가.
+CDK_CTX=(-c "stage=${STAGE}" -c "domain=${APPS_DOMAIN}" -c "region=${REGION}")
 if [[ -n "${INTERNAL_CIDRS}" ]]; then
   CDK_CTX+=(-c "allowedIngressCidrs=${INTERNAL_CIDRS}")
 fi
@@ -118,27 +148,43 @@ fi
 ACCOUNT_ID="$(echo "${CALLER}" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).Account')"
 log "AWS 계정 ${ACCOUNT_ID}, 리전 ${REGION} 자격 증명 OK"
 
-# 스테이지별 도메인/hosted zone 조회 — config.ts를 단일 원본으로 신뢰(중복 리터럴 금지)
-CONFIG_JSON="$(
-  cd "${INFRA_DIR}" && pnpm exec node -e "
-    const { loadConfig } = require('./lib/config');
-    process.stdout.write(JSON.stringify(loadConfig('${STAGE}')));
-  " 2>/dev/null || true
-)"
-if [[ -z "${CONFIG_JSON}" ]]; then
-  # ts 소스인 경우 ts-node로 로드
-  CONFIG_JSON="$(
-    cd "${INFRA_DIR}" && pnpm exec ts-node -e "
-      import { loadConfig } from './lib/config';
-      process.stdout.write(JSON.stringify(loadConfig('${STAGE}')));
-    " 2>/dev/null || true
-  )"
+# 환경 값을 CDK로 주입한다(하드코딩 제거 — 인자·자격증명이 원본).
+#  account: CDK 표준 env(CDK_DEFAULT_ACCOUNT)로 넘긴다(bin/apphub.ts가 이를 읽음). context로도 명시해
+#           자격증명 리전/계정에 안 휘둘리게 이중 보강.
+#  region : 이미 CDK_CTX -c region 으로 넣었고, 표준 env도 맞춘다.
+export CDK_DEFAULT_ACCOUNT="${ACCOUNT_ID}"
+export CDK_DEFAULT_REGION="${REGION}"
+CDK_CTX+=(-c "account=${ACCOUNT_ID}")
+
+# hostedZoneId 해석 — 미지정 시 Route53에서 자동 조회.
+#  apex 도출이 애매하므로(예: apps-dev.example.com → example.com), --domain 자체와 상위 라벨을
+#  차례로 list-hosted-zones-by-name 으로 시도해 가장 먼저 매칭되는 public zone을 채택한다.
+#  (route53는 글로벌 서비스라 --region 불필요.)
+if [[ -z "${HOSTED_ZONE_ID}" ]]; then
+  log "hosted zone 미지정 — '${APPS_DOMAIN}' 및 상위 도메인으로 Route53 자동 조회"
+  candidate="${APPS_DOMAIN}"
+  while [[ -n "${candidate}" && "${candidate}" == *.* ]]; do
+    # list-hosted-zones-by-name: dns-name 사전순 시작점부터 반환. 정확히 그 zone(및 public)만 채택.
+    ZONE_LINE="$(aws route53 list-hosted-zones-by-name --dns-name "${candidate}." --max-items 1 \
+      --query "HostedZones[?Name=='${candidate}.'] | [?Config.PrivateZone==\`false\`].Id | [0]" \
+      --output text 2>/dev/null || true)"
+    if [[ -n "${ZONE_LINE}" && "${ZONE_LINE}" != "None" ]]; then
+      # Id 형식 "/hostedzone/ZXXXX" → 마지막 토큰만.
+      HOSTED_ZONE_ID="${ZONE_LINE##*/}"
+      log "자동 조회 성공: '${candidate}' → hosted zone ${HOSTED_ZONE_ID}"
+      break
+    fi
+    # 최상위 라벨을 떼고 상위 도메인으로 재시도(apps-dev.example.com → example.com).
+    candidate="${candidate#*.}"
+  done
+  if [[ -z "${HOSTED_ZONE_ID}" ]]; then
+    echo "오류: '${APPS_DOMAIN}'(및 상위 도메인)에 해당하는 Route53 public hosted zone을 찾지 못했습니다." >&2
+    echo "      --hosted-zone-id <ZID> 로 직접 지정하거나, 해당 도메인의 public hosted zone을 계정에 두세요" >&2
+    echo "      (와일드카드 인증서 DNS 검증에 필요, PLATFORM-ENGINEERING.md 5.1)." >&2
+    exit 1
+  fi
 fi
-if [[ -z "${CONFIG_JSON}" ]]; then
-  echo "오류: infra/lib/config.ts 에서 스테이지 설정을 로드하지 못했습니다." >&2; exit 1
-fi
-APPS_DOMAIN="$(echo "${CONFIG_JSON}" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).appsDomain')"
-HOSTED_ZONE_ID="$(echo "${CONFIG_JSON}" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).hostedZoneId')"
+CDK_CTX+=(-c "hostedZoneId=${HOSTED_ZONE_ID}")
 log "앱 도메인 ${APPS_DOMAIN}, hosted zone ${HOSTED_ZONE_ID}"
 
 # hosted zone 존재 확인 (전제조건 5.1) — 없으면 중단

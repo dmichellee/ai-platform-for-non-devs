@@ -1,12 +1,12 @@
 import { describe, it } from "vitest";
 import { App } from "aws-cdk-lib";
 import { Template } from "aws-cdk-lib/assertions";
-import { loadConfig } from "../lib/config";
 import { NetworkStack } from "../lib/network-stack";
 import { PlatformStack } from "../lib/platform-stack";
 import { AppPipelineStack, AppRuntimeStack } from "../lib/app-stacks";
 import type { AppPipelineParams, AppRuntimeParams } from "../lib/constructs/app-params";
 import { assertSgDescriptionsAscii } from "./helpers/sg-ingress";
+import { testConfig, testEnv } from "./helpers/config";
 
 /**
  * L2 공통 재발방지 — EC2 SecurityGroup GroupDescription ASCII 강제.
@@ -23,22 +23,22 @@ const ENV = { account: "111122223333", region: "ap-northeast-2" };
 
 function networkTemplate(): Template {
   const app = new App();
-  const config = loadConfig("dev");
+  const config = testConfig("dev");
   const stack = new NetworkStack(app, "apphub-dev-network", {
     stage: "dev",
     config,
-    env: { account: config.account, region: config.region },
+    env: testEnv(config),
   });
   return Template.fromStack(stack);
 }
 
 function platformTemplate(): Template {
   const app = new App();
-  const config = loadConfig("dev");
+  const config = testConfig("dev");
   const stack = new PlatformStack(app, "apphub-dev-platform", {
     stage: "dev",
     config,
-    env: { account: config.account, region: config.region },
+    env: testEnv(config),
   });
   return Template.fromStack(stack);
 }

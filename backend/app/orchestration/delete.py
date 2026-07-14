@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from ..data.alb_registry import decrement_alb_rule_count
-from ..data.apps import delete_app_record, get_app, transition_status
+from ..data.apps import delete_app_record, get_app, set_failure, transition_status
 from ..data.subdomains import release_subdomain
 from ..integrations.cloudformation import (
     delete_stack,
@@ -24,6 +24,7 @@ from ..integrations.cloudformation import (
 )
 from ..integrations.secrets import delete_secrets
 from . import stage
+from .failure import build_failure
 
 
 def delete_runtime(e: dict[str, Any]) -> dict[str, Any]:
@@ -78,9 +79,15 @@ def cleanup(e: dict[str, Any]) -> dict[str, Any]:
 
 
 def finalize(e: dict[str, Any]) -> dict[str, Any]:
-    """실패면 DELETING→FAILED(조건부·재시도 가능), 성공이면 DELETED(레코드는 cleanup 에서 이미 삭제)."""
+    """실패면 DELETING→FAILED(조건부·재시도 가능), 성공이면 DELETED(레코드는 cleanup 에서 이미 삭제).
+
+    실패 시(레코드가 남아 있으면) failureReason/failureDetail 을 남겨 앱 상세에서 사유를 볼 수 있게 한다.
+    cleanup 이 이미 레코드를 지운 뒤 실패한 경우 set_failure/transition 모두 조건 실패를 삼킨다(멱등).
+    """
     app_id = e["appId"]
     if e.get("outcome") == "failure":
+        failure = build_failure(e, flow="delete")
+        set_failure(app_id, failure["failureReason"], failure["failureDetail"])
         try:
             transition_status(app_id, "FAILED", ["DELETING"])
         except Exception:  # noqa: BLE001 - 이미 다른 상태거나 레코드 없음이면 삼킴(멱등)

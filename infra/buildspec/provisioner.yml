@@ -43,26 +43,30 @@ phases:
       - echo "대상 스택=${STACK_NAME} (kind=${APP_STACK_KIND})"
       # app-pipeline 스택은 DDB App 레코드에서 provider/repo/branch/autoDeploy를 읽어 컨텍스트로 조립.
       #  (deploy.yml과 동일 패턴 — 단일 원본은 buildspec-contract 4장)
+      # 주의(heredoc): sh 의 <<'NODE' 종결자는 반드시 줄 시작(들여쓰기 0)에 있어야 한다.
+      #  if 블록 안에 들여쓰면 종결자를 못 찾아 "expecting fi" 문법 오류로 CodeBuild가 죽는다.
+      #  → heredoc을 들여쓰기 없이 두고, 조건은 스크립트 파일 생성 후 실행 시점에 검사한다.
+      - |
+        node - <<'NODE' > /tmp/pipe-ctx.env
+        const { execSync } = require("node:child_process");
+        const region = process.env.AWS_DEFAULT_REGION;
+        const table = process.env.TABLE_NAME;
+        const appId = process.env.APP_ID;
+        const ddb = (key) => JSON.parse(execSync(
+          `aws dynamodb get-item --region ${region} --table-name ${table} --key '${JSON.stringify(key)}' --output json`
+        ).toString() || "{}").Item || {};
+        const S = (v) => (v && v.S) || "";
+        const B = (v) => (v && typeof v.BOOL === "boolean") ? v.BOOL : (S(v) === "true");
+        const app = ddb({ PK: { S: `APP#${appId}` }, SK: { S: "META" } });
+        const emit = (k, v) => process.stdout.write(`export CTX_${k}=${JSON.stringify(String(v))}\n`);
+        emit("provider", S(app.provider) || process.env.PROVIDER || "codecommit");
+        emit("repoUrl", S(app.repoUrl) || process.env.REPO_URL || "");
+        emit("branch", S(app.branch) || process.env.BRANCH || "main");
+        emit("autoDeployEnabled", B(app.autoDeployEnabled));
+        if (app.connectionArn && app.connectionArn.S) emit("connectionArn", app.connectionArn.S);
+        NODE
       - |
         if [ "${APP_STACK_KIND}" = "pipeline" ]; then
-          node - <<'NODE' > /tmp/pipe-ctx.env
-          const { execSync } = require("node:child_process");
-          const region = process.env.AWS_DEFAULT_REGION;
-          const table = process.env.TABLE_NAME;
-          const appId = process.env.APP_ID;
-          const ddb = (key) => JSON.parse(execSync(
-            `aws dynamodb get-item --region ${region} --table-name ${table} --key '${JSON.stringify(key)}' --output json`
-          ).toString() || "{}").Item || {};
-          const S = (v) => (v && v.S) || "";
-          const B = (v) => (v && typeof v.BOOL === "boolean") ? v.BOOL : (S(v) === "true");
-          const app = ddb({ PK: { S: `APP#${appId}` }, SK: { S: "META" } });
-          const emit = (k, v) => process.stdout.write(`export CTX_${k}=${JSON.stringify(String(v))}\n`);
-          emit("provider", S(app.provider) || process.env.PROVIDER || "codecommit");
-          emit("repoUrl", S(app.repoUrl) || process.env.REPO_URL || "");
-          emit("branch", S(app.branch) || process.env.BRANCH || "main");
-          emit("autoDeployEnabled", B(app.autoDeployEnabled));
-          if (app.connectionArn && app.connectionArn.S) emit("connectionArn", app.connectionArn.S);
-          NODE
           cat /tmp/pipe-ctx.env
           . /tmp/pipe-ctx.env
         fi

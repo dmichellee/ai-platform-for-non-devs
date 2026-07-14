@@ -1,7 +1,7 @@
 /**
  * 내 앱 대시보드 — 앱 카드(이름·상태 배지·접속 URL·최근 배포·크기) + 새 앱 만들기.
- * AWS 용어 노출 금지. 접속 URL은 {subdomain}.apps.{도메인} 이지만 도메인은 config에서 유추 불가 →
- * subdomain만 강조 표기하고 상세에서 전체 URL(config 주입 시)을 보여준다.
+ * AWS 용어 노출 금지. 접속 URL은 config.json의 appsDomain으로 조립해
+ * {subdomain}.{appsDomain} 전체 주소를 표기한다(없으면 자리표시 폴백).
  */
 import { BarChart3, Bot, Hand, Plus, Sparkles } from "lucide-react";
 import { AppStatusBadge } from "../../components/StatusBadge.js";
@@ -11,6 +11,7 @@ import { useQuery } from "../../lib/ApiProvider.js";
 import { useNavigate } from "../../lib/router.js";
 import { useAuth } from "../../auth/AuthContext.js";
 import { sessionDisplayName, sessionInitial } from "../../auth/tokens.js";
+import { appsDomainLabel } from "../../lib/config.js";
 import type { App } from "../../lib/types.js";
 import { PROVIDER_LABEL } from "../../lib/labels.js";
 
@@ -96,10 +97,17 @@ export function Dashboard(): JSX.Element {
               >
                 <div className="top">
                   <div className={`app-icon ${ic.cls}`}>{ic.node}</div>
-                  <AppStatusBadge status={app.status} runtimeState={app.runtimeState} />
+                  {/* 실패 앱은 배지에 사유 tooltip — 상세 진입 전에도 원인을 힌트로 노출. */}
+                  <span
+                    title={
+                      app.status === "FAILED" && app.failureReason ? app.failureReason : undefined
+                    }
+                  >
+                    <AppStatusBadge status={app.status} runtimeState={app.runtimeState} />
+                  </span>
                 </div>
                 <h4>{app.name}</h4>
-                <div className="url">{app.subdomain}.apps</div>
+                <div className="url">{app.subdomain}.{appsDomainLabel()}</div>
                 <div className="meta">
                   <span>
                     최근 변경 <b>{relTime(app.updatedAt)}</b>

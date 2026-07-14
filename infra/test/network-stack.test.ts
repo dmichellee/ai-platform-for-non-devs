@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { App } from "aws-cdk-lib";
 import { Template, Match } from "aws-cdk-lib/assertions";
-import { loadConfig } from "../lib/config";
 import {
   NetworkStack,
   D17_EXEMPT_SG_DESCRIPTION,
@@ -10,6 +9,7 @@ import {
   assertNoOpenIngress,
   assertExemptSgIsActuallyOpen,
 } from "./helpers/sg-ingress";
+import { testConfig, testEnv } from "./helpers/config";
 
 /**
  * L2 — network 스택 CDK assertions.
@@ -18,11 +18,11 @@ import {
  */
 function synth(overrides?: { allowedIngressCidrs?: readonly string[] }): Template {
   const app = new App();
-  const config = loadConfig("dev", overrides);
+  const config = testConfig("dev", overrides);
   const stack = new NetworkStack(app, "apphub-dev-network", {
     stage: "dev",
     config,
-    env: { account: config.account, region: config.region },
+    env: testEnv(config),
   });
   return Template.fromStack(stack);
 }
@@ -108,7 +108,7 @@ describe("network 스택", () => {
   describe("D3 — 와일드카드 ACM + Route53", () => {
     it("`*.appsDomain` 인증서를 DNS 검증으로 발급", () => {
       template.hasResourceProperties("AWS::CertificateManager::Certificate", {
-        DomainName: "*.apps-dev.example.com",
+        DomainName: "*.apps-dev.example.test",
         ValidationMethod: "DNS",
       });
     });
@@ -180,7 +180,7 @@ describe("network 스택", () => {
           Environment: {
             Variables: Match.objectLike({
               STAGE: "dev",
-              APPS_DOMAIN: "apps-dev.example.com",
+              APPS_DOMAIN: "apps-dev.example.test",
               TABLE_NAME: "apphub-dev-main",
             }),
           },

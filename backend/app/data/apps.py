@@ -122,6 +122,44 @@ def transition_status(app_id: str, next_status: str, allowed_from: list[str]) ->
     )
 
 
+def set_failure(app_id: str, failure_reason: str, failure_detail: str) -> None:
+    """실패 사유 기록(finalize failure). status 전이와 별개로 App 레코드에 사유를 남긴다.
+
+    존재 조건만 강제(전이 조건은 transition_status 가 담당) — 레코드가 없으면 조용히 무시(멱등).
+    """
+    now = _now_iso()
+    try:
+        table().update_item(
+            Key={"PK": app_pk(app_id), "SK": APP_META_SK},
+            UpdateExpression="SET failureReason = :r, failureDetail = :d, updatedAt = :now",
+            ExpressionAttributeValues={
+                ":r": failure_reason,
+                ":d": failure_detail,
+                ":now": now,
+            },
+            ConditionExpression="attribute_exists(PK)",
+        )
+    except Exception:  # noqa: BLE001 - 레코드 없음이면 무시(delete cleanup 이후 등)
+        pass
+
+
+def clear_failure(app_id: str) -> None:
+    """실패 사유 제거(finalize success). 재시도 성공 후 잔재 방지.
+
+    필드가 없어도 REMOVE 는 성공(멱등). 레코드가 없으면 조용히 무시.
+    """
+    now = _now_iso()
+    try:
+        table().update_item(
+            Key={"PK": app_pk(app_id), "SK": APP_META_SK},
+            UpdateExpression="REMOVE failureReason, failureDetail SET updatedAt = :now",
+            ExpressionAttributeValues={":now": now},
+            ConditionExpression="attribute_exists(PK)",
+        )
+    except Exception:  # noqa: BLE001 - 레코드 없음이면 무시
+        pass
+
+
 def set_runtime_state(app_id: str, state: str) -> None:
     """runtimeState 갱신(RUNNING|WAKING|SLEEPING). status=ACTIVE에서만 의미 있음(호출부 보장)."""
     now = _now_iso()

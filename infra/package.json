@@ -7,7 +7,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "synth": "cdk synth -c stage=dev",
+    "synth": "node scripts/synth-check.mjs",
     "synth:ci": "node scripts/synth-check.mjs",
     "lint": "tsc --noEmit"
   },

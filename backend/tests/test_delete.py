@@ -146,3 +146,27 @@ def test_finalize_failure_idempotent_when_record_gone(ddb_table, p2_clients, del
     # cleanup 이 이미 레코드를 지운 뒤 실패 finalize → 전이 조건 실패 삼킴(예외 없음).
     out = delete.handle({"step": "finalize", "appId": "gone", "outcome": "failure"})
     assert out["status"] == "FAILED"
+
+
+def test_finalize_failure_stores_delete_reason(ddb_table, p2_clients, del_env) -> None:
+    # 삭제 계열 실패 → "앱 정리 중 문제" 요약 + 단계 상세 저장.
+    seed_app(ddb_table, "appf3abc", "user-1", status="DELETING")
+    delete.handle(
+        {
+            "step": "finalize",
+            "appId": "appf3abc",
+            "outcome": "failure",
+            "failedStep": "poll-runtime",
+            "error": "DELETE_FAILED",
+        }
+    )
+    app = get_app("appf3abc")
+    assert app["status"] == "FAILED"
+    assert app["failureReason"] == "앱 정리 중 문제가 발생했어요. 다시 시도하거나 관리자에게 문의해주세요."
+    assert "poll-runtime" in app["failureDetail"]
+
+
+def test_finalize_failure_without_step_uses_delete_fallback(ddb_table, p2_clients, del_env) -> None:
+    seed_app(ddb_table, "appf4abc", "user-1", status="DELETING")
+    delete.handle({"step": "finalize", "appId": "appf4abc", "outcome": "failure"})
+    assert get_app("appf4abc")["failureReason"].startswith("앱 정리 중 문제가 발생했어요.")

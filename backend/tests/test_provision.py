@@ -177,3 +177,90 @@ def test_finalize_failure_is_idempotent_when_not_creating(ddb_table, p2_clients,
     out = provision.handle({"step": "finalize", "appId": "app8abcd", "outcome": "failure"})
     assert out["status"] == "FAILED"  # 반환은 FAILED 라벨이지만
     assert get_app("app8abcd")["status"] == "ACTIVE"  # 실제 상태는 조건부라 불변
+
+
+# ── 실패 사유 저장 (UX 갭 해소) ────────────────────────────────────────────────
+
+
+def test_finalize_failure_stores_reason_and_detail_by_step(ddb_table, p2_clients, prov_env) -> None:
+    # 슬롯 배정 단계 실패 → 사용자용 요약 + 기술 상세(단계 포함) 저장.
+    seed_app(ddb_table, "appf01abc", "user-1", status="CREATING")
+    provision.handle(
+        {
+            "step": "finalize",
+            "appId": "appf01abc",
+            "outcome": "failure",
+            "failedStep": "allocate-slot",
+            "error": "no free rule priority",
+        }
+    )
+    app = get_app("appf01abc")
+    assert app["status"] == "FAILED"
+    assert app["failureReason"] == "앱 주소/자리 배정 중 문제가 발생했어요. 다시 시도하거나 관리자에게 문의해주세요."
+    assert "allocate-slot" in app["failureDetail"]
+    assert "no free rule priority" in app["failureDetail"]
+
+
+def test_finalize_failure_deploy_pipeline_reason(ddb_table, p2_clients, prov_env) -> None:
+    seed_app(ddb_table, "appf02abc", "user-1", status="CREATING")
+    provision.handle(
+        {"step": "finalize", "appId": "appf02abc", "outcome": "failure", "failedStep": "poll-build"}
+    )
+    app = get_app("appf02abc")
+    assert app["failureReason"].startswith("배포 준비(빌드 환경 구성) 중 문제가 발생했어요.")
+
+
+def test_finalize_failure_first_deploy_reason(ddb_table, p2_clients, prov_env) -> None:
+    seed_app(ddb_table, "appf03abc", "user-1", status="CREATING")
+    provision.handle(
+        {
+            "step": "finalize",
+            "appId": "appf03abc",
+            "outcome": "failure",
+            "failedStep": "first-deploy",
+        }
+    )
+    assert get_app("appf03abc")["failureReason"].startswith("첫 배포를 시작하지 못했어요.")
+
+
+def test_finalize_failure_masks_secret_arn_in_detail(ddb_table, p2_clients, prov_env) -> None:
+    # 예외 Cause 에 시크릿 ARN 이 섞여 와도 failureDetail 에 원문이 남지 않는다.
+    seed_app(ddb_table, "appf04abc", "user-1", status="CREATING")
+    provision.handle(
+        {
+            "step": "finalize",
+            "appId": "appf04abc",
+            "outcome": "failure",
+            "failedStep": "deploy-pipeline",
+            "error": "AccessDenied on arn:aws:secretsmanager:ap-northeast-2:111122223333:secret:db-AbCdEf",
+        }
+    )
+    detail = get_app("appf04abc")["failureDetail"]
+    assert "arn:aws:secretsmanager" not in detail
+    assert "db-AbCdEf" not in detail
+    assert "[리소스]" in detail
+
+
+def test_finalize_failure_without_step_uses_provision_fallback(ddb_table, p2_clients, prov_env) -> None:
+    # failedStep 없이(step=finalize) 온 실패 → provision 흐름 폴백 요약.
+    seed_app(ddb_table, "appf05abc", "user-1", status="CREATING")
+    provision.handle({"step": "finalize", "appId": "appf05abc", "outcome": "failure"})
+    app = get_app("appf05abc")
+    assert app["failureReason"].startswith("앱을 만드는 중 문제가 발생했어요.")
+
+
+def test_finalize_success_clears_prior_failure(ddb_table, p2_clients, prov_env) -> None:
+    # 재시도 성공 후 이전 실패 잔재가 제거되어야 한다.
+    seed_app(
+        ddb_table,
+        "appf06abc",
+        "user-1",
+        status="CREATING",
+        failureReason="앱 주소/자리 배정 중 문제가 발생했어요. 다시 시도하거나 관리자에게 문의해주세요.",
+        failureDetail="단계: allocate-slot | boom",
+    )
+    out = provision.handle({"step": "finalize", "appId": "appf06abc"})
+    assert out["status"] == "ACTIVE"
+    app = get_app("appf06abc")
+    assert "failureReason" not in app
+    assert "failureDetail" not in app
