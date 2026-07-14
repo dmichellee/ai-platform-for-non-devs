@@ -2,9 +2,10 @@
  * 공통 소품 — 상단 바, 모달, 스켈레톤, 빈 상태, 토글 스위치, 에러 배너.
  * 이모지 금지 → 전부 Lucide.
  */
-import type { ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
+  Check,
   ChevronLeft,
   Info,
   LayoutGrid,
@@ -250,6 +251,51 @@ export function Toggle({
     >
       <span className="knob" aria-hidden="true" />
     </button>
+  );
+}
+
+/**
+ * 저장 성공 피드백 — 관리자 탭에서 "저장했어요" 배너를 몇 초 보여주고 자동으로 사라지게 한다.
+ * show()를 호출하면 visible=true 로 두고 duration(기본 3초) 후 스스로 false 로 돌린다.
+ * 컴포넌트 언마운트 시 타이머를 정리한다.
+ */
+export function useSaveFeedback(durationMs = 3000): {
+  visible: boolean;
+  show: () => void;
+} {
+  const [visible, setVisible] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const show = useCallback(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    setVisible(true);
+    timerRef.current = setTimeout(() => setVisible(false), durationMs);
+  }, [durationMs]);
+
+  useEffect(
+    () => () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    },
+    [],
+  );
+
+  return { visible, show };
+}
+
+/** "저장했어요" 성공 배너 — Lucide Check + 초록(성공) 토큰. 이모지 금지. */
+export function SaveBanner({
+  visible,
+  label = "저장했어요",
+}: {
+  visible: boolean;
+  label?: string;
+}): JSX.Element | null {
+  if (!visible) return null;
+  return (
+    <span className="save-banner" role="status" aria-live="polite">
+      <Check size={15} className="icon" />
+      {label}
+    </span>
   );
 }
 

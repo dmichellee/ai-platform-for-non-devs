@@ -18,6 +18,7 @@ import type {
   PermissionTemplate,
   PlatformUser,
   Provider,
+  RegisteredVpc,
   RepoConnection,
   SubdomainCheck,
   UserPermissionTemplate,
@@ -311,6 +312,11 @@ export class MockApiClient implements ApiClient {
     // user 응답은 policyDocument 제외 (admin과 동일 목록에서 민감 필드만 뺀다).
     return this.permTemplates.map((t) => ({ permId: t.permId, displayName: t.displayName }));
   }
+  async listVpcs(): Promise<RegisteredVpc[]> {
+    await delay();
+    // GET /vpcs — 관리자 등록 VPC 중 {vpcId,label}만(마법사 선택용). 설정과 동일 원본.
+    return this.settings.registeredVpcs.map((v) => ({ vpcId: v.vpcId, label: v.label }));
+  }
 
   async adminGetSettings(): Promise<AdminSettings> {
     await delay();
@@ -327,6 +333,11 @@ export class MockApiClient implements ApiClient {
   }
   async adminCreatePreset(b: Partial<ComputePreset>): Promise<ComputePreset> {
     await delay();
+    // 계약: presetId 는 **키를 생략**하면 서버가 자동 발급. **키가 있으면 빈/공백 불가**(400).
+    // (어제 추가된 빈ID 방어와 정합 — 프론트는 create 시 presetId 키 자체를 보내지 않아야 한다.)
+    if ("presetId" in b && (typeof b.presetId !== "string" || b.presetId.trim() === "")) {
+      throw new ApiError("VALIDATION_ERROR", "식별자가 비어 있어요.", 400);
+    }
     const p: ComputePreset = {
       presetId: b.presetId ?? `preset-${Math.random().toString(36).slice(2, 7)}`,
       displayName: b.displayName ?? "새 프리셋",
@@ -357,7 +368,17 @@ export class MockApiClient implements ApiClient {
   }
   async adminCreatePermTemplate(b: { displayName: string; policyDocument: object }): Promise<PermissionTemplate> {
     await delay();
-    const t: PermissionTemplate = { permId: `perm-${Math.random().toString(36).slice(2, 7)}`, ...b };
+    // 계약: permId 는 생략 시 자동 발급, **키가 있으면 빈/공백 불가**(400). (이슈 2 정합 — 프론트는
+    // create 시 permId 키를 아예 보내지 않는다.) 방어적으로 permId 키가 섞여 오면 검증한다.
+    const permIdKey = (b as { permId?: unknown }).permId;
+    if ("permId" in b && (typeof permIdKey !== "string" || permIdKey.trim() === "")) {
+      throw new ApiError("VALIDATION_ERROR", "식별자가 비어 있어요.", 400);
+    }
+    const t: PermissionTemplate = {
+      permId: `perm-${Math.random().toString(36).slice(2, 7)}`,
+      displayName: b.displayName,
+      policyDocument: b.policyDocument,
+    };
     this.permTemplates.push(t);
     return clone(t);
   }

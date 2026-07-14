@@ -282,6 +282,27 @@ else
   log "      bash scripts/build-kiro-bundle.sh --upload --stage ${STAGE} --region ${REGION}"
 fi
 
+# ── 3d. 기본 권한 템플릿 시드 (DESIGN D7 "기본 = 권한 없음") ─────────────────
+# 마법사 "앱 유형"의 첫 선택지 '기본'이 어디서도 시드되지 않아 목록이 비는 문제 방지.
+# 멱등: attribute_not_exists 조건부 생성만 — 관리자가 이미 수정/삭제했다면 존중(덮어쓰기 금지).
+# 빈 Statement 정책은 app-runtime construct가 "정책 attach 생략"으로 처리(permissionPolicy 비었으면 skip).
+step "3d/5 기본 권한 템플릿 시드 (없을 때만)"
+TABLE_NAME="apphub-${STAGE}-main"
+if aws dynamodb put-item \
+    --table-name "${TABLE_NAME}" --region "${REGION}" \
+    --item '{
+      "PK": {"S": "CONFIG"}, "SK": {"S": "PERM#default"},
+      "entityType": {"S": "PermissionTemplate"},
+      "permId": {"S": "default"},
+      "displayName": {"S": "기본 (추가 권한 없음)"},
+      "policyDocument": {"M": {"Version": {"S": "2012-10-17"}, "Statement": {"L": []}}}
+    }' \
+    --condition-expression "attribute_not_exists(PK)" >/dev/null 2>&1; then
+  log "기본 권한 템플릿(PERM#default) 시드 완료"
+else
+  log "기본 권한 템플릿 이미 존재(또는 조건 불충족) — 생성 생략"
+fi
+
 # ── 4. 최초 관리자(존재하면 통과) + SPA 업로드 ───────────────────────────────
 step "4/5 최초 관리자 + SPA 업로드"
 

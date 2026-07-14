@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, fireEvent, waitFor } from "@testing-library/react";
 import { Dashboard } from "../src/screens/user/Dashboard.js";
 import { AppDetail } from "../src/screens/user/AppDetail.js";
 import { Connections } from "../src/screens/user/Connections.js";
+import { CreateWizard } from "../src/screens/user/CreateWizard.js";
 import { renderWithProviders, seedSession, setHash } from "./harness.js";
 
 /**
@@ -69,5 +70,58 @@ describe("사용자 화면 금지 용어 노출 검출", () => {
     expect(text.includes("OAuth")).toBe(false);
     // PENDING 연결의 사용자 안내는 '승인 대기 중'으로 노출 (배지 + 본문에 등장)
     expect(screen.getAllByText(/승인 대기 중/).length).toBeGreaterThan(0);
+  });
+
+  // 이슈 4·5로 추가된 마법사 UI(네트워크 선택·시간표)에 기술 용어(VPC 등)가 새어 나오지 않는지 확인.
+  it("앱 생성 마법사 네트워크 선택·시간표에 AWS 용어(VPC 포함)가 없다", async () => {
+    setHash("/apps/new");
+    // 네트워크 2개 등록 상황을 만들어 드롭다운을 실제로 노출시킨다.
+    const { MockApiClient } = await import("../src/mock/mockApi.js");
+    const client = new MockApiClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (client as any).listVpcs = async () => [
+      { vpcId: "vpc-0bbe1", label: "메인 네트워크" },
+      { vpcId: "vpc-0bbe2", label: "보조 네트워크" },
+    ];
+    renderWithProviders(<CreateWizard />, client);
+
+    // 1단계 → 2단계(네트워크 드롭다운 노출)
+    fireEvent.click(await screen.findByText("회사 GitHub"));
+    fireEvent.change(screen.getByPlaceholderText(/https:\/\/github.com/), {
+      target: { value: "https://github.com/example/x" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /다음 단계/ }));
+    await screen.findByLabelText("네트워크");
+    // 사용자에게는 label("메인 네트워크")만 보이고 vpc-id 는 노출되지 않는다.
+    let text = document.body.textContent ?? "";
+    assertNoForbidden();
+    expect(text.includes("VPC")).toBe(false);
+    expect(text.includes("vpc-")).toBe(false);
+    expect(text.includes("메인 네트워크")).toBe(true);
+
+    // 6단계(가동 방식)까지 진행해 시간표 UI 도 스캔.
+    fireEvent.change(screen.getByLabelText("앱 이름"), { target: { value: "용어 검사 앱" } });
+    fireEvent.change(screen.getByLabelText("접속 주소"), { target: { value: "term-check" } });
+    await screen.findByText("사용할 수 있는 주소예요");
+    fireEvent.change(screen.getByLabelText("네트워크"), { target: { value: "vpc-0bbe1" } });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /다음 단계/ })).not.toBeDisabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /다음 단계/ }));
+    fireEvent.click((await screen.findAllByText(/최소 .*대/))[0]!.closest("button")!);
+    fireEvent.click(screen.getByRole("button", { name: /다음 단계/ }));
+    await screen.findByText("어떤 기능을 사용하는 앱인가요?");
+    fireEvent.click((await screen.findAllByRole("button")).find((b) => b.className.includes("choice"))!);
+    fireEvent.click(screen.getByRole("button", { name: /다음 단계/ }));
+    await screen.findByText("앱에 전달할 설정값이 있나요?");
+    fireEvent.click(screen.getByRole("button", { name: /다음 단계/ }));
+    await screen.findByText("앱을 언제 켜둘까요?");
+    fireEvent.click(screen.getByText("시간표대로"));
+    await screen.findByLabelText("켜지는 시각");
+    text = document.body.textContent ?? "";
+    assertNoForbidden();
+    expect(text.includes("VPC")).toBe(false);
+    // 시간표 요일은 한글(월~일)로만 노출
+    expect(screen.getByRole("button", { name: "월요일" })).toBeInTheDocument();
   });
 });

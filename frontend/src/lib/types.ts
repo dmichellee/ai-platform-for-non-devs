@@ -131,6 +131,13 @@ export interface SubdomainCheck {
   reason?: "INVALID" | "TAKEN";
 }
 
+// user용 네트워크(VPC) 목록 항목 — GET /vpcs (api-requests.md #5).
+// 관리자 등록 VPC 중 앱 생성 마법사가 고를 수 있는 것만. 사용자 화면에서는 "네트워크"로 노출.
+export interface RegisteredVpc {
+  vpcId: string;
+  label: string;
+}
+
 export interface AdminSettings {
   enabledProviders: string[];
   registeredVpcs: { vpcId: string; label: string }[];

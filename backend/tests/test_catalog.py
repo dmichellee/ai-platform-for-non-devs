@@ -136,3 +136,44 @@ def test_subdomain_check_missing_value(ddb_table, stub_clients):
     assert out["status"] == 200
     assert out["data"]["available"] is False
     assert out["data"]["reason"] == "INVALID"
+
+
+# ── 이슈5: user 네트워크 목록 (GET /vpcs) ────────────────────────────────────
+
+
+def test_user_get_vpcs_returns_id_and_label_only(ddb_table, stub_clients):
+    from .conftest import seed_settings
+
+    seed_settings(
+        ddb_table,
+        registeredVpcs=[
+            {"vpcId": "vpc-aaa", "label": "메인", "extra": "숨겨야 함"},
+            {"vpcId": "vpc-bbb", "label": "보조"},
+        ],
+    )
+    res = handler(make_event("GET", "/vpcs", user_id=USER, groups=["user"]))
+    out = parse_result(res)
+    assert out["status"] == 200
+    items = out["data"]["items"]
+    assert items == [
+        {"vpcId": "vpc-aaa", "label": "메인"},
+        {"vpcId": "vpc-bbb", "label": "보조"},
+    ]
+
+
+def test_user_get_vpcs_empty_when_no_settings(ddb_table, stub_clients):
+    res = handler(make_event("GET", "/vpcs", user_id=USER, groups=["user"]))
+    out = parse_result(res)
+    assert out["status"] == 200
+    assert out["data"]["items"] == []
+
+
+# ── 이슈3: "기본"(default) 템플릿 우선 정렬 ──────────────────────────────────
+
+
+def test_permission_templates_default_first(ddb_table, stub_clients):
+    seed_perm(ddb_table, "zzz-bedrock")
+    seed_perm(ddb_table, "default")
+    res = handler(make_event("GET", "/permission-templates", user_id=USER, groups=["user"]))
+    items = parse_result(res)["data"]["items"]
+    assert items[0]["permId"] == "default"

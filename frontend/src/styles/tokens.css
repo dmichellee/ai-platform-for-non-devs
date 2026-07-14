@@ -28,6 +28,7 @@
   --secondary-soft: rgba(3, 218, 198, 0.14);
   --error-soft: rgba(207, 102, 121, 0.14);
   --success: #03dac6;
+  --success-soft: rgba(3, 218, 198, 0.16);
   --scrim: rgba(0, 0, 0, 0.6);
   --shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
 }
@@ -55,6 +56,7 @@
   --secondary-soft: rgba(1, 135, 134, 0.1);
   --error-soft: rgba(176, 0, 32, 0.08);
   --success: #018786;
+  --success-soft: rgba(1, 135, 134, 0.12);
   --scrim: rgba(0, 0, 0, 0.5);
   --shadow: 0 8px 30px rgba(80, 60, 120, 0.12);
 }

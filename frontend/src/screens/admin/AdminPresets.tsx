@@ -4,7 +4,7 @@
  */
 import { useState } from "react";
 import { Pencil, Plus, Trash2 } from "lucide-react";
-import { ErrorNotice, Modal, Skeleton } from "../../components/common.js";
+import { ErrorNotice, Modal, SaveBanner, Skeleton, useSaveFeedback } from "../../components/common.js";
 import { useMutation, useQuery } from "../../lib/ApiProvider.js";
 import type { ComputePreset } from "../../lib/types.js";
 
@@ -31,6 +31,7 @@ const EMPTY: ComputePreset = {
 export function AdminPresets(): JSX.Element {
   const { data, loading, error, reload } = useQuery<ComputePreset[]>((a) => a.adminListPresets(), []);
   const [editing, setEditing] = useState<ComputePreset | null>(null);
+  const saved = useSaveFeedback();
   const delMut = useMutation<string, void>((a, id) => a.adminDeletePreset(id));
 
   if (error) return <ErrorNotice error={error} />;
@@ -40,6 +41,7 @@ export function AdminPresets(): JSX.Element {
     <>
       <div className="admin-toolbar">
         <div className="spacer" style={{ flex: 1 }} />
+        <SaveBanner visible={saved.visible} />
         <button type="button" className="btn-admin primary" onClick={() => setEditing({ ...EMPTY })}>
           <Plus size={14} className="icon" />
           프리셋 추가
@@ -98,6 +100,7 @@ export function AdminPresets(): JSX.Element {
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
+            saved.show();
             reload();
           }}
         />
@@ -125,9 +128,14 @@ function PresetModal({
   const err = createMut.error ?? updateMut.error;
 
   async function save(): Promise<void> {
+    // 이슈 2: presetId 는 항상 body 에서 제거한다.
+    //  - 신규(create): 계약상 키가 있으면 빈/공백은 400. 키 자체를 생략하면 서버가 자동 발급.
+    //  - 수정(update): 경로의 presetId 가 정본이라 body 의 presetId 는 서버가 무시 → 보낼 필요 없음.
+    const { presetId: _omit, ...body } = f;
+    void _omit;
     try {
-      if (isNew) await createMut.run(f);
-      else await updateMut.run({ id: f.presetId, b: f });
+      if (isNew) await createMut.run(body);
+      else await updateMut.run({ id: f.presetId, b: body });
       onSaved();
     } catch {
       /* 에러 표시 */

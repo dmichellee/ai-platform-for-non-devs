@@ -18,6 +18,7 @@ import type {
   PermissionTemplate,
   PlatformUser,
   Provider,
+  RegisteredVpc,
   RepoConnection,
   SingleEnvelope,
   SubdomainCheck,
@@ -59,10 +60,12 @@ export interface ApiClient {
   // 계약(backend 병렬 구현): DELETE /connections/{connId}/repos/{repoName} → 204.
   // 409 REPO_IN_USE(사용 중인 앱 있음), 404 NOT_FOUND. repoName 은 접두어 포함 최종명.
   deleteRepo(connId: string, repoName: string): Promise<void>;
-  // 앱 생성 마법사용 (user 권한) — api-requests.md #1~3
+  // 앱 생성 마법사용 (user 권한) — api-requests.md #1~3, #5
   checkSubdomain(value: string): Promise<SubdomainCheck>;
   listPresets(): Promise<ComputePreset[]>;
   listPermTemplates(): Promise<UserPermissionTemplate[]>;
+  // GET /vpcs — 관리자 등록 네트워크(VPC) 목록(마법사 선택용). {vpcId,label}만.
+  listVpcs(): Promise<RegisteredVpc[]>;
   // 관리자
   adminGetSettings(): Promise<AdminSettings>;
   adminPutSettings(body: Omit<AdminSettings, "updatedAt">): Promise<AdminSettings>;
@@ -250,6 +253,9 @@ export class HttpApiClient implements ApiClient {
   }
   listPermTemplates(): Promise<UserPermissionTemplate[]> {
     return this.list<UserPermissionTemplate>("GET", "/permission-templates");
+  }
+  listVpcs(): Promise<RegisteredVpc[]> {
+    return this.list<RegisteredVpc>("GET", "/vpcs");
   }
 
   // 관리자

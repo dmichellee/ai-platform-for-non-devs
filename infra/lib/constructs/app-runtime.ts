@@ -129,8 +129,12 @@ export class AppRuntime extends Construct {
       assumedBy: new iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
       description: `App task role for ${p.appId} (permission template injected)`,
     });
-    if (p.permissionPolicy && Object.keys(p.permissionPolicy).length > 0) {
-      // 권한 템플릿의 policyDocument(IAM 정책 문서)를 인라인 정책으로 부착.
+    // 권한 템플릿의 policyDocument(IAM 정책 문서)를 인라인 정책으로 부착.
+    // "기본(추가 권한 없음)" 템플릿은 Statement:[] 인 빈 정책 — IAM은 빈 Statement 정책을
+    // 거부(MalformedPolicyDocument)하므로 Statement 가 실제로 있을 때만 attach 한다.
+    const policyStatements = (p.permissionPolicy as { Statement?: unknown[] } | undefined)
+      ?.Statement;
+    if (Array.isArray(policyStatements) && policyStatements.length > 0) {
       taskRole.attachInlinePolicy(
         new iam.Policy(this, "PermissionTemplate", {
           policyName: "permission-template",

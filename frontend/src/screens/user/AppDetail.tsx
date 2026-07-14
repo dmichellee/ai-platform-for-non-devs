@@ -26,10 +26,15 @@ import {
   relTime,
 } from "../../components/common.js";
 import { useApi, useMutation, useQuery } from "../../lib/ApiProvider.js";
+import {
+  DEFAULT_SCHEDULE,
+  ScheduleEditor,
+  isScheduleValid,
+} from "../../components/ScheduleEditor.js";
 import { useNavigate } from "../../lib/router.js";
 import { useAuth } from "../../auth/AuthContext.js";
 import { sessionInitial } from "../../auth/tokens.js";
-import type { App, Deployment, LogEvent, PatchAppRequest, SleepMode } from "../../lib/types.js";
+import type { App, Deployment, LogEvent, PatchAppRequest, Schedule, SleepMode } from "../../lib/types.js";
 import {
   DEPLOY_STATUS_LABEL,
   SCHEME_LABEL,
@@ -382,6 +387,8 @@ function LogsTab({ appId }: { appId: string }): JSX.Element {
 function SettingsTab({ app, onSaved }: { app: App; onSaved: () => void }): JSX.Element {
   const [autoDeploy, setAutoDeploy] = useState(app.autoDeployEnabled);
   const [sleepMode, setSleepMode] = useState<SleepMode>(app.sleepMode);
+  // 기존 시간표가 있으면 그대로, 없으면 기본(평일 09:00–19:00)으로 편집 시작.
+  const [schedule, setSchedule] = useState<Schedule>(app.schedule ?? DEFAULT_SCHEDULE);
   const [protect, setProtect] = useState(app.cognitoProtect);
   const [envRows, setEnvRows] = useState(
     Object.entries(app.envVars).map(([key, value]) => ({ key, value })),
@@ -392,19 +399,32 @@ function SettingsTab({ app, onSaved }: { app: App; onSaved: () => void }): JSX.E
     const envChanged =
       JSON.stringify(Object.fromEntries(envRows.filter((r) => r.key).map((r) => [r.key, r.value]))) !==
       JSON.stringify(app.envVars);
+    const scheduleChanged =
+      sleepMode === "schedule" && JSON.stringify(schedule) !== JSON.stringify(app.schedule);
     return (
       autoDeploy !== app.autoDeployEnabled ||
       sleepMode !== app.sleepMode ||
       protect !== app.cognitoProtect ||
+      scheduleChanged ||
       envChanged
     );
-  }, [autoDeploy, sleepMode, protect, envRows, app]);
+  }, [autoDeploy, sleepMode, schedule, protect, envRows, app]);
+
+  // "시간표대로"인데 시간표가 유효하지 않으면 저장 불가(요일 1개↑, 시각 형식).
+  const scheduleBlocked = sleepMode === "schedule" && !isScheduleValid(schedule);
 
   async function save(): Promise<void> {
     const envVars: Record<string, string> = {};
     for (const r of envRows) if (r.key) envVars[r.key] = r.value;
     await saveMut
-      .run({ autoDeployEnabled: autoDeploy, sleepMode, cognitoProtect: protect, envVars })
+      .run({
+        autoDeployEnabled: autoDeploy,
+        sleepMode,
+        cognitoProtect: protect,
+        envVars,
+        // 계약: sleepMode="schedule"이면 schedule 필수. 그 외 모드에서는 보내지 않는다.
+        ...(sleepMode === "schedule" ? { schedule } : {}),
+      })
       .then(onSaved)
       .catch(() => undefined);
   }
@@ -426,6 +446,7 @@ function SettingsTab({ app, onSaved }: { app: App; onSaved: () => void }): JSX.E
             </button>
           ))}
         </div>
+        {sleepMode === "schedule" && <ScheduleEditor value={schedule} onChange={setSchedule} />}
       </div>
 
       <div className="panel">
@@ -497,7 +518,7 @@ function SettingsTab({ app, onSaved }: { app: App; onSaved: () => void }): JSX.E
         <button
           type="button"
           className="btn btn-primary"
-          disabled={!dirty || saveMut.loading}
+          disabled={!dirty || scheduleBlocked || saveMut.loading}
           onClick={save}
         >
           <Play size={15} className="icon" />

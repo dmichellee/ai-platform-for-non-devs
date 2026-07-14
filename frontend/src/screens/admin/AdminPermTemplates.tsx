@@ -4,7 +4,7 @@
  */
 import { useState } from "react";
 import { Pencil, Plus, Trash2 } from "lucide-react";
-import { ErrorNotice, Modal, Skeleton } from "../../components/common.js";
+import { ErrorNotice, Modal, SaveBanner, Skeleton, useSaveFeedback } from "../../components/common.js";
 import { useMutation, useQuery } from "../../lib/ApiProvider.js";
 import type { PermissionTemplate } from "../../lib/types.js";
 
@@ -14,6 +14,7 @@ export function AdminPermTemplates(): JSX.Element {
     [],
   );
   const [editing, setEditing] = useState<PermissionTemplate | null>(null);
+  const saved = useSaveFeedback();
   const delMut = useMutation<string, void>((a, id) => a.adminDeletePermTemplate(id));
 
   if (error) return <ErrorNotice error={error} />;
@@ -23,6 +24,7 @@ export function AdminPermTemplates(): JSX.Element {
     <>
       <div className="admin-toolbar">
         <div className="spacer" style={{ flex: 1 }} />
+        <SaveBanner visible={saved.visible} />
         <button
           type="button"
           className="btn-admin primary"
@@ -79,6 +81,7 @@ export function AdminPermTemplates(): JSX.Element {
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
+            saved.show();
             reload();
           }}
         />

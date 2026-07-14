@@ -882,8 +882,61 @@ textarea {
   background: rgba(245, 166, 35, 0.14);
   color: #f5a623;
 }
+.notice.success {
+  background: var(--success-soft);
+  color: var(--success);
+}
 .notice b {
   font-weight: 700;
+}
+
+/* ── 저장 성공 인라인 배너(관리자 탭) — 몇 초 표시 후 사라짐 ── */
+.save-banner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+/* ── 가동 시간표 입력 (sleepMode="schedule") ── */
+.schedule-box {
+  margin-top: var(--s3);
+  padding: var(--s4);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-2);
+}
+.schedule-box .field {
+  margin-bottom: var(--s3);
+}
+.day-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.day-chip {
+  min-width: 42px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--on-surface-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.day-chip:hover {
+  background: var(--surface-hover);
+}
+.day-chip.on {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--primary);
 }
 
 /* ── 로그 뷰어 ── */

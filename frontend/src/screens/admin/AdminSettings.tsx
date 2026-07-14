@@ -5,7 +5,7 @@
  */
 import { useEffect, useState } from "react";
 import { Plus, Save, Trash2 } from "lucide-react";
-import { ErrorNotice, Skeleton, Toggle, relTime } from "../../components/common.js";
+import { ErrorNotice, SaveBanner, Skeleton, Toggle, relTime, useSaveFeedback } from "../../components/common.js";
 import { useMutation, useQuery } from "../../lib/ApiProvider.js";
 import type { AdminSettings } from "../../lib/types.js";
 
@@ -14,6 +14,7 @@ const ALL_PROVIDERS = ["codecommit", "github", "gitlab"];
 export function AdminSettingsTab(): JSX.Element {
   const { data, loading, error } = useQuery<AdminSettings>((a) => a.adminGetSettings(), []);
   const [form, setForm] = useState<AdminSettings | null>(null);
+  const saved = useSaveFeedback();
   const saveMut = useMutation<Omit<AdminSettings, "updatedAt">, AdminSettings>((a, b) =>
     a.adminPutSettings(b),
   );
@@ -159,19 +160,29 @@ export function AdminSettingsTab(): JSX.Element {
         <span className="muted" style={{ fontSize: 12 }}>
           {form.updatedAt ? `마지막 저장: ${relTime(form.updatedAt)}` : ""}
         </span>
-        <button
-          type="button"
-          className="btn-admin primary"
-          disabled={saveMut.loading}
-          onClick={() => {
-            const { updatedAt: _drop, ...body } = form;
-            void _drop;
-            saveMut.run(body).catch(() => undefined);
-          }}
-        >
-          <Save size={14} className="icon" />
-          {saveMut.loading ? "저장 중…" : "설정 저장"}
-        </button>
+        <div className="row" style={{ gap: 12 }}>
+          <SaveBanner visible={saved.visible} />
+          <button
+            type="button"
+            className="btn-admin primary"
+            disabled={saveMut.loading}
+            onClick={() => {
+              const { updatedAt: _drop, ...body } = form;
+              void _drop;
+              saveMut
+                .run(body)
+                .then((res) => {
+                  // 응답의 updatedAt 으로 "마지막 저장"을 즉시 갱신 + 성공 배너 표시.
+                  setForm(res);
+                  saved.show();
+                })
+                .catch(() => undefined);
+            }}
+          >
+            <Save size={14} className="icon" />
+            {saveMut.loading ? "저장 중…" : "설정 저장"}
+          </button>
+        </div>
       </div>
     </div>
   );
