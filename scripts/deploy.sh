@@ -369,6 +369,7 @@ else
     CFG_COGNITO_DOMAIN="${COGNITO_DOMAIN}" \
     CFG_REGION="${REGION}" \
     CFG_STAGE="${STAGE}" \
+    CFG_APPS_DOMAIN="${APPS_DOMAIN}" \
     node -e '
       const fs = require("fs");
       const s = (k) => (process.env[k] && process.env[k] !== "None") ? process.env[k] : "";
@@ -376,6 +377,7 @@ else
       const userPoolId = s("CFG_USER_POOL_ID");
       const userPoolClientId = s("CFG_USER_POOL_CLIENT_ID");
       const cognitoDomain = s("CFG_COGNITO_DOMAIN");
+      const appsDomain = s("CFG_APPS_DOMAIN");
       const cfg = {
         apiUrl,
         userPoolId,
@@ -385,6 +387,7 @@ else
         mock: !(apiUrl && userPoolId && userPoolClientId),
       };
       if (cognitoDomain) cfg.cognitoDomain = cognitoDomain;
+      if (appsDomain) cfg.appsDomain = appsDomain;
       fs.writeFileSync(process.env.CONFIG_OUT, JSON.stringify(cfg, null, 2) + "\n");
     '
     if [[ -z "${API_URL}" || -z "${USER_POOL_ID}" || -z "${USER_POOL_CLIENT_ID}" ]]; then

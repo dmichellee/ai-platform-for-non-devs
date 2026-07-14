@@ -35,6 +35,7 @@ import { NewRepoModal } from "../../components/RepoManager.js";
 import { useApi, useMutation, useQuery, type QueryResult } from "../../lib/ApiProvider.js";
 import { useNavigate } from "../../lib/router.js";
 import { useAuth } from "../../auth/AuthContext.js";
+import { appsDomainLabel } from "../../lib/config.js";
 import { sessionInitial } from "../../auth/tokens.js";
 import type {
   App,
@@ -716,7 +717,7 @@ function StepNameScheme({
               subCheck.check(finalValue);
             }}
           />
-          <span className="mono muted">.apps.회사도메인</span>
+          <span className="mono muted">.{appsDomainLabel()}</span>
         </div>
         <SubdomainStatus state={subCheck.state} />
         <div className="hint">소문자·숫자·하이픈, 3~40자. 회사 안에서 유일한 주소여야 해요.</div>

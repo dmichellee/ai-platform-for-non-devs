@@ -92,4 +92,6 @@ phases:
 
   post_build:
     commands:
-      - echo "provisioner 완료: ${STACK_NAME}"
+      # 주의: 따옴표 안이라도 `: ` 가 있으면 YAML 이 매핑으로 파싱해 CodeBuild 가
+      #  YAML_FILE_ERROR("Expected Commands[0] to be of string type")로 거부한다 → 전체를 작은따옴표로 감싼다.
+      - 'echo "provisioner 완료 - ${STACK_NAME}"'

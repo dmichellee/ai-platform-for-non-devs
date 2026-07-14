@@ -164,4 +164,5 @@ phases:
 
   post_build:
     commands:
-      - echo "app-runtime 배포 완료: ${RUNTIME_STACK} (이미지 ${IMAGE_TAG})"
+      # 주의: 따옴표 안이라도 `: ` 가 있으면 YAML 매핑으로 파싱돼 CodeBuild YAML_FILE_ERROR → 작은따옴표로 감싼다.
+      - 'echo "app-runtime 배포 완료 - ${RUNTIME_STACK} (이미지 ${IMAGE_TAG})"'

@@ -12,6 +12,9 @@
 - GET /vpcs                 → 관리자가 등록한 네트워크 목록({vpcId, label}만).
                               admin settings 는 admin 전용이라 마법사가 못 보므로,
                               앱을 만들 네트워크 선택에 필요한 두 필드만 노출한다.
+- GET /providers            → 관리자가 활성화한 저장소 provider 목록(기능 요구사항 3:
+                              연결 가능한 저장소 종류는 관리자가 활성/비활성).
+                              연결 추가 화면이 활성 provider 카드만 보여주는 데 사용.
 
 쓰기(생성/수정/삭제)는 여전히 `/admin/*`(admin 전용)에만 있다.
 """
@@ -48,6 +51,18 @@ def get_permission_templates_public(ctx: RouteContext) -> ProxyResult:
     ]
     summaries.sort(key=lambda t: 0 if t.get("permId") == "default" else 1)
     return list_response(summaries)
+
+
+def get_providers_public(ctx: RouteContext) -> ProxyResult:
+    """연결 추가 화면: 관리자가 활성화한 provider 목록. 인증만 필요.
+
+    기능 요구사항 3 — 연결 가능한 저장소 종류는 관리자가 사전 설정으로 활성/비활성.
+    화면은 이 목록에 있는 provider 카드만 노출한다(생성 시 서버 검증은 별도 유지).
+    """
+    require_user(ctx.identity)
+    enabled = get_admin_settings().get("enabledProviders") or []
+    items = [p for p in enabled if isinstance(p, str)]
+    return list_response(items)
 
 
 def get_vpcs_public(ctx: RouteContext) -> ProxyResult:

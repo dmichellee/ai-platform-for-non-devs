@@ -177,3 +177,24 @@ def test_permission_templates_default_first(ddb_table, stub_clients):
     res = handler(make_event("GET", "/permission-templates", user_id=USER, groups=["user"]))
     items = parse_result(res)["data"]["items"]
     assert items[0]["permId"] == "default"
+
+
+# ── 기능 요구사항 3: 활성 provider 목록 (GET /providers) ─────────────────────
+
+
+def test_user_get_providers_enabled_only(ddb_table, stub_clients):
+    from .conftest import seed_settings
+
+    seed_settings(ddb_table, enabledProviders=["codecommit"])
+    res = handler(make_event("GET", "/providers", user_id=USER, groups=["user"]))
+    out = parse_result(res)
+    assert out["status"] == 200
+    assert out["data"]["items"] == ["codecommit"]
+
+
+def test_user_get_providers_defaults_when_no_settings(ddb_table, stub_clients):
+    res = handler(make_event("GET", "/providers", user_id=USER, groups=["user"]))
+    out = parse_result(res)
+    assert out["status"] == 200
+    # 설정 미존재 시 DEFAULT_ADMIN_SETTINGS 의 enabledProviders 를 따른다
+    assert isinstance(out["data"]["items"], list)

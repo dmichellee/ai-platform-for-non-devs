@@ -33,6 +33,7 @@ import {
 } from "../../components/ScheduleEditor.js";
 import { useNavigate } from "../../lib/router.js";
 import { useAuth } from "../../auth/AuthContext.js";
+import { appsDomainLabel } from "../../lib/config.js";
 import { sessionInitial } from "../../auth/tokens.js";
 import type { App, Deployment, LogEvent, PatchAppRequest, Schedule, SleepMode } from "../../lib/types.js";
 import {
@@ -70,15 +71,14 @@ export function AppDetail({ appId }: { appId: string }): JSX.Element {
                 <AppStatusBadge status={app.status} runtimeState={app.runtimeState} />
               </h2>
               <div className="row mt3" style={{ gap: 8 }}>
-                <span className="mono muted">{app.subdomain}.apps.회사도메인</span>
+                <span className="mono muted">{app.subdomain}.{appsDomainLabel()}</span>
                 {app.status === "ACTIVE" && (
                   <a
                     className="topbar-link"
-                    href={`https://${app.subdomain}.apps`}
+                    href={`https://${app.subdomain}.${appsDomainLabel()}`}
                     target="_blank"
                     rel="noreferrer"
-                    onClick={(e) => e.preventDefault()}
-                    title="접속 (배포 후 활성화)"
+                    title="새 탭에서 앱 열기"
                   >
                     <span className="row" style={{ gap: 5 }}>
                       <ExternalLink size={14} className="icon" />

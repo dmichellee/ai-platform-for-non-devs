@@ -66,6 +66,8 @@ export interface ApiClient {
   listPermTemplates(): Promise<UserPermissionTemplate[]>;
   // GET /vpcs — 관리자 등록 네트워크(VPC) 목록(마법사 선택용). {vpcId,label}만.
   listVpcs(): Promise<RegisteredVpc[]>;
+  // GET /providers — 관리자가 활성화한 저장소 provider 목록(연결 추가 화면용).
+  listProviders(): Promise<Provider[]>;
   // 관리자
   adminGetSettings(): Promise<AdminSettings>;
   adminPutSettings(body: Omit<AdminSettings, "updatedAt">): Promise<AdminSettings>;
@@ -256,6 +258,9 @@ export class HttpApiClient implements ApiClient {
   }
   listVpcs(): Promise<RegisteredVpc[]> {
     return this.list<RegisteredVpc>("GET", "/vpcs");
+  }
+  listProviders(): Promise<Provider[]> {
+    return this.list<Provider>("GET", "/providers");
   }
 
   // 관리자

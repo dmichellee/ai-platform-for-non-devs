@@ -381,6 +381,9 @@ function DeleteConnBtn({ connId, onDone }: { connId: string; onDone: () => void 
   );
 }
 
+/** provider 표시 우선순위 — AWS 저장소(CodeCommit) 먼저 (바로 사용 가능, 비개발자 권장). */
+const PROVIDER_ORDER: Provider[] = ["codecommit", "github", "gitlab"];
+
 function AddConnectionModal({
   onClose,
   onCreated,
@@ -388,23 +391,37 @@ function AddConnectionModal({
   onClose: () => void;
   onCreated: (conn: RepoConnection) => void;
 }): JSX.Element {
-  // 기본 선택은 AWS 저장소(CodeCommit) — 바로 사용 가능하므로 비개발자에게 권장.
-  const [provider, setProvider] = useState<Provider>("codecommit");
+  // 관리자가 활성화한 provider만 노출 (기능 요구사항 3 — 관리자 사전 설정).
+  // 서버 검증(PROVIDER_DISABLED)은 별도 최종 방어선으로 유지된다.
+  const enabled = useQuery<Provider[]>((a) => a.listProviders(), []);
+  const providers = PROVIDER_ORDER.filter((p) => (enabled.data ?? []).includes(p));
+  const [provider, setProvider] = useState<Provider | null>(null);
   const [name, setName] = useState("");
   const create = useMutation<{ provider: Provider; name: string }, RepoConnection>((a, args) =>
     a.createConnection(args.provider, args.name),
   );
+  // 목록 로드 후 첫 활성 provider를 기본 선택(codecommit 우선 정렬 덕에 통상 codecommit).
+  const selected = provider ?? providers[0] ?? null;
 
   return (
     <Modal title="저장소 연결 추가" onClose={onClose}>
       <div className="field">
         <label>저장소 종류</label>
-        <div className="choice-row" style={{ gridTemplateColumns: "repeat(3,1fr)" }}>
-          {(["codecommit", "github", "gitlab"] as Provider[]).map((p) => (
+        {enabled.loading && <Skeleton height={64} count={1} />}
+        {!enabled.loading && providers.length === 0 && (
+          <InfoNotice>
+            사용할 수 있는 저장소 종류가 없어요. 관리자에게 문의해주세요.
+          </InfoNotice>
+        )}
+        <div
+          className="choice-row"
+          style={{ gridTemplateColumns: `repeat(${Math.max(providers.length, 1)},1fr)` }}
+        >
+          {providers.map((p) => (
             <button
               key={p}
               type="button"
-              className={`choice ${provider === p ? "sel" : ""}`}
+              className={`choice ${selected === p ? "sel" : ""}`}
               onClick={() => setProvider(p)}
               style={{ padding: 12 }}
             >
@@ -421,12 +438,12 @@ function AddConnectionModal({
         <input
           id="conn-name"
           className="input"
-          placeholder="예: 회사 GitHub"
+          placeholder={selected === "codecommit" ? "예: 내 AWS 저장소" : "예: 회사 GitHub"}
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
         <div className="hint">
-          {provider === "codecommit"
+          {selected === "codecommit"
             ? "AWS 저장소(CodeCommit)는 바로 사용할 수 있어요."
             : "이 연결 방식은 아직 준비 중이에요. 지금 만들면 관리자를 통해 연결을 완료해야 사용할 수 있어요. 바로 시작하려면 AWS 저장소(CodeCommit)를 권장해요."}
         </div>
@@ -439,10 +456,11 @@ function AddConnectionModal({
         <button
           type="button"
           className="btn btn-primary"
-          disabled={!name.trim() || create.loading}
+          disabled={!name.trim() || !selected || create.loading}
           onClick={async () => {
+            if (!selected) return;
             try {
-              const conn = await create.run({ provider, name: name.trim() });
+              const conn = await create.run({ provider: selected, name: name.trim() });
               onCreated(conn);
             } catch {
               /* 에러 표시 */

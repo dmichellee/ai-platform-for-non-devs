@@ -20,8 +20,21 @@ export interface RuntimeConfig {
    * 기본값은 SPA-상대 경로다. deploy.sh가 config.json에 넣어주면 그 값을 쓰고, 없으면 기본값.
    */
   kiroConfigUrl?: string;
+  /**
+   * 앱 접속 도메인(예: apps-dev.example.com). 화면에서 `{subdomain}.{appsDomain}`
+   * 실제 접속 주소를 보여주는 데 쓴다. deploy.sh가 config.json에 넣는다.
+   */
+  appsDomain?: string;
   /** true면 API를 목으로 처리하고 로그인도 우회한다. QA/데모용. */
   mock: boolean;
+}
+
+/**
+ * 앱 접속 도메인 라벨 — config.json의 appsDomain(예: apps-dev.example.com).
+ * 값이 없으면 자리표시("apps.회사도메인")로 폴백(목/로컬).
+ */
+export function appsDomainLabel(): string {
+  return getCachedConfig()?.appsDomain ?? "apps.회사도메인";
 }
 
 /** Kiro 설정 다운로드 기본 경로(SPA-상대). config.json에 kiroConfigUrl이 없을 때 폴백. */

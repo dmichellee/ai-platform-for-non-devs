@@ -24,11 +24,14 @@ describe("저장소 provider 순서 — AWS 저장소 우선", () => {
     fireEvent.click(screen.getByRole("button", { name: /연결 추가/ }));
 
     const dialog = await screen.findByRole("dialog", { name: "저장소 연결 추가" });
+    // provider 카드는 관리자 활성 목록(GET /providers)을 비동기 로드 후 렌더 — 로드 완료 대기
+    await within(dialog).findByText("AWS 저장소(CodeCommit)");
     // 저장소 종류 선택 카드(라벨을 가진 choice 버튼)만 추린다
     const choices = within(dialog)
       .getAllByRole("button")
       .filter((b) => b.className.includes("choice"));
 
+    // 목 설정의 enabledProviders(3종 전부 활성) 기준
     expect(choices.length).toBe(3);
     // 첫 번째 카드가 AWS 저장소(CodeCommit)
     expect(within(choices[0]).getByText("AWS 저장소(CodeCommit)")).toBeInTheDocument();
@@ -51,5 +54,32 @@ describe("저장소 provider 순서 — AWS 저장소 우선", () => {
     const pos = awsCard.compareDocumentPosition(githubCard);
     // Node.DOCUMENT_POSITION_FOLLOWING(4) = githubCard가 awsCard 뒤에 있음
     expect(pos & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
+describe("관리자 활성 provider만 노출 (기능 요구사항 3)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    seedSession("user");
+  });
+
+  it("codecommit만 활성이면 GitHub/GitLab 카드가 안 보인다", async () => {
+    setHash("/connections");
+    const { MockApiClient } = await import("../src/mock/mockApi.js");
+    const client = new MockApiClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (client as any).listProviders = async () => ["codecommit"];
+    renderWithProviders(<Connections />, client);
+    await screen.findByText("회사 GitHub"); // 기존 연결 목록 로드 대기
+    fireEvent.click(screen.getByRole("button", { name: /연결 추가/ }));
+
+    const dialog = await screen.findByRole("dialog", { name: "저장소 연결 추가" });
+    await within(dialog).findByText("AWS 저장소(CodeCommit)");
+    const choices = within(dialog)
+      .getAllByRole("button")
+      .filter((b) => b.className.includes("choice"));
+    expect(choices.length).toBe(1);
+    expect(within(dialog).queryByText("GitHub")).toBeNull();
+    expect(within(dialog).queryByText("GitLab")).toBeNull();
   });
 });

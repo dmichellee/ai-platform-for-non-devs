@@ -33,6 +33,7 @@ from .handlers.catalog import (
     check_subdomain,
     get_permission_templates_public,
     get_presets_public,
+    get_providers_public,
     get_vpcs_public,
 )
 from .handlers.connections import (
@@ -75,6 +76,7 @@ def build_router() -> Router:
     r.get("/permission-templates", get_permission_templates_public)
     r.get("/subdomains/check", check_subdomain)
     r.get("/vpcs", get_vpcs_public)
+    r.get("/providers", get_providers_public)
 
     # ── 레포 연결 ──────────────────────────────────────────────────────────────
     r.get("/connections", list_my_connections)

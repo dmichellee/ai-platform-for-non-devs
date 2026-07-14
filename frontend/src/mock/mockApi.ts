@@ -317,6 +317,11 @@ export class MockApiClient implements ApiClient {
     // GET /vpcs — 관리자 등록 VPC 중 {vpcId,label}만(마법사 선택용). 설정과 동일 원본.
     return this.settings.registeredVpcs.map((v) => ({ vpcId: v.vpcId, label: v.label }));
   }
+  async listProviders(): Promise<Provider[]> {
+    await delay();
+    // GET /providers — 관리자가 활성화한 provider만(연결 추가 화면용). 설정과 동일 원본.
+    return this.settings.enabledProviders as Provider[];
+  }
 
   async adminGetSettings(): Promise<AdminSettings> {
     await delay();
