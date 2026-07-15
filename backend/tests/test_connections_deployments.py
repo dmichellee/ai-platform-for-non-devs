@@ -3,11 +3,20 @@
 from __future__ import annotations
 
 from app.handler import handler
+from app.integrations import clients as integ_clients
 
-from .conftest import make_event, parse_result, seed_app, seed_settings
+from .conftest import StubClient, make_event, parse_result, seed_app, seed_settings
 
 OWNER = "user-alice"
 OTHER = "user-bob"
+
+
+def _stub_codepipeline() -> StubClient:
+    """수동 배포가 사용하는 codepipeline StartPipelineExecution stub 주입."""
+    stub = StubClient()
+    stub.set_response("start_pipeline_execution", {"pipelineExecutionId": "exec-1"})
+    integ_clients.set_client("codepipeline", stub)
+    return stub
 
 
 # ── 레포 연결 ────────────────────────────────────────────────────────────────
@@ -90,11 +99,17 @@ def test_delete_connection_204(ddb_table, stub_clients):
 
 def test_deploy_active_201(ddb_table, stub_clients):
     seed_app(ddb_table, "app00001", OWNER, status="ACTIVE")
+    pipe = _stub_codepipeline()
     res = handler(make_event("POST", "/apps/app00001/deploy", user_id=OWNER, groups=["user"]))
     out = parse_result(res)
     assert out["status"] == 201
     assert out["data"]["trigger"] == "manual"
     assert out["data"]["status"] == "PENDING"
+    # 실제 파이프라인 실행 트리거 + 실행 식별자 기록.
+    starts = pipe.calls_for("start_pipeline_execution")
+    assert len(starts) == 1
+    assert starts[0]["name"] == "apphub-test-app-app00001"
+    assert out["data"]["pipelineExecutionId"] == "exec-1"
 
 
 def test_deploy_creating_invalid_state(ddb_table, stub_clients):

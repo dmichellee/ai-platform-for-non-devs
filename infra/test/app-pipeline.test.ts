@@ -111,6 +111,36 @@ describe("app-pipeline — codecommit(자동 트리거)", () => {
     });
   });
 
+  describe("deployBuild DDB 읽기 권한 (실배포 AccessDenied 버그 회귀 방지)", () => {
+    it("deploy 프로젝트 역할에 dynamodb:GetItem이 앱 단일 테이블(apphub-dev-main) ARN 범위로 있다", () => {
+      // deploy.yml pre_build의 App/PRESET/PERM 조회가 GetItem 권한 없이 AccessDeniedException으로
+      //  실패해 runtime 스택이 생성 못 하던 버그. sid ReadAppParamsFromDdb, GetItem만, -main ARN 범위.
+      const policies = template.findResources("AWS::IAM::Policy");
+      let found = false;
+      for (const pol of Object.values(policies)) {
+        const doc = (
+          pol.Properties as {
+            PolicyDocument?: { Statement?: Array<{ Sid?: string; Action?: unknown; Resource?: unknown }> };
+          }
+        ).PolicyDocument;
+        for (const st of doc?.Statement ?? []) {
+          if (st.Sid === "ReadAppParamsFromDdb") {
+            found = true;
+            const act = JSON.stringify(st.Action);
+            expect(act).toContain("dynamodb:GetItem");
+            // 읽기 전용 — 쓰기 액션이 새어들지 않았는지.
+            expect(act).not.toContain("dynamodb:PutItem");
+            expect(act).not.toContain("dynamodb:UpdateItem");
+            const res = JSON.stringify(st.Resource);
+            expect(res).toContain("table/apphub-dev-main");
+            expect(st.Resource).not.toBe("*");
+          }
+        }
+      }
+      expect(found, "deployBuild 역할에 ReadAppParamsFromDdb statement가 있어야 함").toBe(true);
+    });
+  });
+
   describe("IAM — Resource:'*' 최소화", () => {
     it("ecr:GetAuthorizationToken 외에는 * 리소스를 피한다", () => {
       // GetAuthorizationToken은 리소스 레벨 미지원(계정 스코프)이라 * 예외 허용.

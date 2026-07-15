@@ -1,9 +1,9 @@
-# provisioner CodeBuild — 앱 스택 원격 배포 (DESIGN.md 3.2 단계 2 / 3.1 provisioner)
+# provisioner CodeBuild — 앱 스택 원격 배포 (DESIGN.md 3.2 단계 2 / 3.1 provisioner / 9 롤백)
 #
 # 계약(_workspace/contracts/buildspec-contract.md 6장 미해결 자산 주입 D-M4-05):
 #  ProvisionApp 상태 기계가 이 프로젝트를 StartBuild 하며 아래 env를 override로 주입한다:
 #    APP_ID, STAGE, APP_STACK_KIND(pipeline|runtime), PROVIDER, REPO_URL, BRANCH,
-#    AUTO_DEPLOY, CONNECTION_ARN(선택)
+#    AUTO_DEPLOY, CONNECTION_ARN(선택), IMAGE_TAG(롤백 시 runtime 재배포용 커밋 SHA)
 #  프로젝트 레벨 고정 env(platform-stack이 설정):
 #    AWS_ACCOUNT_ID, AWS_DEFAULT_REGION, TABLE_NAME,
 #    CDK_SOURCE_S3_URI  — 플랫폼 CDK tarball(app-* construct 포함) S3 위치
@@ -12,7 +12,9 @@
 #        env(VALIDATOR_S3_URI / CDK_SOURCE_S3_URI)로 주입한다(D-M4-05 신뢰 경계 충족).
 #
 # 동작: 플랫폼 CDK 코드를 S3에서 받아 `cdk deploy apphub-{stage}-app-{APP_ID}-{APP_STACK_KIND}`.
-#   무거운 작업(빌드/이미지)은 앱 파이프라인이 하고, 이 프로젝트는 스택 생성/갱신만 한다.
+#   - pipeline: app-pipeline 스택 생성/갱신(무거운 빌드/이미지는 앱 파이프라인이 담당).
+#   - runtime : 버전 되돌리기(롤백, DESIGN 9). 재빌드 없이 IMAGE_TAG(이전 커밋 SHA) 이미지로
+#     runtime 스택만 재배포한다. app 파라미터 조립은 deploy.yml과 동일 패턴(DDB 재귀 언마샬).
 version: 0.2
 
 phases:
@@ -21,17 +23,17 @@ phases:
       nodejs: 22
     commands:
       - node --version
-      - npm i -g aws-cdk pnpm
       # 플랫폼 CDK 코드 tarball 확보(app-pipeline/app-runtime construct 포함).
       - |
         if [ -z "${CDK_SOURCE_S3_URI:-}" ]; then
-          echo "CDK_SOURCE_S3_URI 미지정 — 플랫폼이 CDK 소스를 업로드해야 합니다(deploy.sh)." >&2
+          echo "CDK_SOURCE_S3_URI 미지정 - 플랫폼이 CDK 소스를 업로드해야 합니다(deploy.sh)." >&2
           exit 1
         fi
         if [ -z "${VALIDATOR_S3_URI:-}" ]; then
-          echo "VALIDATOR_S3_URI 미지정 — 플랫폼이 검증기 번들을 업로드해야 합니다(deploy.sh)." >&2
+          echo "VALIDATOR_S3_URI 미지정 - 플랫폼이 검증기 번들을 업로드해야 합니다(deploy.sh)." >&2
           exit 1
         fi
+        npm i -g aws-cdk pnpm
         aws s3 cp "${CDK_SOURCE_S3_URI}" ./cdk-src.tgz
         mkdir -p cdk-src && tar -xzf cdk-src.tgz -C cdk-src
         cd cdk-src && pnpm install --frozen-lockfile && cd -
@@ -40,9 +42,9 @@ phases:
     commands:
       - export APP_STACK_KIND="${APP_STACK_KIND:-pipeline}"
       - export STACK_NAME="apphub-${STAGE}-app-${APP_ID}-${APP_STACK_KIND}"
-      - echo "대상 스택=${STACK_NAME} (kind=${APP_STACK_KIND})"
+      - 'echo "대상 스택=${STACK_NAME} kind=${APP_STACK_KIND}"'
       # app-pipeline 스택은 DDB App 레코드에서 provider/repo/branch/autoDeploy를 읽어 컨텍스트로 조립.
-      #  (deploy.yml과 동일 패턴 — 단일 원본은 buildspec-contract 4장)
+      #  (deploy.yml과 동일 패턴 - 단일 원본은 buildspec-contract 4장)
       # 주의(heredoc): sh 의 <<'NODE' 종결자는 반드시 줄 시작(들여쓰기 0)에 있어야 한다.
       #  if 블록 안에 들여쓰면 종결자를 못 찾아 "expecting fi" 문법 오류로 CodeBuild가 죽는다.
       #  → heredoc을 들여쓰기 없이 두고, 조건은 스크립트 파일 생성 후 실행 시점에 검사한다.
@@ -65,10 +67,85 @@ phases:
         emit("autoDeployEnabled", B(app.autoDeployEnabled));
         if (app.connectionArn && app.connectionArn.S) emit("connectionArn", app.connectionArn.S);
         NODE
+      # runtime(롤백)은 app-runtime 파라미터 전체를 조립한다(deploy.yml과 동일 재귀 언마샬).
+      #  DDB AttributeValue(S/N/BOOL/NULL/M/L/SS/NS)를 재귀 언마샬(u)해 app-params.ts loader 키
+      #  (schedule/envVars/secretArns/permissionPolicyB64)에 맞춰 base64 JSON으로 emit.
+      #  IMAGE_TAG는 StartBuild env override로 온 커밋 SHA(재빌드 없이 그 이미지로 재배포).
+      - |
+        node - <<'NODE' > /tmp/app-ctx.env
+        const { execSync } = require("node:child_process");
+        const region = process.env.AWS_DEFAULT_REGION;
+        const table = process.env.TABLE_NAME;
+        const appId = process.env.APP_ID;
+        const u = (av) => {
+          if (av == null || typeof av !== "object") return av;
+          if ("S" in av) return av.S;
+          if ("N" in av) return Number(av.N);
+          if ("BOOL" in av) return av.BOOL;
+          if ("NULL" in av) return null;
+          if ("M" in av) { const o = {}; for (const [k, v] of Object.entries(av.M)) o[k] = u(v); return o; }
+          if ("L" in av) return av.L.map(u);
+          if ("SS" in av) return av.SS;
+          if ("NS" in av) return av.NS.map(Number);
+          return av;
+        };
+        const getItem = (key) => {
+          const raw = JSON.parse(execSync(
+            `aws dynamodb get-item --region ${region} --table-name ${table} --key '${JSON.stringify(key)}' --output json`
+          ).toString() || "{}").Item;
+          if (!raw) return {};
+          const o = {}; for (const [k, v] of Object.entries(raw)) o[k] = u(v); return o;
+        };
+        const app = getItem({ PK: { S: `APP#${appId}` }, SK: { S: "META" } });
+        const preset = getItem({ PK: { S: "CONFIG" }, SK: { S: `PRESET#${app.presetId ?? ""}` } });
+        const perm = getItem({ PK: { S: "CONFIG" }, SK: { S: `PERM#${app.permissionTemplateId ?? ""}` } });
+        const str = (v) => (v == null ? "" : String(v));
+        const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : Number(v) || 0);
+        const scalars = {
+          appId,
+          subdomain: str(app.subdomain),
+          scheme: str(app.scheme),
+          imageTag: str(process.env.IMAGE_TAG),
+          rulePriority: num(app.rulePriority),
+          cpu: num(preset.cpu), memory: num(preset.memory),
+          minCount: num(preset.minCount), maxCount: num(preset.maxCount),
+          scaleMetric: str(preset.scaleMetric) || "cpu",
+          scaleThreshold: num(preset.scaleThreshold) || 70,
+          sleepMode: str(app.sleepMode) || "always-on",
+          cognitoProtect: app.cognitoProtect === true || str(app.cognitoProtect) === "true",
+          isInitialDeploy: process.env.IS_INITIAL === "true",
+        };
+        const emit = (k, v) => process.stdout.write(`export CTX_${k}=${JSON.stringify(str(v))}\n`);
+        for (const [k, v] of Object.entries(scalars)) emit(k, v);
+        const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64");
+        const emitJson = (k, o) => process.stdout.write(`export CTX_${k}=${b64(o)}\n`);
+        if (scalars.sleepMode === "schedule" && app.schedule && typeof app.schedule === "object") {
+          emitJson("scheduleB64", app.schedule);
+        }
+        if (app.envVars && typeof app.envVars === "object" && Object.keys(app.envVars).length > 0) {
+          emitJson("envVarsB64", app.envVars);
+        }
+        if (app.secretArns && typeof app.secretArns === "object" && Object.keys(app.secretArns).length > 0) {
+          emitJson("secretArnsB64", app.secretArns);
+        }
+        if (perm.policyDocument && typeof perm.policyDocument === "object") {
+          emitJson("permissionPolicyB64", perm.policyDocument);
+        }
+        NODE
       - |
         if [ "${APP_STACK_KIND}" = "pipeline" ]; then
           cat /tmp/pipe-ctx.env
           . /tmp/pipe-ctx.env
+        else
+          # runtime(롤백): 최초/갱신 판정 후 app-ctx 소싱. 롤백 대상 스택은 이미 존재(갱신).
+          if aws cloudformation describe-stacks --stack-name "${STACK_NAME}" \
+               --region "${AWS_DEFAULT_REGION}" >/dev/null 2>&1; then
+            export IS_INITIAL="false"
+          else
+            export IS_INITIAL="true"
+          fi
+          cat /tmp/app-ctx.env
+          . /tmp/app-ctx.env
         fi
 
   build:
@@ -88,10 +165,30 @@ phases:
             -c cdkSourceS3Uri="${CDK_SOURCE_S3_URI}" \
             ${CTX_connectionArn:+-c connectionArn="${CTX_connectionArn}"}
         else
-          # runtime 배포는 앱 파이프라인의 Deploy 스테이지(deploy.yml)가 담당하지만,
-          #  버전 되돌리기(롤백, DESIGN 9)는 provisioner가 이미지 태그만 바꿔 직접 배포할 수 있다.
-          echo "runtime 배포는 app-pipeline Deploy 스테이지(deploy.yml)가 수행합니다." >&2
-          exit 1
+          # runtime 롤백: 재빌드 없이 IMAGE_TAG 이미지로 runtime 스택 재배포(DESIGN 9).
+          #  deploy.yml Deploy 스테이지와 동일 컨텍스트(app-params.ts 소비). 실패 시 CFN 롤백.
+          if [ -z "${CTX_imageTag}" ]; then
+            echo "롤백 대상 이미지 태그(IMAGE_TAG)가 비어 있습니다." >&2
+            exit 1
+          fi
+          cdk deploy "${STACK_NAME}" --require-approval never --region "${AWS_DEFAULT_REGION}" \
+            -c stage="${STAGE}" \
+            -c appId="${CTX_appId}" \
+            -c appStackKind=runtime \
+            -c subdomain="${CTX_subdomain}" \
+            -c scheme="${CTX_scheme}" \
+            -c imageTag="${CTX_imageTag}" \
+            -c rulePriority="${CTX_rulePriority}" \
+            -c cpu="${CTX_cpu}" -c memory="${CTX_memory}" \
+            -c minCount="${CTX_minCount}" -c maxCount="${CTX_maxCount}" \
+            -c scaleMetric="${CTX_scaleMetric}" -c scaleThreshold="${CTX_scaleThreshold}" \
+            -c sleepMode="${CTX_sleepMode}" \
+            -c cognitoProtect="${CTX_cognitoProtect}" \
+            -c isInitialDeploy="${CTX_isInitialDeploy}" \
+            ${CTX_scheduleB64:+-c schedule="${CTX_scheduleB64}"} \
+            ${CTX_envVarsB64:+-c envVars="${CTX_envVarsB64}"} \
+            ${CTX_secretArnsB64:+-c secretArns="${CTX_secretArnsB64}"} \
+            ${CTX_permissionPolicyB64:+-c permissionPolicyB64="${CTX_permissionPolicyB64}"}
         fi
 
   post_build:

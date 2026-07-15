@@ -187,6 +187,19 @@ export class AppPipeline extends Construct {
         ],
       }),
     );
+    // deploy.yml pre_build이 app-ctx 조립을 위해 DDB에서 App/PRESET/PERM 레코드를 조회한다.
+    //  이 권한이 없으면 GetItem이 AccessDeniedException으로 실패해 runtime 스택이 생성되지 못한다
+    //  (실배포 버그). deploy.yml은 읽기 전용이므로 GetItem만 부여(validateBuild의
+    //  DeploymentStatusWrite와 같은 formatArn 패턴, 앱 단일 테이블 ARN 범위).
+    this.deployBuild.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "ReadAppParamsFromDdb",
+        actions: ["dynamodb:GetItem"],
+        resources: [
+          stack.formatArn({ service: "dynamodb", resource: "table", resourceName: `${prefix}-main` }),
+        ],
+      }),
+    );
     // 플랫폼 CDK 소스 tarball(CDK_SOURCE_S3_URI)을 자산 버킷에서 받는다(D-M5-06). GetObject만.
     this.grantAssetRead(this.deployBuild, p.cdkSourceS3Uri, "ReadCdkSourceAsset");
 
