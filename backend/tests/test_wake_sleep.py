@@ -17,9 +17,13 @@ WAKER_TG = "arn:aws:elasticloadbalancing:...:targetgroup/waker-tg/2"
 LISTENER = "arn:aws:elasticloadbalancing:...:listener/x"
 
 
+CLUSTER = f"apphub-{STAGE}-cluster"  # 공유 클러스터(D18) — sleep 이 ensure_stopped 로 접근.
+
+
 @pytest.fixture
 def sleep_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("STAGE", STAGE)
+    monkeypatch.setenv("CLUSTER_NAME", CLUSTER)
 
 
 def _ssm() -> SsmStub:
@@ -94,8 +98,11 @@ def test_sleep_stops_service_switches_rule_sets_sleeping(ddb_table, p2_clients, 
     res = sleep.sleep_app("slp00001")
     assert res["stopped"] is True
     assert res["ruleSwitched"] is True
-    # desiredCount=0.
-    assert p2_clients["ecs"].calls_for("update_service")[0]["desiredCount"] == 0
+    # desiredCount=0, 공유 클러스터 위의 앱 서비스(cluster != service).
+    stop_call = p2_clients["ecs"].calls_for("update_service")[0]
+    assert stop_call["desiredCount"] == 0
+    assert stop_call["cluster"] == CLUSTER
+    assert stop_call["service"] == f"apphub-{STAGE}-app-slp00001"
     # forward → waker TG.
     fwd = next(
         a

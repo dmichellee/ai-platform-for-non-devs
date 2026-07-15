@@ -20,3 +20,16 @@ def stage() -> str:
 def apps_domain() -> str | None:
     """앱 도메인. wake Lambda env 에 APPS_DOMAIN 주입(stack-outputs §I). Host 파싱 폴백에 쓰임."""
     return os.environ.get("APPS_DOMAIN")
+
+
+def cluster_name() -> str:
+    """공유 ECS 클러스터명(`apphub-{stage}-cluster`, DESIGN.md D18).
+
+    network 스택이 Waker/복원/잠자기 Lambda env 에 CLUSTER_NAME 을 주입한다(확정 계약).
+    stage 당 클러스터 1개를 앱들이 공유하므로 서비스명(`apphub-{stage}-app-{appId}`)과 분리된다.
+    미주입 시 잘못된 클러스터로 UpdateService 하면 앱을 못 깨우므로, 폴백 없이 명시적 에러.
+    """
+    value = os.environ.get("CLUSTER_NAME")
+    if not value:
+        raise RuntimeError("필수 환경변수 누락: CLUSTER_NAME")
+    return value

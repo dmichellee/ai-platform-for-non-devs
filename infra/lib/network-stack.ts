@@ -8,6 +8,7 @@ import {
   StackProps,
   aws_certificatemanager as acm,
   aws_ec2 as ec2,
+  aws_ecs as ecs,
   aws_elasticloadbalancingv2 as elbv2,
   aws_elasticloadbalancingv2_targets as elbv2_targets,
   aws_events as events,
@@ -31,6 +32,7 @@ import { StageConfig, resourcePrefix } from "../lib/config";
  *  - 와일드카드 ACM 인증서 `*.{appsDomain}` (DNS 검증, public hosted zone 사용)
  *  - Route53: 기존 public hosted zone 참조 + internal용 private hosted zone
  *  - HTTPS 리스너(idle timeout 300초 — SSE 대비, DESIGN.md 3.5), HTTP→HTTPS 리다이렉트
+ *  - 공유 ECS 클러스터 1개(D18) — stage당 1개. 앱 runtime 스택은 이 위에 서비스만 만든다.
  *  - Waker Lambda + 복원 Lambda + 공유 Waker Target Group
  *
  * D17 (PLATFORM-ENGINEERING.md 2장): 플랫폼 소유 SG ingress에 0.0.0.0/0·::/0 금지.
@@ -52,6 +54,8 @@ export const D17_EXEMPT_SG_DESCRIPTION =
 export class NetworkStack extends Stack {
   /** 앱 런타임/파이프라인 construct가 소비할 공유 리소스 참조 */
   readonly vpc: ec2.IVpc;
+  /** stage당 공유 ECS 클러스터(D18). 앱 runtime 스택이 fromClusterAttributes로 임포트해 서비스만 얹는다. */
+  readonly cluster: ecs.Cluster;
   readonly internetFacingAlb: elbv2.ApplicationLoadBalancer;
   readonly internalAlb: elbv2.ApplicationLoadBalancer;
   readonly internetHttpsListener: elbv2.ApplicationListener;
@@ -90,6 +94,18 @@ export class NetworkStack extends Stack {
       ],
     });
     this.vpc = vpc;
+
+    // ── 공유 ECS 클러스터 (D18 — stage당 1개) ──────────────────────────────
+    // 클러스터는 무과금 논리 네임스페이스. 앱별 클러스터는 이점 없이 콘솔 가독성만 해치므로
+    //  stage당 1개(`${prefix}-cluster`)를 network가 소유한다. app-runtime은 이 클러스터를
+    //  fromClusterAttributes로 임포트해 서비스만 얹는다(앱 삭제 완결성은 서비스가 runtime 스택
+    //  소유라 유지됨). containerInsightsV2 DISABLED — 기존 앱별 클러스터 설정과 동일 수준.
+    const cluster = new ecs.Cluster(this, "Cluster", {
+      clusterName: `${prefix}-cluster`,
+      vpc,
+      containerInsightsV2: ecs.ContainerInsights.DISABLED,
+    });
+    this.cluster = cluster;
 
     // internal ALB ingress로 허용할 대역: 설치 시점 주입 CIDR, 미지정 시 VPC CIDR.
     // (PLATFORM-ENGINEERING.md 2장: internal은 사내/VPC 대역만)
@@ -192,10 +208,13 @@ export class NetworkStack extends Stack {
     //   테이블은 platform 스택이 만든 apphub-{stage}-main. 테이블명은 결정론적(`${prefix}-main`)이라
     //   크로스스택 참조/SSM 런타임 조회 없이 직접 주입한다(deploy.yml의 TABLE_NAME 재구성과 동일 규약).
     //   DDB 접근 IAM은 grantWakeFunctionPermissions의 ddbRw(tableArn + index/*)가 3함수에 부여.
+    //   CLUSTER_NAME — 공유 ECS 클러스터명(D18, `${prefix}-cluster`). waker/sleep이 ecs
+    //   update_service/describe_services의 cluster 인자로 사용(결정론적이라 직접 주입).
     const commonEnv = {
       STAGE: config.stage,
       APPS_DOMAIN: config.appsDomain,
       TABLE_NAME: `${prefix}-main`,
+      CLUSTER_NAME: `${prefix}-cluster`,
     };
     const fnLog = (name: string): logs.LogGroup =>
       new logs.LogGroup(this, `${name}Logs`, {
@@ -333,6 +352,9 @@ export class NetworkStack extends Stack {
 
     this.publishSsm(config.stage, {
       "vpc-id": vpc.vpcId,
+      // 공유 ECS 클러스터(D18) — app-runtime이 fromClusterAttributes로 임포트.
+      "cluster-name": cluster.clusterName,
+      "cluster-arn": cluster.clusterArn,
       "internet-alb-arn": internetFacingAlb.loadBalancerArn,
       "internet-alb-dns": internetFacingAlb.loadBalancerDnsName,
       "internet-alb-canonical-zone-id": internetFacingAlb.loadBalancerCanonicalHostedZoneId,
@@ -360,6 +382,7 @@ export class NetworkStack extends Stack {
 
     // ── CloudFormation Outputs (deploy.sh / 문서 소비용) ────────────────────
     this.output("VpcId", vpc.vpcId);
+    this.output("ClusterName", cluster.clusterName);
     this.output("InternetAlbArn", internetFacingAlb.loadBalancerArn);
     this.output("InternetAlbDnsName", internetFacingAlb.loadBalancerDnsName);
     this.output("InternalAlbArn", internalAlb.loadBalancerArn);
@@ -429,7 +452,9 @@ export class NetworkStack extends Stack {
   ): void {
     const tableArn = this.formatArn({ service: "dynamodb", resource: "table", resourceName: `${prefix}-main` });
     const ssmNetworkArn = this.formatArn({ service: "ssm", resource: "parameter", resourceName: `apphub/${stage}/network/*` });
-    const appServiceArn = this.formatArn({ service: "ecs", resource: "service", resourceName: `${prefix}-app-*/${prefix}-app-*` });
+    // 공유 클러스터(D18) 하위 앱 서비스 ARN: service/{cluster}/{service} = ${prefix}-cluster/${prefix}-app-*.
+    //  (이전엔 클러스터명=서비스명 가정으로 ${prefix}-app-*/${prefix}-app-* 였음 — D18로 경로 변경)
+    const appServiceArn = this.formatArn({ service: "ecs", resource: "service", resourceName: `${prefix}-cluster/${prefix}-app-*` });
     const listenerRuleArn = this.formatArn({
       service: "elasticloadbalancing",
       resource: "listener-rule/app",

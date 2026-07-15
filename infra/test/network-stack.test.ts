@@ -105,6 +105,36 @@ describe("network 스택", () => {
     });
   });
 
+  describe("D18 — 공유 ECS 클러스터 1개 (stage당 1개)", () => {
+    it("ECS 클러스터가 정확히 1개이고 이름이 apphub-dev-cluster다", () => {
+      template.resourceCountIs("AWS::ECS::Cluster", 1);
+      template.hasResourceProperties("AWS::ECS::Cluster", {
+        ClusterName: "apphub-dev-cluster",
+      });
+    });
+
+    it("공유 클러스터 이름/ARN을 SSM으로 발행한다(app-runtime이 임포트)", () => {
+      template.hasResourceProperties("AWS::SSM::Parameter", {
+        Name: "/apphub/dev/network/cluster-name",
+      });
+      template.hasResourceProperties("AWS::SSM::Parameter", {
+        Name: "/apphub/dev/network/cluster-arn",
+      });
+    });
+
+    it("Waker/복원/잠자기 3함수 env에 CLUSTER_NAME(apphub-dev-cluster)이 주입된다", () => {
+      // backend가 ecs update_service/describe_services의 cluster 인자로 사용(D18).
+      for (const name of ["apphub-dev-waker", "apphub-dev-wake-restore", "apphub-dev-sleep-transition"]) {
+        template.hasResourceProperties("AWS::Lambda::Function", {
+          FunctionName: name,
+          Environment: {
+            Variables: Match.objectLike({ CLUSTER_NAME: "apphub-dev-cluster" }),
+          },
+        });
+      }
+    });
+  });
+
   describe("D3 — 와일드카드 ACM + Route53", () => {
     it("`*.appsDomain` 인증서를 DNS 검증으로 발급", () => {
       template.hasResourceProperties("AWS::CertificateManager::Certificate", {
@@ -264,7 +294,7 @@ describe("network 스택", () => {
   });
 
   describe("Waker/복원/잠자기 IAM — ARN 범위 (D-M5-03)", () => {
-    it("ECS UpdateService는 앱 서비스(apphub-dev-app-*)로 범위 한정, Resource:'*' 아님", () => {
+    it("ECS UpdateService는 공유 클러스터 하위 앱 서비스(apphub-dev-cluster/apphub-dev-app-*)로 범위 한정, Resource:'*' 아님", () => {
       const policies = template.findResources("AWS::IAM::Policy");
       let found = false;
       for (const pol of Object.values(policies)) {
@@ -276,7 +306,8 @@ describe("network 스택", () => {
             found = true;
             // 앱 서비스 ARN(Fn::Join)으로 한정 — 전역 * 금지.
             expect(st.Resource).not.toBe("*");
-            expect(JSON.stringify(st.Resource)).toContain("service/apphub-dev-app-");
+            // D18: 공유 클러스터 하위 서비스 경로 service/{cluster}/{service} 형태여야 한다.
+            expect(JSON.stringify(st.Resource)).toContain("service/apphub-dev-cluster/apphub-dev-app-");
           }
         }
       }

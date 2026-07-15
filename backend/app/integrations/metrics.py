@@ -8,7 +8,7 @@ CloudWatch GetMetricData 배치 1회로 접속량(requests)·CPU·메모리 시�
      차원 TargetGroup=<TG full-name>, LoadBalancer=<ALB full-name>
      (유휴 알람 idleMetric 과 완전히 동일한 dimensionsMap — app-runtime.ts IdleAlarm)
  - cpu:      ECS/ContainerInsights 아님, `AWS/ECS` `CPUUtilization`(Average)
-     차원 ClusterName=<appPrefix>, ServiceName=<appPrefix>
+     차원 ClusterName=`apphub-{stage}-cluster`(공유, D18), ServiceName=`apphub-{stage}-app-{appId}`
  - memory:   `AWS/ECS` `MemoryUtilization`(Average) — 동일 차원
 
 full-name 조립:
@@ -112,7 +112,10 @@ def get_app_metrics(app: dict[str, Any], range_key: str) -> dict[str, Any]:
     end = datetime.now(timezone.utc)
     start = end - duration
 
-    cluster_service = f"apphub-{stage}-app-{app_id}"  # app-runtime: ClusterName == ServiceName
+    # ECS 지표 차원(DESIGN.md D18): stage 당 공유 클러스터 1개 위에 앱 서비스만 존재.
+    # ClusterName 은 공유 클러스터, ServiceName 은 앱 서비스로 분리(더 이상 동일하지 않음).
+    cluster_dim = f"apphub-{stage}-cluster"
+    service_dim = f"apphub-{stage}-app-{app_id}"
 
     queries: list[dict[str, Any]] = []
 
@@ -148,8 +151,8 @@ def get_app_metrics(app: dict[str, Any], range_key: str) -> dict[str, Any]:
                         "Namespace": "AWS/ECS",
                         "MetricName": metric_name,
                         "Dimensions": [
-                            {"Name": "ClusterName", "Value": cluster_service},
-                            {"Name": "ServiceName", "Value": cluster_service},
+                            {"Name": "ClusterName", "Value": cluster_dim},
+                            {"Name": "ServiceName", "Value": service_dim},
                         ],
                     },
                     "Period": period,

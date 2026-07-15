@@ -13,10 +13,14 @@ from .conftest import seed_app, seed_preset
 STAGE = "test"
 
 
+CLUSTER = f"apphub-{STAGE}-cluster"  # 공유 클러스터(D18) — waker 가 ensure_running 으로 접근.
+
+
 @pytest.fixture
 def wake_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("STAGE", STAGE)
     monkeypatch.setenv("APPS_DOMAIN", "apps.example.com")
+    monkeypatch.setenv("CLUSTER_NAME", CLUSTER)
 
 
 def _svc(app_id: str, desired: int) -> dict:
@@ -95,9 +99,11 @@ def test_wake_by_host_scales_and_sets_waking(ddb_table, p2_clients, wake_env) ->
     assert res["started"] is True
     # SLEEPING → WAKING.
     assert get_app("wkapp001")["runtimeState"] == "WAKING"
-    # desiredCount=minCount 로 스케일업.
+    # desiredCount=minCount 로 스케일업 — 공유 클러스터 위의 앱 서비스(cluster != service).
     call = p2_clients["ecs"].calls_for("update_service")[0]
     assert call["desiredCount"] == 1
+    assert call["cluster"] == CLUSTER
+    assert call["service"] == f"apphub-{STAGE}-app-wkapp001"
 
 
 def test_wake_by_host_no_subdomain(ddb_table, p2_clients, wake_env) -> None:

@@ -99,11 +99,17 @@ export class AppRuntime extends Construct {
     taskSg.connections.allowFrom(albSg, ec2.Port.tcp(8080), "from shared ALB");
     void appTaskSgId; // 공유 태스크 SG는 참조 대상(네트워크 스택)이며, 앱은 전용 SG를 파생 사용.
 
-    // ── ECS 클러스터(공유 VPC 위, 앱별) ────────────────────────────────────
-    const cluster = new ecs.Cluster(this, "Cluster", {
-      clusterName: `${appPrefix}`,
+    // ── 공유 ECS 클러스터 임포트 (D18 — stage당 1개, network 스택 소유) ──────
+    // 앱별 클러스터를 만들지 않는다(D18). network가 만든 `${prefix}-cluster`를 SSM에서 읽어
+    //  fromClusterAttributes로 임포트하고, 이 위에 서비스만 얹는다(앱 삭제 완결성은 서비스가
+    //  이 runtime 스택 소유라 유지됨). vpc는 위에서 fromVpcAttributes로 구성한 것을 재사용.
+    const clusterName = netSsm("cluster-name");
+    const clusterArn = netSsm("cluster-arn");
+    const cluster = ecs.Cluster.fromClusterAttributes(this, "Cluster", {
+      clusterName,
+      clusterArn,
       vpc,
-      containerInsightsV2: ecs.ContainerInsights.DISABLED,
+      securityGroups: [],
     });
 
     // ── 로그 그룹 (retention 30, 스택 삭제 시 함께) ─────────────────────────
@@ -342,6 +348,7 @@ export class AppRuntime extends Construct {
         arn: "arn:aws:scheduler:::aws-sdk:ecs:updateService",
         roleArn: schedulerRole.roleArn,
         input: JSON.stringify({
+          // 공유 클러스터(D18) ARN — 임포트 클러스터의 clusterArn(network SSM cluster-arn 값).
           Cluster: cluster.clusterArn,
           Service: this.service.serviceName,
           DesiredCount: desired,

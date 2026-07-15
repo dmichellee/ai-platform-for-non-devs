@@ -35,9 +35,10 @@ def _ssm(scheme_key: str = "internal-https-listener-arn") -> SsmStub:
 
 
 def _ecs_event(app_id: str, last_status: str = "RUNNING", health: str = "HEALTHY") -> dict:
+    # 공유 클러스터(D18): clusterArn 은 모든 앱 공통이라 appId 를 담지 않는다 — group 만 파싱 소스.
     return {
         "detail": {
-            "clusterArn": f"arn:aws:ecs:...:cluster/apphub-{STAGE}-app-{app_id}",
+            "clusterArn": f"arn:aws:ecs:...:cluster/apphub-{STAGE}-cluster",
             "group": f"service:apphub-{STAGE}-app-{app_id}",
             "lastStatus": last_status,
             "healthStatus": health,
@@ -56,14 +57,31 @@ def _forward_rule(target: str, host: str) -> dict:
 # ── 파싱/판정 ────────────────────────────────────────────────────────────────
 
 
-def test_app_id_from_cluster_arn() -> None:
-    ev = {"detail": {"clusterArn": f"arn:aws:ecs:...:cluster/apphub-{STAGE}-app-abc12345"}}
-    assert app_id_from_ecs_event(ev, STAGE) == "abc12345"
-
-
 def test_app_id_from_group() -> None:
+    """detail.group 이 1차(그리고 유일한) 파싱 소스 — `service:` 접두어 제거 후 서비스명 규약."""
     ev = {"detail": {"group": f"service:apphub-{STAGE}-app-def67890"}}
     assert app_id_from_ecs_event(ev, STAGE) == "def67890"
+
+
+def test_app_id_shared_cluster_arn_not_parsed() -> None:
+    """공유 클러스터(D18): clusterArn 은 `apphub-{stage}-cluster` 라 appId 를 담지 않는다.
+
+    group 이 없으면(clusterArn 만 있으면) None — clusterArn 을 잘못 파싱해 엉뚱한 앱을
+    깨우지 않도록 한다.
+    """
+    ev = {"detail": {"clusterArn": f"arn:aws:ecs:...:cluster/apphub-{STAGE}-cluster"}}
+    assert app_id_from_ecs_event(ev, STAGE) is None
+
+
+def test_app_id_prefers_group_over_cluster_arn() -> None:
+    """실이벤트처럼 clusterArn(공유)+group(앱 서비스) 공존 시 group 에서 appId 를 얻는다."""
+    ev = {
+        "detail": {
+            "clusterArn": f"arn:aws:ecs:...:cluster/apphub-{STAGE}-cluster",
+            "group": f"service:apphub-{STAGE}-app-ghi13579",
+        }
+    }
+    assert app_id_from_ecs_event(ev, STAGE) == "ghi13579"
 
 
 def test_is_running_and_healthy_true() -> None:

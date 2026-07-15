@@ -24,8 +24,10 @@ ADMIN = "user-admin"
 APP_ID = "app00001"
 STAGE = "test"
 
-# app-runtime: ClusterName == ServiceName == apphub-{stage}-app-{appId}.
-CLUSTER_SERVICE = f"apphub-{STAGE}-app-{APP_ID}"
+# ECS 지표 차원(DESIGN.md D18): 공유 클러스터 == apphub-{stage}-cluster,
+# 서비스 == apphub-{stage}-app-{appId} (더 이상 동일하지 않음).
+CLUSTER_DIM = f"apphub-{STAGE}-cluster"
+SERVICE_DIM = f"apphub-{STAGE}-app-{APP_ID}"
 # TG 이름 규약(32자 절단) → describe-target-groups 로 ARN 조회 → full-name 유도.
 TG_ARN = f"arn:aws:elasticloadbalancing:ap-northeast-2:111122223333:targetgroup/apphub-{STAGE}-app-{APP_ID}/abc123def456"  # noqa: E501
 TG_FULL = f"targetgroup/apphub-{STAGE}-app-{APP_ID}/abc123def456"
@@ -175,6 +177,7 @@ def test_metrics_internal_scheme_selects_internal_alb(ddb_table, metrics_clients
 
 
 def test_metrics_ecs_dimensions_cluster_service(ddb_table, metrics_clients):
+    """공유 클러스터(D18): ClusterName=공유 클러스터, ServiceName=앱 서비스 로 분리된 차원."""
     seed_app(ddb_table, APP_ID, OWNER, status="ACTIVE")
     parse_result(_get(OWNER, ["user"]))
     for metric_id, name in (("cpu", "CPUUtilization"), ("memory", "MemoryUtilization")):
@@ -184,7 +187,7 @@ def test_metrics_ecs_dimensions_cluster_service(ddb_table, metrics_clients):
         assert metric["MetricName"] == name
         assert q["MetricStat"]["Stat"] == "Average"
         dims = {d["Name"]: d["Value"] for d in metric["Dimensions"]}
-        assert dims == {"ClusterName": CLUSTER_SERVICE, "ServiceName": CLUSTER_SERVICE}
+        assert dims == {"ClusterName": CLUSTER_DIM, "ServiceName": SERVICE_DIM}
 
 
 def test_metrics_describe_target_groups_by_name(ddb_table, metrics_clients):

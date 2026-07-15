@@ -1,7 +1,8 @@
 """복원 Lambda — ECS Task State Change EventBridge 트리거 (DESIGN.md 3.5, D-M5-03).
 
-앱 태스크가 RUNNING+healthy 가 되면: appId 파싱 → 앱 TG ARN(이름 조회) → 리스너 규칙 forward
-대상을 앱 TG 로 복원(멱등) → runtimeState=RUNNING. 공유 규칙 1개(앱별 아님, stack-outputs §I).
+앱 태스크가 RUNNING+healthy 가 되면: appId 파싱(detail.group) → 앱 TG ARN(이름 조회) → 리스너
+규칙 forward 대상을 앱 TG 로 복원(멱등) → runtimeState=RUNNING. 공유 규칙 1개(앱별 아님, §I).
+공유 클러스터(D18)에서 detail.clusterArn 은 appId 를 담지 않아 detail.group 만 파싱 소스다.
 """
 
 from __future__ import annotations
@@ -16,15 +17,16 @@ from .target_group import find_app_target_group_arn
 
 
 def app_id_from_ecs_event(event: dict[str, Any], stage_value: str) -> str | None:
-    """ECS 이벤트의 clusterArn/group 에서 appId 파싱(`apphub-{stage}-app-{appId}`)."""
+    """ECS 이벤트의 detail.group 에서 appId 파싱(`service:apphub-{stage}-app-{appId}`).
+
+    공유 클러스터(DESIGN.md D18)에서 detail.clusterArn 은 이제 `apphub-{stage}-cluster`(모든 앱
+    공통)이라 appId 를 담지 않는다. detail.group 은 클러스터와 무관하게 서비스명을 유지하므로
+    유일한 파싱 소스다(`service:` 접두어 제거 후 서비스명 규약에서 appId 추출).
+    """
     detail = event.get("detail")
     if not detail:
         return None
     marker = f"apphub-{stage_value}-app-"
-    cluster_arn = detail.get("clusterArn") or ""
-    from_cluster = cluster_arn.split("/")[-1] if cluster_arn else ""
-    if from_cluster.startswith(marker):
-        return from_cluster[len(marker) :]
     group = detail.get("group") or ""
     svc = group[len("service:") :] if group.startswith("service:") else group
     if svc.startswith(marker):

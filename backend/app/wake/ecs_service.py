@@ -2,7 +2,10 @@
 
 CloudFormation 드리프트 방지: app-runtime 스택은 desiredCount 를 관리하지 않고,
 Waker(깨우기)/잠자기 Lambda 가 UpdateService 로만 조정한다. 이미 목표면 UpdateService 미호출(멱등).
-클러스터명·서비스명은 동일 규약: `apphub-{stage}-app-{appId}`.
+
+클러스터/서비스 규약(DESIGN.md D18): stage 당 공유 클러스터 1개(`apphub-{stage}-cluster`) 위에
+앱 서비스(`apphub-{stage}-app-{appId}`)만 만든다. 클러스터명은 CLUSTER_NAME env(network 스택
+주입)에서 읽고, 서비스명은 이름 규약으로 파생한다 — 둘은 더 이상 동일하지 않다.
 """
 
 from __future__ import annotations
@@ -10,6 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..integrations.clients import client
+from . import cluster_name
 
 
 def app_service_name(stage: str, app_id: str) -> str:
@@ -27,23 +31,25 @@ def describe_service(cluster: str, service: str) -> dict[str, Any]:
 
 def ensure_running(stage: str, app_id: str, minimum: int) -> dict[str, Any]:
     """desiredCount 를 최소 minimum 으로 끌어올린다(이미 크거나 같으면 no-op)."""
-    name = app_service_name(stage, app_id)
-    info = describe_service(name, name)
+    cluster = cluster_name()
+    service = app_service_name(stage, app_id)
+    info = describe_service(cluster, service)
     if not info["found"]:
         return {"changed": False, "serviceNotFound": True}
     if info["desiredCount"] >= minimum:
         return {"changed": False, "previous": info["desiredCount"]}
-    client("ecs").update_service(cluster=name, service=name, desiredCount=minimum)
+    client("ecs").update_service(cluster=cluster, service=service, desiredCount=minimum)
     return {"changed": True, "previous": info["desiredCount"]}
 
 
 def ensure_stopped(stage: str, app_id: str) -> dict[str, Any]:
     """desiredCount 를 0 으로 내린다(이미 0이면 no-op)."""
-    name = app_service_name(stage, app_id)
-    info = describe_service(name, name)
+    cluster = cluster_name()
+    service = app_service_name(stage, app_id)
+    info = describe_service(cluster, service)
     if not info["found"]:
         return {"changed": False, "serviceNotFound": True}
     if info["desiredCount"] == 0:
         return {"changed": False, "previous": info["desiredCount"]}
-    client("ecs").update_service(cluster=name, service=name, desiredCount=0)
+    client("ecs").update_service(cluster=cluster, service=service, desiredCount=0)
     return {"changed": True, "previous": info["desiredCount"]}

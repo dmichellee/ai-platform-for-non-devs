@@ -79,6 +79,17 @@ describe("app-runtime — internal 앱(schedule + secrets)", () => {
     });
   });
 
+  describe("D18 — 공유 클러스터 임포트(앱별 클러스터 생성 금지)", () => {
+    it("app-runtime 스택은 ECS 클러스터를 만들지 않는다(network 공유 클러스터 임포트)", () => {
+      template.resourceCountIs("AWS::ECS::Cluster", 0);
+    });
+
+    it("ECS 서비스는 여전히 이 스택 소유(앱 삭제 완결성 유지)", () => {
+      // 서비스는 runtime 스택 소유 — 클러스터만 network에서 임포트.
+      template.resourceCountIs("AWS::ECS::Service", 1);
+    });
+  });
+
   describe("scheme — internal", () => {
     it("Route53 A 레코드가 만들어진다(subdomain 기준)", () => {
       template.hasResourceProperties("AWS::Route53::RecordSet", {
