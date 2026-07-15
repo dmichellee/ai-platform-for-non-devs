@@ -24,7 +24,7 @@ import {
   Server,
   Trash2,
 } from "lucide-react";
-import { BackLink, ErrorNotice, InfoNotice, Modal, Skeleton, Toggle, TopBar } from "../../components/common.js";
+import { BackLink, ErrorNotice, InfoNotice, Skeleton, Toggle, TopBar } from "../../components/common.js";
 import {
   DEFAULT_SCHEDULE,
   ScheduleEditor,
@@ -914,7 +914,7 @@ function StepKiro({
   created: App | null;
   onDone: () => void;
 }): JSX.Element {
-  const [showGuide, setShowGuide] = useState(false);
+  const nav = useNavigate();
   return (
     <>
       <h3>
@@ -934,7 +934,7 @@ function StepKiro({
       </InfoNotice>
 
       <div className="row mt4">
-        <button type="button" className="btn btn-ghost" onClick={() => setShowGuide(true)}>
+        <button type="button" className="btn btn-ghost" onClick={() => nav("/kiro-setup")}>
           <Download size={16} className="icon" />
           Kiro 설정 안내 보기
         </button>
@@ -943,28 +943,6 @@ function StepKiro({
           <ArrowRight size={16} className="icon" />
         </button>
       </div>
-
-      {showGuide && (
-        <Modal title="Kiro 설정 안내" onClose={() => setShowGuide(false)}>
-          <p>
-            아래 내용을 Kiro에게 요청하면 배포 표준에 맞는 설정 파일을 자동으로 만들어줘요. 이미 갖춰져 있다면 그대로 push
-            하면 됩니다.
-          </p>
-          <div className="log-viewer" style={{ maxHeight: 200 }}>
-            <div className="log-line">
-              이 앱을 AppHub 배포 표준에 맞게 준비해줘:{"\n"}
-              - Dockerfile 추가 (8080 포트 EXPOSE){"\n"}
-              - /health 경로에 200 응답 추가{"\n"}
-              - non-root 사용자로 실행
-            </div>
-          </div>
-          <div className="modal-actions">
-            <button type="button" className="btn btn-primary" onClick={() => setShowGuide(false)}>
-              확인
-            </button>
-          </div>
-        </Modal>
-      )}
     </>
   );
 }
