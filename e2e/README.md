@@ -45,10 +45,9 @@ e2e/
 
 1. **플랫폼 배포**: `./scripts/deploy.sh --stage dev` 완료(network + platform 스택, SPA).
 2. **관리자 초기 설정**(관리자 화면 또는 admin API):
-   - VPC 등록(서로 다른 AZ 서브넷 2개)
    - provider 활성화: `codecommit`(기본) — 시나리오는 CodeCommit 리포에 픽스처를 push한다.
    - 컴퓨팅 프리셋 ≥ 1, 권한 템플릿 ≥ 1
-   - 허용 베이스 이미지 설정(예: `public.ecr.aws/docker/library/node:22-slim`) — 없으면 검증기가 경고만.
+   - (앱 배치 네트워크는 플랫폼 VPC 자동 — 별도 등록 없음)
 3. **테스트 사용자**(확정 비밀번호, 임시 비번 상태 아님):
    - user 그룹 1명, admin 그룹 1명
    - 앱 클라이언트에 `ADMIN_USER_PASSWORD_AUTH` 흐름 허용(로그인 스크립트가 사용).
@@ -57,7 +56,7 @@ e2e/
    export E2E_USERNAME=... E2E_PASSWORD=...
    export E2E_ADMIN_USERNAME=... E2E_ADMIN_PASSWORD=...   # 시나리오 5 관리자
    # 선택(미지정 시 목록 첫 항목 자동 선택):
-   export E2E_PRESET_ID=... E2E_PERM_ID=... E2E_VPC_ID=...
+   export E2E_PRESET_ID=... E2E_PERM_ID=...
    export E2E_WEB_URL=https://<cloudfront-domain>          # 시나리오 5
    ```
 5. **CodeCommit push 경로**: `git-remote-codecommit`(권장) 설치 또는 CodeCommit HTTPS 자격 도우미.

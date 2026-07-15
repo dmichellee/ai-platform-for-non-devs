@@ -15,7 +15,7 @@
 | `sample-build-error` | 설치 불가 의존성 | `ok: true` | `BUILD_FAILED` | `docker build` 단계 |
 | `sample-no-health` | `/health` 미구현(404) | `ok: true` | `HEALTHCHECK_FAILED` | 스모크 단계 |
 
-> "검증기 정적결과"는 `backend/dist/dockerfile-validator.mjs`를 각 픽스처 Dockerfile에 돌린 결과다.
+> "검증기 정적결과"는 `backend/dist/validator/dockerfile_validator.py`를 각 픽스처 Dockerfile에 돌린 결과다.
 > `sample-build-error`/`sample-no-health`는 **정적 검증을 통과**하며, 실패는 buildspec의 실동작
 > 단계(`docker build` / 스모크 `GET /health`)에서 결정된다 — KIRO-STANDARDS 3장 "정적은 검증기,
 > 실동작은 이미지 실행". 이 분리가 곧 신뢰 경계다.
@@ -27,14 +27,13 @@
 
 ## 검증기로 다시 확인하는 법 (로컬, AWS 불필요)
 ```bash
-ALLOWED='["public.ecr.aws/docker/library/node:22-slim","public.ecr.aws/docker/library/python:3.12-slim"]'
-printf '%s' "$ALLOWED" | node ../../backend/dist/dockerfile-validator.mjs sample-ok/Dockerfile --allowed-base-images-json -
-# -> {"ok":true,...,"exposedPorts":[8080]}
-printf '%s' "$ALLOWED" | node ../../backend/dist/dockerfile-validator.mjs sample-wrong-port/Dockerfile --allowed-base-images-json -
-# -> {"ok":false,"failureCategory":"DOCKERFILE_INVALID","exposedPorts":[3000],...}  (exit 1)
+python3 ../../backend/dist/validator/dockerfile_validator.py sample-ok/Dockerfile
+# -> {"ok": true, ..., "exposedPorts": [8080]}
+python3 ../../backend/dist/validator/dockerfile_validator.py sample-wrong-port/Dockerfile
+# -> {"ok": false, "failureCategory": "DOCKERFILE_INVALID", "exposedPorts": [3000], ...}  (exit 1)
 ```
-> 허용 베이스 이미지 목록은 관리자 설정(AdminSettings.allowedBaseImages)에서 온다.
-> 위 예시 목록은 KIRO-STANDARDS 1장 C6의 예시 이미지다.
+> 베이스 이미지 허용목록 검사는 제거됨(사용자 결정) — 판정 기준은 EXPOSE 8080 하나만 +
+> 금지 항목 부재이고, 실동작(빌드/헬스체크)은 파이프라인 단계가 담당한다.
 
 ## 앱 코드 문법 확인
 ```bash

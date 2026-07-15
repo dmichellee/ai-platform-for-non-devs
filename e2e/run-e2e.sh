@@ -11,8 +11,9 @@
 #
 # 선행조건(라이브 실행 시 — 이 스크립트는 만들지 않는다):
 #   1. deploy.sh --stage dev 로 플랫폼(network+platform)이 배포돼 있을 것.
-#   2. 관리자 화면(또는 API)에서: VPC 등록 / provider 활성화(codecommit) /
-#      컴퓨팅 프리셋 1개 이상 / 권한 템플릿 1개 이상 / 허용 베이스 이미지 설정.
+#   2. 관리자 화면(또는 API)에서: provider 활성화(codecommit) /
+#      컴퓨팅 프리셋 1개 이상 / 권한 템플릿 1개 이상.
+#      (앱 배치 네트워크는 플랫폼 VPC 자동 — VPC 등록 없음)
 #   3. 테스트 사용자 2명(user/admin)이 확정 비밀번호로 존재. 앱 클라이언트에
 #      ADMIN_USER_PASSWORD_AUTH(또는 USER_PASSWORD_AUTH) 흐름 허용.
 #      자격 증명은 환경변수로 주입: E2E_USERNAME/E2E_PASSWORD,
@@ -46,7 +47,7 @@ usage() {
 환경변수:
   E2E_USERNAME/E2E_PASSWORD              user 그룹 테스트 자격
   E2E_ADMIN_USERNAME/E2E_ADMIN_PASSWORD  admin 그룹 테스트 자격
-  E2E_PRESET_ID / E2E_PERM_ID / E2E_VPC_ID  앱 생성에 쓸 프리셋/권한/VPC (미지정 시 목록 첫 항목)
+  E2E_PRESET_ID / E2E_PERM_ID            앱 생성에 쓸 프리셋/권한 (미지정 시 목록 첫 항목)
   E2E_WEB_URL                            SPA URL(시나리오 5, Playwright)
 USAGE
 }
@@ -80,7 +81,8 @@ aws sts get-caller-identity >/dev/null 2>&1 || { e2e::fail "AWS 자격 증명이
 e2e::load_outputs
 e2e::cognito_login "${E2E_USERNAME:-}" "${E2E_PASSWORD:-}"
 
-# 앱 생성에 필요한 프리셋/권한/VPC 결정(미지정 시 목록 첫 항목).
+# 앱 생성에 필요한 프리셋/권한 결정(미지정 시 목록 첫 항목).
+# 앱 배치 네트워크는 플랫폼 VPC 자동 — vpcId 는 계약에서 제거됨(2차 로드맵).
 resolve_ids() {
   if [[ -z "${E2E_PRESET_ID:-}" ]]; then
     local presets; presets="$(e2e::api GET /admin/presets 2>/dev/null || true)"
@@ -90,13 +92,9 @@ resolve_ids() {
     local perms; perms="$(e2e::api GET /admin/permission-templates 2>/dev/null || true)"
     E2E_PERM_ID="$(e2e::json "${perms}" 'data.items.0.permId' 2>/dev/null || true)"
   fi
-  if [[ -z "${E2E_VPC_ID:-}" ]]; then
-    local settings; settings="$(e2e::api GET /admin/settings 2>/dev/null || true)"
-    E2E_VPC_ID="$(e2e::json "${settings}" 'data.registeredVpcs.0.vpcId' 2>/dev/null || true)"
-  fi
-  e2e::log "preset=${E2E_PRESET_ID:-<none>} perm=${E2E_PERM_ID:-<none>} vpc=${E2E_VPC_ID:-<none>}"
-  if [[ -z "${E2E_PRESET_ID:-}" || -z "${E2E_PERM_ID:-}" || -z "${E2E_VPC_ID:-}" ]]; then
-    e2e::fail "프리셋/권한/VPC가 준비되지 않았습니다. 관리자 설정을 먼저 완료하세요(선행조건 2)."
+  e2e::log "preset=${E2E_PRESET_ID:-<none>} perm=${E2E_PERM_ID:-<none>}"
+  if [[ -z "${E2E_PRESET_ID:-}" || -z "${E2E_PERM_ID:-}" ]]; then
+    e2e::fail "프리셋/권한 템플릿이 준비되지 않았습니다. 관리자 설정을 먼저 완료하세요(선행조건 2)."
     exit 1
   fi
 }
@@ -157,15 +155,15 @@ create_app() {
   local name="$1" sub="$2" repoUrl="$3" sleepMode="$4" schedule="${5:-}"
   local body
   body="$(node -e '
-    const [name, sub, repoUrl, presetId, permId, vpcId, sleepMode, schedule] = process.argv.slice(1);
+    const [name, sub, repoUrl, presetId, permId, sleepMode, schedule] = process.argv.slice(1);
     const b = {
       name, subdomain: sub, provider: "codecommit", repoUrl, branch: "main",
-      presetId, permissionTemplateId: permId, scheme: "internal", vpcId,
+      presetId, permissionTemplateId: permId, scheme: "internal",
       autoDeployEnabled: true, sleepMode, envVars: {}, cognitoProtect: false,
     };
     if (sleepMode === "schedule" && schedule) b.schedule = JSON.parse(schedule);
     process.stdout.write(JSON.stringify(b));
-  ' "${name}" "${sub}" "${repoUrl}" "${E2E_PRESET_ID}" "${E2E_PERM_ID}" "${E2E_VPC_ID}" "${sleepMode}" "${schedule}")"
+  ' "${name}" "${sub}" "${repoUrl}" "${E2E_PRESET_ID}" "${E2E_PERM_ID}" "${sleepMode}" "${schedule}")"
   local resp; resp="$(e2e::api POST /apps "${body}" 201)"
   e2e::json "${resp}" 'data.appId'
 }

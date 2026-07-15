@@ -27,7 +27,7 @@
 
 | 스택 | 내용 | 배포 주체 |
 |---|---|---|
-| `apphub-{stage}-network` | 공유 ALB, 와일드카드 ACM, Route53, 보안 그룹 | 관리자 (`deploy.sh`) |
+| `apphub-{stage}-network` | 공유 ALB, 공유 ECS 클러스터, 와일드카드 ACM, Route53, 보안 그룹, Waker | 관리자 (`deploy.sh`) |
 | `apphub-{stage}-platform` | Cognito, DynamoDB, API GW+Lambda, Step Functions, SPA 호스팅, provisioner CodeBuild | 관리자 (`deploy.sh`) |
 | `apphub-{stage}-app-{appId}-pipeline` | 앱별 CodePipeline, CodeBuild 2개, ECR | 플랫폼 (provisioner) |
 | `apphub-{stage}-app-{appId}-runtime` | ECS 서비스/태스크, Target Group, 리스너 규칙, Route53, 앱 IAM 역할, 가동 스케줄 | 앱 파이프라인 |
@@ -78,12 +78,15 @@ uv run ruff check .     # 린트
 `scripts/deploy.sh` 는 멱등하다 — 같은 명령을 몇 번 실행해도 결과가 같다.
 
 ```bash
-./scripts/deploy.sh --stage dev|prod \
-    [--region <region>] \
+./scripts/deploy.sh --stage dev|prod --domain <apps.example.com> \
+    [--hosted-zone-id <ZID>] [--region <region>] \
     [--admin-email <email>] [--admin-name <name>] \
     [--internal-cidrs "10.0.0.0/16,..."] \
     [--skip-spa]
 ```
+
+`--domain`은 사용자 앱 apex 도메인(예: dev는 `apps-dev.example.com`)이며 Route53 public
+hosted zone이 있어야 한다. `--hosted-zone-id` 미지정 시 도메인(및 상위 라벨)로 자동 조회한다.
 
 동작 순서: 사전 점검 → `cdk bootstrap` → `network`·`platform` 스택 배포 → provisioner 자산·Kiro 설정 업로드
 → 최초 관리자 계정 생성 → SPA 빌드·S3 sync·CloudFront invalidation.
@@ -98,7 +101,7 @@ uv run ruff check .     # 린트
 
 설계 문서가 단일 진실 원본이며 `docs/` 에 있다(로컬 전용, 버전관리 제외).
 
-- `docs/DESIGN.md` — 플랫폼 기능·아키텍처·설계 결정(D1–D17)
+- `docs/DESIGN.md` — 플랫폼 기능·아키텍처·설계 결정(D1–D18)
 - `docs/PLATFORM-ENGINEERING.md` — 플랫폼 개발·설치 규칙
 - `docs/TEST-STRATEGY.md` — 테스트 전략
 - `docs/KIRO-STANDARDS.md` — Kiro 빌드 표준
