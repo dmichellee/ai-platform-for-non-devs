@@ -213,9 +213,9 @@ fi
 step "2b/5 Lambda 자산 동기화 (backend build.sh)"
 bash "${ROOT_DIR}/backend/build.sh" \
   || { echo "오류: backend 자산 동기화(build.sh) 실패. 중단합니다." >&2; exit 1; }
-# API + task/wake 5종 = 자산 6개 모두 handler.py(shim) + app/ 를 갖춰야 한다.
+# API + task/wake/deploy-notify 6종 = 자산 7개 모두 handler.py(shim) + app/ 를 갖춰야 한다.
 MISSING_ASSET=""
-for name in api provision-task delete-task waker wake-restore sleep-transition; do
+for name in api provision-task delete-task waker wake-restore sleep-transition deploy-notify; do
   if [[ ! -f "${INFRA_DIR}/lambda/${name}/handler.py" || ! -d "${INFRA_DIR}/lambda/${name}/app" ]]; then
     MISSING_ASSET="${MISSING_ASSET} ${name}"
   fi
@@ -225,7 +225,7 @@ if [[ -n "${MISSING_ASSET}" ]]; then
   echo "      'bash backend/build.sh' 가 정상 완료됐는지 확인하세요." >&2
   exit 1
 fi
-log "Lambda 자산 6종 동기화 OK (api + provision-task/delete-task + waker/wake-restore/sleep-transition)"
+log "Lambda 자산 7종 동기화 OK (api + provision-task/delete-task + waker/wake-restore/sleep-transition + deploy-notify)"
 
 # ── 3. cdk deploy (network → platform, CFN이 멱등 보장) ──────────────────────
 # 실패(스택 rollback 포함)는 반드시 스크립트 전체 non-zero exit로 전파한다.

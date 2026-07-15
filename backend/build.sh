@@ -31,6 +31,7 @@ PY_ASSETS=(
   "waker|app.wake.waker"
   "wake-restore|app.wake.restore"
   "sleep-transition|app.wake.sleep"
+  "deploy-notify|app.orchestration.deploy_notify"
 )
 
 # rsync 제외 목록(테스트/캐시/타입힌트 아티팩트는 배포 자산에서 제외).
@@ -51,7 +52,7 @@ cat > "${API_ASSET_DIR}/handler.py" <<'PY'
 from app.handler import handler  # noqa: F401
 PY
 
-echo "[backend/build] 1b) Step Functions task + Waker 자산 5종 동기화: app/ -> infra/lambda/{name}/"
+echo "[backend/build] 1b) Step Functions task + Waker + deploy-notify 자산 6종 동기화: app/ -> infra/lambda/{name}/"
 for entry in "${PY_ASSETS[@]}"; do
   name="${entry%%|*}"
   module="${entry##*|}"
@@ -77,5 +78,5 @@ cp "${APP_SRC}/validator/cli.py" "${DIST_VALIDATOR_DIR}/dockerfile_validator.py"
 
 echo "[backend/build] 완료."
 echo "  - API 자산:   ${API_ASSET_DIR} (handler.py + app/)"
-echo "  - task/wake 자산: ${LAMBDA_ROOT}/{provision-task,delete-task,waker,wake-restore,sleep-transition} (handler.py + app/)"
+echo "  - task/wake 자산: ${LAMBDA_ROOT}/{provision-task,delete-task,waker,wake-restore,sleep-transition,deploy-notify} (handler.py + app/)"
 echo "  - 검증기 CLI: ${DIST_VALIDATOR_DIR}/dockerfile_validator.py (python dockerfile_validator.py <path>)"
