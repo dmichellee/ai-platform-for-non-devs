@@ -42,12 +42,30 @@ inclusion: always
 
 ## 7. git 커밋 훅 설치 (pre-commit)
 이 번들에는 커밋 직전에 배포 표준을 자동 점검하는 **git pre-commit 훅**이 들어 있다
-(`hooks/pre-commit`). 코드를 만들거나 수정할 때 다음을 확인하고, 필요하면 대신 설치한다:
-- 이 프로젝트에 `.git/hooks/pre-commit`이 **없거나** 번들의 `hooks/pre-commit`과 **다르면**,
-  프로젝트 루트에서 `sh install-hooks.sh`를 실행한다(또는 `hooks/pre-commit`을
-  `.git/hooks/pre-commit`으로 복사하고 `chmod +x` 한다).
+(`hooks/pre-commit`). 코드를 만들거나 수정할 때 다음을 확인하고, 필요하면 대신 설치한다.
+
+**사용자가 "커밋 검사 설치해줘" / "배포 표준 훅 설치해줘" / "pre-commit 설치해줘"라고 요청하면**,
+아래 설치를 대신 수행한다(이 표현들은 모두 이 훅 설치 요청이다).
+
+- 설치가 필요한 조건: 이 프로젝트에 `.git/hooks/pre-commit`이 **없거나** 번들의
+  `hooks/pre-commit`과 **다르면** 설치한다.
+- 설치 방법 — **사용자 OS에 맞는 설치기**를 프로젝트 루트에서 실행한다(번들에 둘 다 들어 있다):
+  - macOS / Linux: `sh install-hooks.sh`
+  - Windows: `powershell -ExecutionPolicy Bypass -File install-hooks.ps1`
+  - (스크립트를 못 쓰는 상황이면 대안: `hooks/pre-commit`을 `.git/hooks/pre-commit`으로 복사하고
+    macOS/Linux에서는 `chmod +x`를 준다.)
+- 두 설치기는 **멱등**하다: 이미 같은 훅이 있으면 아무것도 하지 않고, 다른 훅이 있으면
+  백업(`.bak`) 후 교체한다(비대화형에서는 `--force`/`-Force` 필요). 훅 자체는 OS 공통이며
+  Windows에서는 Git for Windows에 번들된 `sh`가 실행한다.
 - 이 훅은 커밋할 때 Dockerfile 존재·`EXPOSE 8080`(하나만)·금지 항목·고신뢰 시크릿 패턴을
   점검한다. 걸리면 한국어로 사유를 안내하며 커밋을 멈춘다.
+
+### 코드를 저장·반영할 때 (git 기본 흐름)
+사용자가 코드를 저장/반영/업로드하려 하거나 그 방법을 물으면, 프로젝트 루트에서 아래 순서로 안내·실행한다:
+1. `git add --all` — 바뀐 파일을 모두 담는다.
+2. `git commit -m "<변경 요약>"` — 저장한다. 이때 위 pre-commit 훅이 배포 표준을 자동 점검한다
+   (훅에 걸리면 사유를 읽고 3~6장 규칙에 맞게 고친 뒤 다시 커밋한다).
+3. `git push` — 원격 저장소로 올린다(플랫폼이 이 저장소를 배포에 사용한다).
 
 ## 8. "배포 표준에 맞춰줘" 요청 대응
 사용자가 "배포 표준에 맞춰줘" 또는 "이 앱을 배포 표준에 맞게 준비해줘"라고 요청하면

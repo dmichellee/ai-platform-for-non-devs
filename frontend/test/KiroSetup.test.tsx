@@ -122,6 +122,21 @@ describe("Kiro 설정 다운로드 페이지", () => {
     expect(screen.getByText(/커밋이 멈췄을 때/)).toBeInTheDocument();
   });
 
+  it("코드를 저장·반영하는 git 3단계(add --all → commit → push)가 순서대로 안내된다", async () => {
+    renderWithProviders(<KiroSetup />);
+    await screen.findByText("Kiro 설정 다운로드");
+    // 3개 명령이 순서대로 노출된다.
+    expect(screen.getByText("git add --all")).toBeInTheDocument();
+    expect(screen.getByText(/git commit -m/)).toBeInTheDocument();
+    expect(screen.getByText("git push")).toBeInTheDocument();
+    // 실제 <ol>로 순서가 표현된다(1→2→3).
+    const list = screen.getByLabelText("코드를 저장하고 원격 저장소에 올리는 순서");
+    expect(list.tagName).toBe("OL");
+    expect(list.querySelectorAll("li").length).toBe(3);
+    // 커밋 단계가 이 페이지 주제(pre-commit 검사)와 연결된다.
+    expect(screen.getByText(/배포 표준 검사가 자동으로 돌아요/)).toBeInTheDocument();
+  });
+
   it("override가 없으면 Mac/Windows 버튼이 각각 기본 경로로 링크된다", async () => {
     // MOCK_CONFIG에는 kiroConfigUrlMac/Windows가 없다 → 각 기본 경로 폴백.
     renderWithProviders(<KiroSetup />);

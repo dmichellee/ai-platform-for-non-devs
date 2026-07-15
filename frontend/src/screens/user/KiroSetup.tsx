@@ -29,6 +29,7 @@ import {
   Download,
   FileCheck2,
   FolderTree,
+  ListOrdered,
   MonitorCheck,
   ShieldCheck,
   Sparkles,
@@ -279,6 +280,27 @@ export function KiroSetup(): JSX.Element {
           알아두면 좋은 팁
         </h4>
         <div className="stack">
+          <InfoNotice>
+            <b>
+              <ListOrdered size={15} className="icon" aria-hidden="true" /> 코드를 저장·반영하는 기본
+              순서
+            </b>{" "}
+            — 아래 세 줄을 터미널에 차례로 입력하면 돼요(Mac·Windows 공통).
+            <ol className="git-flow" aria-label="코드를 저장하고 원격 저장소에 올리는 순서">
+              <li>
+                <code className="cmd">git add --all</code>
+                <span className="git-flow-note">바뀐 내용 모으기</span>
+              </li>
+              <li>
+                <code className="cmd">git commit -m "무엇을 바꿨는지 짧게"</code>
+                <span className="git-flow-note">저장하기 — 이때 배포 표준 검사가 자동으로 돌아요</span>
+              </li>
+              <li>
+                <code className="cmd">git push</code>
+                <span className="git-flow-note">원격 저장소에 올리기(반영)</span>
+              </li>
+            </ol>
+          </InfoNotice>
           <InfoNotice>
             <b>커밋이 멈췄을 때</b> — 검사에 걸리면 저장(커밋)이 멈추고 이유가 화면에 나와요. 그 안내를
             그대로 복사해 Kiro에게 붙여넣으면, Kiro가 무엇이 문제인지 이해하고 고쳐줍니다.

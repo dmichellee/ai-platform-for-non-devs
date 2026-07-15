@@ -1666,6 +1666,35 @@ tbody tr:hover {
   opacity: 0.7;
 }
 
+/* git 저장·반영 3단계 안내(팁 InfoNotice 안) */
+.git-flow {
+  list-style: decimal;
+  margin: var(--s2) 0 0;
+  padding-left: 20px;
+  display: grid;
+  gap: var(--s2);
+}
+.git-flow > li {
+  font-size: 13px;
+  color: var(--on-surface);
+  line-height: 1.5;
+}
+.git-flow .cmd {
+  display: inline-block;
+  margin-right: 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--surface-hover);
+  border-radius: 6px;
+  padding: 2px 8px;
+  color: var(--on-surface);
+  word-break: break-all;
+}
+.git-flow .git-flow-note {
+  color: var(--on-surface-muted);
+  font-size: 12px;
+}
+
 /* 설치 단계 카드 (반응형: 넓으면 4열, 좁으면 자동 줄바꿈) */
 .step-cards {
   display: grid;
