@@ -63,6 +63,8 @@ import type {
 } from "../../lib/types.js";
 import {
   DEPLOY_STATUS_LABEL,
+  FIRST_DEPLOY_ACTION_DISABLED_HINT,
+  FIRST_DEPLOY_PENDING_HINT,
   METRIC_RANGE_LABEL,
   METRIC_RANGE_ORDER,
   SCHEME_LABEL,
@@ -97,6 +99,20 @@ export function AppDetail({ appId }: { appId: string }): JSX.Element {
 
   const { data: app, loading, error, reload } = useQuery<App>((a) => a.getApp(appId), [appId]);
 
+  // "첫 배포 완료(everDeployed)" 판정 — App 응답에는 이 정보가 없어 배포 목록으로 판정한다.
+  // status=ACTIVE 로 전이했더라도 첫 배포(앱 빌드·기동)가 끝나기 전이면 runtimeState 는 아직
+  // 기본값(SLEEPING)이라 "잠자는 중"으로 오해되고, "지금 배포/재시작/열기"도 눌러선 안 된다.
+  // 이 조회는 상세 상단에서만 한다(카드 목록 등 다른 화면은 배포 목록을 모르므로 이 판정을 하지 않음).
+  const { data: deployments } = useQuery<Deployment[]>((a) => a.listDeployments(appId), [appId]);
+  // null = 아직 판정 보류(로딩/실패). true/false = 확정.
+  const everDeployed: boolean | null = deployments
+    ? deployments.some((d) => d.status === "SUCCEEDED")
+    : null;
+  // 배지·안내용: ACTIVE 인데 "첫 배포 성공 없음"이 확정된 경우만 "준비 중"으로 표시(로딩 중엔 덮지 않음).
+  const firstDeployPending = app?.status === "ACTIVE" && everDeployed === false;
+  // 액션·"열기"용: 첫 배포 성공이 확정되기 전(로딩 포함)엔 안전하게 비활성/미노출.
+  const firstDeployConfirmed = app?.status === "ACTIVE" && everDeployed === true;
+
   const userInitial = sessionInitial(session);
 
   return (
@@ -113,11 +129,16 @@ export function AppDetail({ appId }: { appId: string }): JSX.Element {
             <div>
               <h2>
                 {app.name}
-                <AppStatusBadge status={app.status} runtimeState={app.runtimeState} />
+                <AppStatusBadge
+                  status={app.status}
+                  runtimeState={app.runtimeState}
+                  pendingFirstDeploy={firstDeployPending}
+                />
               </h2>
               <div className="row mt3" style={{ gap: 8 }}>
                 <span className="mono muted">{app.subdomain}.{appsDomainLabel()}</span>
-                {app.status === "ACTIVE" && (
+                {/* "열기"는 첫 배포가 성공한 뒤에만 — 아직 뜬 앱이 없으면 열어도 실패한다. */}
+                {firstDeployConfirmed && (
                   <a
                     className="topbar-link"
                     href={`https://${app.subdomain}.${appsDomainLabel()}`}
@@ -133,7 +154,7 @@ export function AppDetail({ appId }: { appId: string }): JSX.Element {
                 )}
               </div>
             </div>
-            <AppActions app={app} onChanged={reload} />
+            <AppActions app={app} firstDeployPending={!firstDeployConfirmed && app.status === "ACTIVE"} onChanged={reload} />
           </div>
 
           {app.status === "FAILED" && app.failureReason ? (
@@ -142,6 +163,7 @@ export function AppDetail({ appId }: { appId: string }): JSX.Element {
             app.status !== "ACTIVE" &&
             statusHint(app.status) && <InfoNotice>{statusHint(app.status)}</InfoNotice>
           )}
+          {firstDeployPending && <InfoNotice>{FIRST_DEPLOY_PENDING_HINT}</InfoNotice>}
           {app.status === "ACTIVE" && app.runtimeState === "WAKING" && (
             <InfoNotice>
               앱을 깨우는 중이에요. 잠시만 기다려주세요 (보통 30초~1분). 준비되면 자동으로 열려요.
@@ -166,7 +188,7 @@ export function AppDetail({ appId }: { appId: string }): JSX.Element {
             ))}
           </div>
 
-          {tab === "overview" && <OverviewTab app={app} />}
+          {tab === "overview" && <OverviewTab app={app} firstDeployPending={firstDeployPending} />}
           {tab === "deployments" && <DeploymentsTab appId={appId} />}
           {tab === "monitoring" && <MonitoringTab app={app} />}
           {tab === "settings" && <SettingsTab app={app} onSaved={reload} />}
@@ -198,7 +220,16 @@ function FailureNotice({ reason }: { reason: string }): JSX.Element {
 //  - 지금 배포: 최신 코드로 다시 빌드해서 배포(몇 분). deploy(appId).
 //  - 재시작:    지금 버전 그대로 앱만 다시 켜기(약 1분). restartApp(appId).
 // 한쪽이 진행 중이어도 다른 쪽 버튼을 잘못 눌러 엉뚱한 동작이 돌지 않도록 각자 disabled/로딩을 가진다.
-function AppActions({ app, onChanged }: { app: App; onChanged: () => void }): JSX.Element {
+function AppActions({
+  app,
+  firstDeployPending,
+  onChanged,
+}: {
+  app: App;
+  // status=ACTIVE 이지만 첫 배포 성공이 아직 확정되지 않음(로딩 포함). true 면 "지금 배포/재시작" 비활성.
+  firstDeployPending: boolean;
+  onChanged: () => void;
+}): JSX.Element {
   const nav = useNavigate();
   const deployMut = useMutation<void, Deployment>((a) => a.deploy(app.appId));
   const restartMut = useMutation<void, RestartResult>((a) => a.restartApp(app.appId));
@@ -208,9 +239,17 @@ function AppActions({ app, onChanged }: { app: App; onChanged: () => void }): JS
   // 재시작 접수 성공 시 서버가 준 안내(note)를 그대로 보여준다.
   const [restartNote, setRestartNote] = useState<string | null>(null);
 
-  const busy = app.status !== "ACTIVE";
+  // ACTIVE 가 아니거나(만드는 중/실패/삭제 중) 첫 배포가 아직 끝나지 않았으면 배포/재시작 불가.
+  const busy = app.status !== "ACTIVE" || firstDeployPending;
   // 두 액션 중 하나라도 진행 중이면 서로 간섭하지 않도록 버튼 전체를 비활성.
   const actionBusy = deployMut.loading || restartMut.loading;
+  // 첫 배포 미완료로 막혔을 때만 툴팁 사유를 바꿔 준다.
+  const deployTitle = firstDeployPending && app.status === "ACTIVE"
+    ? FIRST_DEPLOY_ACTION_DISABLED_HINT
+    : "최신 코드로 다시 빌드해서 배포해요 (몇 분 걸려요)";
+  const restartTitle = firstDeployPending && app.status === "ACTIVE"
+    ? FIRST_DEPLOY_ACTION_DISABLED_HINT
+    : "지금 버전 그대로 앱만 다시 켜요 (약 1분)";
 
   // 배포/재시작 접수 실패는 조용히 삼키지 않고 사용자에게 원인을 보여준다(방침 ② — 에러 노출).
   const runDeploy = async (): Promise<void> => {
@@ -242,7 +281,7 @@ function AppActions({ app, onChanged }: { app: App; onChanged: () => void }): JS
           className="btn btn-ghost"
           disabled={busy || actionBusy}
           onClick={runDeploy}
-          title="최신 코드로 다시 빌드해서 배포해요 (몇 분 걸려요)"
+          title={deployTitle}
         >
           <Rocket size={15} className="icon" />
           {deployMut.loading ? "배포 접수 중…" : "지금 배포"}
@@ -252,7 +291,7 @@ function AppActions({ app, onChanged }: { app: App; onChanged: () => void }): JS
           className="btn btn-ghost"
           disabled={busy || actionBusy}
           onClick={runRestart}
-          title="지금 버전 그대로 앱만 다시 켜요 (약 1분)"
+          title={restartTitle}
         >
           <RefreshCw size={15} className="icon" />
           {restartMut.loading ? "재시작 중…" : "재시작"}
@@ -317,21 +356,29 @@ function AppActions({ app, onChanged }: { app: App; onChanged: () => void }): JS
 }
 
 // ── 개요 — 상태·접속·앱 정보 요약 ──
-function OverviewTab({ app }: { app: App }): JSX.Element {
+// firstDeployPending: 상단과 동일한 "첫 배포 미완료" 판정. 상태 pill 과 접속 주소 링크를 상단과 일치시킨다.
+function OverviewTab({ app, firstDeployPending }: { app: App; firstDeployPending: boolean }): JSX.Element {
   const url = `https://${app.subdomain}.${appsDomainLabel()}`;
+  // 첫 배포가 끝나 실제 앱이 뜬 경우에만 접속 주소를 링크로(그 전엔 열어도 실패).
+  const linkable = app.status === "ACTIVE" && !firstDeployPending;
   return (
     <div className="panel">
       <h4>앱 정보</h4>
       <div className="kv">
         <span className="k">상태</span>
         <span className="v">
-          <AppStatusBadge status={app.status} runtimeState={app.runtimeState} variant="pill" />
+          <AppStatusBadge
+            status={app.status}
+            runtimeState={app.runtimeState}
+            variant="pill"
+            pendingFirstDeploy={firstDeployPending}
+          />
         </span>
       </div>
       <div className="kv">
         <span className="k">접속 주소</span>
         <span className="v">
-          {app.status === "ACTIVE" ? (
+          {linkable ? (
             <a href={url} target="_blank" rel="noreferrer" className="row" style={{ gap: 5, justifyContent: "flex-end" }}>
               <span className="mono" style={{ fontWeight: 500 }}>{app.subdomain}.{appsDomainLabel()}</span>
               <ExternalLink size={14} className="icon" />

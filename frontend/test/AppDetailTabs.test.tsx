@@ -199,12 +199,20 @@ describe("앱 상세 — 수동 배포/재시작 에러 노출", () => {
     setHash("/apps/tab-app-1");
   });
 
+  // 첫 배포가 완료(SUCCEEDED)된 앱이므로 "지금 배포/재시작"은 활성 상태여야 한다.
+  // (배포 목록 조회가 끝나 버튼이 활성화된 뒤 클릭 — 첫 배포 미완료 게이트가 이 흐름을 막지 않음을 함께 보장.)
+  async function clickEnabledAction(name: RegExp): Promise<void> {
+    const btn = await screen.findByRole("button", { name });
+    await waitFor(() => expect(btn).not.toBeDisabled());
+    fireEvent.click(btn);
+  }
+
   it("'지금 배포'가 deploy(appId) 를 호출한다", async () => {
     const client = makeStub();
     const deploySpy = vi.spyOn(client, "deploy");
     renderWithProviders(<AppDetail appId="tab-app-1" />, client);
     await screen.findByText(RUNNING.name);
-    fireEvent.click(screen.getByRole("button", { name: /지금 배포/ }));
+    await clickEnabledAction(/지금 배포/);
     await waitFor(() => expect(deploySpy).toHaveBeenCalledWith("tab-app-1"));
   });
 
@@ -215,7 +223,7 @@ describe("앱 상세 — 수동 배포/재시작 에러 노출", () => {
     );
     renderWithProviders(<AppDetail appId="tab-app-1" />, client);
     await screen.findByText(RUNNING.name);
-    fireEvent.click(screen.getByRole("button", { name: /지금 배포/ }));
+    await clickEnabledAction(/지금 배포/);
     expect(await screen.findByText("준비된 앱만 배포할 수 있어요.")).toBeInTheDocument();
   });
 
@@ -225,7 +233,7 @@ describe("앱 상세 — 수동 배포/재시작 에러 노출", () => {
     const deploySpy = vi.spyOn(client, "deploy");
     renderWithProviders(<AppDetail appId="tab-app-1" />, client);
     await screen.findByText(RUNNING.name);
-    fireEvent.click(screen.getByRole("button", { name: /재시작/ }));
+    await clickEnabledAction(/재시작/);
     // 재시작 전용 API 로 접수 — 예전 버그(재시작이 deploy 를 호출)로 회귀하지 않도록 함께 단언.
     await waitFor(() => expect(restartSpy).toHaveBeenCalledWith("tab-app-1"));
     expect(deploySpy).not.toHaveBeenCalled();
@@ -239,7 +247,7 @@ describe("앱 상세 — 수동 배포/재시작 에러 노출", () => {
     });
     renderWithProviders(<AppDetail appId="tab-app-1" />, client);
     await screen.findByText(RUNNING.name);
-    fireEvent.click(screen.getByRole("button", { name: /재시작/ }));
+    await clickEnabledAction(/재시작/);
     expect(
       await screen.findByText("앱을 다시 시작하고 있어요. 잠시 후(약 1분) 새로고침해 주세요."),
     ).toBeInTheDocument();
@@ -252,7 +260,7 @@ describe("앱 상세 — 수동 배포/재시작 에러 노출", () => {
     );
     renderWithProviders(<AppDetail appId="tab-app-1" />, client);
     await screen.findByText(RUNNING.name);
-    fireEvent.click(screen.getByRole("button", { name: /재시작/ }));
+    await clickEnabledAction(/재시작/);
     expect(
       await screen.findByText("앱이 잠자는 중이에요. 접속 주소로 들어가면 자동으로 켜져요."),
     ).toBeInTheDocument();
@@ -265,8 +273,89 @@ describe("앱 상세 — 수동 배포/재시작 에러 노출", () => {
     );
     renderWithProviders(<AppDetail appId="tab-app-1" />, client);
     await screen.findByText(RUNNING.name);
-    fireEvent.click(screen.getByRole("button", { name: /재시작/ }));
+    await clickEnabledAction(/재시작/);
     await screen.findByText("앱이 준비된 상태(정상)일 때만 다시 시작할 수 있어요.");
     expect(screen.queryByText(/다시 시작하고 있어요/)).not.toBeInTheDocument();
+  });
+});
+
+// 첫 배포 미완료(status=ACTIVE + 배포 이력에 SUCCEEDED 없음) 표시·액션 게이트.
+describe("앱 상세 — 첫 배포 미완료(준비 중) 상태", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    seedSession("user");
+    setHash("/apps/tab-app-1");
+  });
+
+  // 배포는 있으나 아직 검사 중(VALIDATING) 1건뿐 — SUCCEEDED 없음.
+  const PENDING_DEPS: Deployment[] = [
+    {
+      appId: "tab-app-1",
+      deploymentId: "2026-07-15T02:00:00.000Z",
+      commitSha: "aaa0001",
+      commitMessage: "초기 배포",
+      trigger: "auto",
+      status: "VALIDATING",
+      createdAt: "2026-07-15T02:00:00.000Z",
+      updatedAt: "2026-07-15T02:00:00.000Z",
+    },
+  ];
+  // 실측 재현: status=ACTIVE, runtimeState=SLEEPING(첫 태스크 미기동 기본값).
+  const PENDING_APP: App = { ...RUNNING, runtimeState: "SLEEPING" };
+
+  it("ACTIVE + SUCCEEDED 배포 없음이면 상단 배지가 '준비 중'이고 '잠자는 중'이 아니다", async () => {
+    renderWithProviders(
+      <AppDetail appId="tab-app-1" />,
+      makeStub({ app: PENDING_APP, deps: PENDING_DEPS }),
+    );
+    await screen.findByText(PENDING_APP.name);
+    // 상단 제목 배지 + 개요 탭 상태 pill 둘 다 "준비 중"으로 일치(상세 전 영역 일관).
+    const pending = await screen.findAllByText("준비 중");
+    expect(pending.length).toBeGreaterThan(0);
+    // 상단 제목 옆 배지가 실제로 "준비 중"인지 확인(제목 h2 내부).
+    const heading = screen.getByRole("heading", { name: /고객문의 챗봇/ });
+    expect(within(heading).getByText("준비 중")).toBeInTheDocument();
+    // 오해를 주던 "잠자는 중"은 어디에도 뜨지 않는다(runtimeState=SLEEPING 이지만 준비 중으로 덮임).
+    expect(screen.queryByText("잠자는 중")).not.toBeInTheDocument();
+    // 안내 문구
+    expect(screen.getByText(/앱을 처음 배포하고 있어요/)).toBeInTheDocument();
+  });
+
+  it("첫 배포 미완료면 '지금 배포'·'재시작'이 비활성(사유 툴팁 포함)이다", async () => {
+    renderWithProviders(
+      <AppDetail appId="tab-app-1" />,
+      makeStub({ app: PENDING_APP, deps: PENDING_DEPS }),
+    );
+    await screen.findByText(PENDING_APP.name);
+    const deployBtn = screen.getByRole("button", { name: /지금 배포/ });
+    const restartBtn = screen.getByRole("button", { name: /재시작/ });
+    await waitFor(() => expect(deployBtn).toBeDisabled());
+    expect(restartBtn).toBeDisabled();
+    expect(deployBtn).toHaveAttribute("title", "첫 배포가 끝난 뒤에 사용할 수 있어요");
+    expect(restartBtn).toHaveAttribute("title", "첫 배포가 끝난 뒤에 사용할 수 있어요");
+  });
+
+  it("첫 배포 미완료면 '열기' 링크가 노출되지 않는다", async () => {
+    renderWithProviders(
+      <AppDetail appId="tab-app-1" />,
+      makeStub({ app: PENDING_APP, deps: PENDING_DEPS }),
+    );
+    await screen.findByText(PENDING_APP.name);
+    await screen.findAllByText("준비 중");
+    expect(screen.queryByRole("link", { name: /열기/ })).not.toBeInTheDocument();
+  });
+
+  it("SUCCEEDED 배포가 있으면 기존대로 runtimeState 배지·활성 버튼·'열기'가 나온다", async () => {
+    // MIXED_DEPS 는 SUCCEEDED 를 포함 → everDeployed=true.
+    renderWithProviders(<AppDetail appId="tab-app-1" />, makeStub());
+    await screen.findByText(RUNNING.name);
+    // RUNNING 앱이므로 "실행 중" 배지(준비 중 아님) — 상단·개요 pill 모두.
+    const running = await screen.findAllByText("실행 중");
+    expect(running.length).toBeGreaterThan(0);
+    expect(screen.queryByText("준비 중")).not.toBeInTheDocument();
+    // 버튼 활성
+    await waitFor(() => expect(screen.getByRole("button", { name: /지금 배포/ })).not.toBeDisabled());
+    // "열기" 링크 노출
+    expect(screen.getByRole("link", { name: /열기/ })).toBeInTheDocument();
   });
 });

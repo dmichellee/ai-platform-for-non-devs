@@ -59,6 +59,15 @@ export const STATUS_LABEL: Record<AppStatus, string> = {
   DELETING: "삭제 중",
 };
 
+// 첫 배포가 아직 성공하지 않은 ACTIVE 앱을 위한 표시(앱 상세 상단 전용).
+// status=ACTIVE 로 전이했어도 첫 배포(앱 실제 빌드·기동)가 끝나기 전이면
+// runtimeState("잠자는 중")를 그대로 보여주면 오해를 준다 → "준비 중"으로 덮는다.
+export const FIRST_DEPLOY_PENDING_LABEL = "준비 중";
+export const FIRST_DEPLOY_PENDING_HINT =
+  "앱을 처음 배포하고 있어요. 배포가 끝나면 자동으로 실행돼요. 진행 상황은 '배포 이력'에서 볼 수 있어요.";
+// 첫 배포 완료 전이라 아직 쓸 수 없는 액션에 붙이는 안내(툴팁).
+export const FIRST_DEPLOY_ACTION_DISABLED_HINT = "첫 배포가 끝난 뒤에 사용할 수 있어요";
+
 // status=FAILED는 두 원인(생성 실패 / 삭제 실패) — updatedAt 이전 상태를 알 수 없으므로 안내 문구는 중립적으로.
 export function statusHint(status: AppStatus): string {
   switch (status) {
