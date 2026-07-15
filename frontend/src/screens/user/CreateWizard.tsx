@@ -24,7 +24,7 @@ import {
   Server,
   Trash2,
 } from "lucide-react";
-import { BackLink, ErrorNotice, InfoNotice, Modal, Skeleton, TopBar } from "../../components/common.js";
+import { BackLink, ErrorNotice, InfoNotice, Modal, Skeleton, Toggle, TopBar } from "../../components/common.js";
 import {
   DEFAULT_SCHEDULE,
   ScheduleEditor,
@@ -80,6 +80,7 @@ interface Draft {
   envVars: { key: string; value: string; secret: boolean }[];
   sleepMode: SleepMode;
   schedule: Schedule;
+  autoDeployEnabled: boolean;
 }
 
 const EMPTY: Draft = {
@@ -96,6 +97,8 @@ const EMPTY: Draft = {
   sleepMode: "on-demand",
   // 기본 시간표(평일 09:00–19:00)를 미리 담아둔다 — "시간표대로" 선택 시 즉시 편집 가능.
   schedule: DEFAULT_SCHEDULE,
+  // 대부분 사용자는 자동 배포를 원함 — 기본 켜짐(계약 기본값과 일치).
+  autoDeployEnabled: true,
 };
 
 // 저장소 종류 표시 우선순위 — AWS 저장소(CodeCommit)를 항상 먼저. 나머지는 기존 순서 유지.
@@ -264,6 +267,7 @@ export function CreateWizard(): JSX.Element {
       permissionTemplateId: draft.permissionTemplateId,
       scheme: draft.scheme,
       // 네트워크(VPC)는 플랫폼이 자동 배치 — vpcId 를 보내지 않는다(계약: optional).
+      autoDeployEnabled: draft.autoDeployEnabled,
       sleepMode: draft.sleepMode,
       // "시간표대로"일 때만 schedule 을 포함(계약: sleepMode="schedule"이면 필수).
       ...(draft.sleepMode === "schedule" ? { schedule: draft.schedule } : {}),
@@ -878,6 +882,26 @@ function StepSleep({
       {draft.sleepMode === "schedule" && (
         <ScheduleEditor value={draft.schedule} onChange={(schedule) => patch({ schedule })} />
       )}
+
+      {/* 자동 배포 — 잠자기 방식과 다른 결정이라 여백으로 구분해 아래에 둔다.
+          상단 구분선 + 소제목으로 별도 설정 그룹임을 알린다.
+          문구/컴포넌트는 앱 상세 '배포·접근' 설정과 동일하게 맞춘다. */}
+      <div className="mt4" style={{ borderTop: "1px solid var(--border)", paddingTop: 16 }}>
+        <div className="switch-row">
+          <div className="txt">
+            <div className="t">자동 배포</div>
+            <div className="d">
+              켜면 코드를 올릴(push) 때마다 자동으로 다시 배포돼요. 끄면 원할 때 앱 상세에서 직접
+              배포해요.
+            </div>
+          </div>
+          <Toggle
+            on={draft.autoDeployEnabled}
+            onChange={(v) => patch({ autoDeployEnabled: v })}
+            label="자동 배포"
+          />
+        </div>
+      </div>
     </>
   );
 }
