@@ -142,12 +142,81 @@ describe("app-runtime — internal 앱(schedule + secrets)", () => {
       template.resourceCountIs("AWS::Scheduler::Schedule", 2);
     });
 
-    it("시작 스케줄은 DesiredCount=min, 종료 스케줄은 DesiredCount=0", () => {
+    it("시작 스케줄은 ecs:UpdateService universal target + DesiredCount=min(현행 유지)", () => {
+      // start는 ECS desiredCount=min으로 태스크 기동 → ECS Task State Change로 wake-restore가
+      //  규칙 복원+RUNNING 기록을 자동 수행하므로 ECS만 건드리면 충분(설계 확정).
+      template.hasResourceProperties("AWS::Scheduler::Schedule", {
+        Name: "apphub-dev-app-testapp0-start",
+        Target: Match.objectLike({
+          Arn: "arn:aws:scheduler:::aws-sdk:ecs:updateService",
+        }),
+      });
       // Target.Input은 Fn::Join 조각(cluster ARN 토큰 포함)이라 전체 템플릿 JSON에서 조각을 찾는다.
-      // stringify된 조각에는 내부 따옴표가 이스케이프되어 `DesiredCount\":1` 형태로 나타난다.
+      //  stringify된 조각에는 내부 따옴표가 이스케이프되어 `DesiredCount\":1` 형태로 나타난다.
       const raw = JSON.stringify(template.toJSON());
       expect(raw).toContain('DesiredCount\\":1'); // 시작(min=1)
-      expect(raw).toContain('DesiredCount\\":0'); // 종료
+    });
+
+    it("종료 스케줄은 sleep-transition Lambda를 직접 호출한다(ECS updateService 아님 — 버그 수정)", () => {
+      // 이전 결함: stop이 updateService(DesiredCount=0)만 해서 규칙 전환·SLEEPING 기록을 건너뜀.
+      //  이제 network의 sleep-transition Lambda(함수 ARN)를 target으로 직접 호출한다(SSM 동적참조 토큰).
+      const schedules = template.findResources("AWS::Scheduler::Schedule");
+      const stop = Object.values(schedules).find(
+        (s) => (s.Properties as Record<string, unknown>).Name === "apphub-dev-app-testapp0-stop",
+      );
+      expect(stop).toBeDefined();
+      const target = (stop!.Properties as Record<string, unknown>).Target as Record<string, unknown>;
+      // 종료 타겟 arn은 ecs universal target이 아니라 Lambda 함수 ARN(SSM 동적참조 Ref).
+      const arn = JSON.stringify(target.Arn);
+      expect(arn).not.toContain("aws-sdk:ecs:updateService");
+      // netSsm("sleep-transition-fn-arn") → CFN 논리ID는 대시 제거된 `...sleeptransitionfnarn...` Ref.
+      expect(arn).toContain("sleeptransitionfnarn");
+      // Input payload에 appId가 담긴다(sleep.py의 event.appId 직접호출 파싱과 정합).
+      // stop의 Input은 정적 문자열 `{"appId":"testapp0"}`.
+      expect(JSON.stringify(target.Input)).toContain('appId\\":\\"testapp0');
+    });
+
+    it("SchedulerRole에 두 권한이 있다: ecs:UpdateService(start) + lambda:InvokeFunction(stop)", () => {
+      // addToPolicy는 별도 AWS::IAM::Policy 리소스(역할 인라인 아님)로 attach된다.
+      //  최소권한: ecs는 이 앱 서비스 ARN, lambda는 sleep-transition 함수 ARN으로 한정(Resource:"*" 금지).
+      template.hasResourceProperties("AWS::IAM::Policy", {
+        PolicyDocument: Match.objectLike({
+          Statement: Match.arrayWith([
+            Match.objectLike({ Action: "ecs:UpdateService", Effect: "Allow", Sid: "StartUpdateService" }),
+            Match.objectLike({
+              Action: "lambda:InvokeFunction",
+              Effect: "Allow",
+              Sid: "StopInvokeSleepTransition",
+            }),
+          ]),
+        }),
+        Roles: Match.arrayWith([Match.objectLike({ Ref: Match.stringLikeRegexp("SchedulerRole") })]),
+      });
+    });
+
+    it("SchedulerRole의 두 권한 모두 Resource:'*'가 아니다(ARN 한정)", () => {
+      // scheduler 역할의 DefaultPolicy(AWS::IAM::Policy)에서 두 statement의 Resource가 * 아님을 단언.
+      const policies = template.findResources("AWS::IAM::Policy");
+      const schedPol = Object.values(policies).find((pol) => {
+        const stmts =
+          ((pol.Properties as Record<string, unknown>).PolicyDocument as {
+            Statement?: Array<{ Sid?: string }>;
+          }).Statement ?? [];
+        return stmts.some((s) => s.Sid === "StopInvokeSleepTransition");
+      });
+      expect(schedPol).toBeDefined();
+      const stmts = (
+        (schedPol!.Properties as Record<string, unknown>).PolicyDocument as {
+          Statement: Array<{ Action: string; Resource: unknown }>;
+        }
+      ).Statement;
+      const invoke = stmts.find((s) => s.Action === "lambda:InvokeFunction");
+      expect(invoke).toBeDefined();
+      expect(invoke!.Resource).not.toBe("*");
+      expect(JSON.stringify(invoke!.Resource)).toContain("sleeptransitionfnarn"); // 함수 ARN SSM Ref
+      const ecsStmt = stmts.find((s) => s.Action === "ecs:UpdateService");
+      expect(ecsStmt).toBeDefined();
+      expect(ecsStmt!.Resource).not.toBe("*"); // 이 앱 서비스 ARN(Ref)
     });
   });
 

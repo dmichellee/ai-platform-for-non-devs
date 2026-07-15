@@ -324,16 +324,31 @@ export class AppRuntime extends Construct {
     void route53_targets;
 
     // ── EventBridge Scheduler 2개 (가동 스케줄 — DESIGN 3.5) ─────────────────
-    // 시작 시각: desiredCount=minCount. 종료 시각: desiredCount=0. sleepMode=schedule일 때만.
+    // 시작 시각: ECS desiredCount=minCount(태스크 기동). sleepMode=schedule일 때만.
+    // 종료 시각: network의 공유 sleep-transition Lambda를 직접 호출(잠자기 전환).
     if (p.sleepMode === "schedule" && p.schedule) {
+      // sleep-transition Lambda ARN — network 스택이 SSM(`sleep-transition-fn-arn`)에 발행.
+      //  (network-stack.ts publishSsm 참조. 함수명은 결정론적 `${prefix}-sleep-transition`.)
+      const sleepTransitionFnArn = netSsm("sleep-transition-fn-arn");
+
       const schedulerRole = new iam.Role(this, "SchedulerRole", {
         roleName: `${appPrefix}-scheduler`,
         assumedBy: new iam.ServicePrincipal("scheduler.amazonaws.com"),
       });
+      // start용: ECS UpdateService(desiredCount=min). 이 앱 서비스 ARN으로 한정(D7, Resource:"*" 금지).
       schedulerRole.addToPolicy(
         new iam.PolicyStatement({
+          sid: "StartUpdateService",
           actions: ["ecs:UpdateService"],
           resources: [this.service.serviceArn],
+        }),
+      );
+      // stop용: sleep-transition Lambda 호출. 그 함수 ARN으로 한정(Resource:"*" 금지).
+      schedulerRole.addToPolicy(
+        new iam.PolicyStatement({
+          sid: "StopInvokeSleepTransition",
+          actions: ["lambda:InvokeFunction"],
+          resources: [sleepTransitionFnArn],
         }),
       );
 
@@ -343,24 +358,39 @@ export class AppRuntime extends Construct {
         return `cron(${Number(mm)} ${Number(hh)} ? * ${dow} *)`;
       };
 
-      // 공통 target: ecs:UpdateService (universal target arn = arn:aws:scheduler:::aws-sdk:ecs:updateService)
-      const updateServiceTarget = (desired: number): scheduler.CfnSchedule.TargetProperty => ({
+      // 시작 target: ecs:UpdateService (universal target arn = arn:aws:scheduler:::aws-sdk:ecs:updateService).
+      //  start가 desiredCount=min으로 태스크를 띄우면 ECS Task State Change(RUNNING) 이벤트가
+      //  자동 발생 → network의 wake-restore Lambda가 리스너 규칙 복원 + runtimeState=RUNNING 기록을
+      //  이미 수행한다(backend/app/wake/restore.py). 그래서 start는 ECS만 건드리면 충분(현행 유지).
+      const startTarget: scheduler.CfnSchedule.TargetProperty = {
         arn: "arn:aws:scheduler:::aws-sdk:ecs:updateService",
         roleArn: schedulerRole.roleArn,
         input: JSON.stringify({
           // 공유 클러스터(D18) ARN — 임포트 클러스터의 clusterArn(network SSM cluster-arn 값).
           Cluster: cluster.clusterArn,
           Service: this.service.serviceName,
-          DesiredCount: desired,
+          DesiredCount: p.minCount,
         }),
-      });
+      };
+
+      // 종료 target: sleep-transition Lambda 직접 호출(templated Lambda Invoke target).
+      //  target.arn = 함수 ARN, input = payload. sleep.py의 app_id_from_sleep_event가 event.appId를
+      //  최우선 파싱하므로 {"appId": ...} payload면 Lambda 코드 변경 없이 그대로 동작(직접호출 케이스).
+      //  이 경로가 ECS 정지(desiredCount=0) + 리스너 규칙 to=waker 전환 + runtimeState=SLEEPING 기록을
+      //  모두 멱등 수행한다(유휴 알람 경로와 동일한 sleep_app). 이전 updateService 타겟은 desiredCount만
+      //  바꿔 규칙 전환·SLEEPING 기록을 건너뛰던 결함을 이 변경이 교정한다.
+      const stopTarget: scheduler.CfnSchedule.TargetProperty = {
+        arn: sleepTransitionFnArn,
+        roleArn: schedulerRole.roleArn,
+        input: JSON.stringify({ appId: p.appId }),
+      };
 
       new scheduler.CfnSchedule(this, "StartSchedule", {
         name: `${appPrefix}-start`,
         flexibleTimeWindow: { mode: "OFF" },
         scheduleExpression: cron(p.schedule.startTime),
         scheduleExpressionTimezone: p.schedule.timezone,
-        target: updateServiceTarget(p.minCount),
+        target: startTarget,
         state: "ENABLED",
       });
       new scheduler.CfnSchedule(this, "StopSchedule", {
@@ -368,7 +398,7 @@ export class AppRuntime extends Construct {
         flexibleTimeWindow: { mode: "OFF" },
         scheduleExpression: cron(p.schedule.stopTime),
         scheduleExpressionTimezone: p.schedule.timezone,
-        target: updateServiceTarget(0),
+        target: stopTarget,
         state: "ENABLED",
       });
     }
