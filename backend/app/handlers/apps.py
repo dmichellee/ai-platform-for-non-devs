@@ -32,8 +32,11 @@ from ..domain.validate import parse_create_app, parse_patch_app
 from ..http.errors import errors
 from ..http.response import ProxyResult, created, list_response, ok
 from ..http.router import RouteContext
+from ..integrations.clients import client
 from ..integrations.secrets import delete_secret
 from ..integrations.sfn import start_delete, start_provision
+from ..wake import cluster_name
+from ..wake.ecs_service import app_service_name
 from ..wake.sleep import sleep_app
 
 _VALID_STATUS = ("CREATING", "ACTIVE", "FAILED", "DELETING")
@@ -273,6 +276,53 @@ def admin_stop_app(ctx: RouteContext) -> ProxyResult:
     result = sleep_app(app_id, force=True)
     # 응답에는 사용자 화면 계약(App runtimeState)만 노출. 내부 세부(ruleSwitched 등)는 제외.
     return ok({"appId": app_id, "runtimeState": "SLEEPING", "stopped": result.get("stopped", False)})
+
+
+def restart_app(ctx: RouteContext) -> ProxyResult:
+    """POST /apps/{id}/restart — 앱 다시 시작(소유자/admin). body 없음.
+
+    "재시작 = 같은 이미지·같은 설정으로 컨테이너만 새로 기동" — ECS forceNewDeployment.
+    파이프라인 재실행(배포)과 구분된다: 재빌드 없음, Deployment 이력 레코드도 만들지 않는다.
+    무거운 작업 없음(UpdateService 1회) — 메인 서버 무부하.
+
+    전제조건:
+      - status != ACTIVE → 409 (준비된 앱만 재시작 가능)
+      - runtimeState == SLEEPING → 409 (잠자는 앱은 desiredCount=0 이라 forceNewDeployment 무의미;
+        접속 주소로 들어가면 wake-on-request 로 자동 기동됨)
+    """
+    app = _load_owned_app(ctx)
+    if app["status"] != "ACTIVE":
+        raise errors.invalid_state("앱이 준비된 상태(정상)일 때만 다시 시작할 수 있어요.")
+    if app.get("runtimeState") == "SLEEPING":
+        raise errors.invalid_state(
+            "앱이 잠자는 중이에요. 접속 주소로 들어가면 자동으로 켜져요."
+        )
+
+    stage = load_config().stage
+    _force_new_deployment_or_friendly_error(stage, app["appId"])
+    return ok(
+        {
+            "appId": app["appId"],
+            "note": "앱을 다시 시작하고 있어요. 잠시 후(약 1분) 새로고침해 주세요.",
+        }
+    )
+
+
+def _force_new_deployment_or_friendly_error(stage: str, app_id: str) -> None:
+    """ecs.update_service(forceNewDeployment=True). ClientError 는 사용자용 친절 에러로 마스킹.
+
+    cluster/service 규약(DESIGN.md D18)은 wake 헬퍼를 재사용한다(CLUSTER_NAME env + 이름 파생).
+    """
+    try:
+        client("ecs").update_service(
+            cluster=cluster_name(),
+            service=app_service_name(stage, app_id),
+            forceNewDeployment=True,
+        )
+    except Exception as err:  # noqa: BLE001 - AWS 예외를 사용자용 친절 에러로 변환
+        raise errors.invalid_state(
+            "지금은 앱을 다시 시작할 수 없어요. 잠시 후 다시 시도해주세요."
+        ) from err
 
 
 def load_owned_app(ctx: RouteContext) -> dict[str, Any]:

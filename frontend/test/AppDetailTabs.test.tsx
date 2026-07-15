@@ -218,4 +218,55 @@ describe("앱 상세 — 수동 배포/재시작 에러 노출", () => {
     fireEvent.click(screen.getByRole("button", { name: /지금 배포/ }));
     expect(await screen.findByText("준비된 앱만 배포할 수 있어요.")).toBeInTheDocument();
   });
+
+  it("'재시작'은 restartApp(appId) 를 호출하고, 배포(deploy)는 돌지 않는다", async () => {
+    const client = makeStub();
+    const restartSpy = vi.spyOn(client, "restartApp");
+    const deploySpy = vi.spyOn(client, "deploy");
+    renderWithProviders(<AppDetail appId="tab-app-1" />, client);
+    await screen.findByText(RUNNING.name);
+    fireEvent.click(screen.getByRole("button", { name: /재시작/ }));
+    // 재시작 전용 API 로 접수 — 예전 버그(재시작이 deploy 를 호출)로 회귀하지 않도록 함께 단언.
+    await waitFor(() => expect(restartSpy).toHaveBeenCalledWith("tab-app-1"));
+    expect(deploySpy).not.toHaveBeenCalled();
+  });
+
+  it("재시작 성공 시 서버가 준 안내(note)를 화면에 보여준다", async () => {
+    const client = makeStub();
+    vi.spyOn(client, "restartApp").mockResolvedValue({
+      appId: "tab-app-1",
+      note: "앱을 다시 시작하고 있어요. 잠시 후(약 1분) 새로고침해 주세요.",
+    });
+    renderWithProviders(<AppDetail appId="tab-app-1" />, client);
+    await screen.findByText(RUNNING.name);
+    fireEvent.click(screen.getByRole("button", { name: /재시작/ }));
+    expect(
+      await screen.findByText("앱을 다시 시작하고 있어요. 잠시 후(약 1분) 새로고침해 주세요."),
+    ).toBeInTheDocument();
+  });
+
+  it("재시작 접수가 실패하면 에러 메시지를 노출한다(조용히 삼키지 않음)", async () => {
+    const client = makeStub();
+    vi.spyOn(client, "restartApp").mockRejectedValue(
+      new ApiError("INVALID_STATE", "앱이 잠자는 중이에요. 접속 주소로 들어가면 자동으로 켜져요.", 409),
+    );
+    renderWithProviders(<AppDetail appId="tab-app-1" />, client);
+    await screen.findByText(RUNNING.name);
+    fireEvent.click(screen.getByRole("button", { name: /재시작/ }));
+    expect(
+      await screen.findByText("앱이 잠자는 중이에요. 접속 주소로 들어가면 자동으로 켜져요."),
+    ).toBeInTheDocument();
+  });
+
+  it("재시작 실패 후에는 성공 안내(note)가 남아있지 않는다", async () => {
+    const client = makeStub();
+    vi.spyOn(client, "restartApp").mockRejectedValue(
+      new ApiError("INVALID_STATE", "앱이 준비된 상태(정상)일 때만 다시 시작할 수 있어요.", 409),
+    );
+    renderWithProviders(<AppDetail appId="tab-app-1" />, client);
+    await screen.findByText(RUNNING.name);
+    fireEvent.click(screen.getByRole("button", { name: /재시작/ }));
+    await screen.findByText("앱이 준비된 상태(정상)일 때만 다시 시작할 수 있어요.");
+    expect(screen.queryByText(/다시 시작하고 있어요/)).not.toBeInTheDocument();
+  });
 });

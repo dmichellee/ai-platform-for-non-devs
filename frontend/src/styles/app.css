@@ -1487,6 +1487,33 @@ tbody tr:hover {
   gap: var(--s3);
   flex-wrap: wrap;
 }
+/*
+ * .kv-row: 이름/값 입력 한 쌍을 한 줄에 나란히 놓는 전용 클래스.
+ * .row는 26곳 이상(배지·링크·헤더 정렬 등)에서 쓰이므로 `.row > .input`을
+ * 전역으로 건드리면 부작용 범위를 예측할 수 없다. 그래서 kv 입력 행에만
+ * 붙이는 전용 클래스로 한정한다.
+ * 기본 .input은 width:100%라 flex-wrap 때문에 세로로 쌓이는데,
+ * 여기서는 flex 아이템으로 늘어나도록 width:auto + min-width:0(축소 허용)으로 덮는다.
+ * 이름 칸은 좁게(flex 2), 값 칸은 넓게(flex 3). 인라인 style로 폭을 지정한
+ * 입력(예: SecretsPanel의 readonly 이름 칸 maxWidth:220)은 그 지정이 우선한다.
+ */
+.kv-row > .input {
+  flex: 1 1 0;
+  width: auto;
+  min-width: 0;
+}
+.kv-row > .input.kv-key {
+  flex: 2 1 0;
+}
+.kv-row > .input.kv-value {
+  flex: 3 1 0;
+}
+/* 데스크톱: 한 줄 유지. 좁은 화면: 세로로 쌓여도 됨(각 칸이 폭을 다 차지). */
+@media (max-width: 560px) {
+  .kv-row > .input {
+    flex-basis: 100%;
+  }
+}
 .grid-2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1550,22 +1577,93 @@ tbody tr:hover {
   margin-top: 8px;
   max-width: 52ch;
 }
-.btn-download {
-  background: var(--primary);
-  color: var(--on-primary);
-  padding: 15px 26px;
+/* OS별 다운로드 버튼 2개(Mac / Windows) — 감지된 OS는 primary, 다른 OS는 보조 */
+.kiro-downloads {
+  display: flex;
+  gap: var(--s3);
+  flex-wrap: wrap;
+}
+.btn-download,
+.btn-download-alt {
+  padding: 14px 22px;
   border-radius: var(--radius-soft);
   font-size: 15px;
   font-weight: 700;
+  align-items: center;
+}
+/* 강조(primary): 감지된 OS */
+.btn-download {
+  background: var(--primary);
+  color: var(--on-primary);
   box-shadow: var(--shadow);
 }
 .btn-download:hover {
   filter: brightness(1.08);
 }
-.btn-download .fname {
+/* 보조(secondary): 다른 OS — 항상 받을 수 있게 명확히 보이되 시각적으로 종속 */
+.btn-download-alt {
+  background: var(--surface);
+  color: var(--on-surface);
+  border: 1px solid var(--border-strong);
+}
+.btn-download-alt:hover {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+.btn-download .fname,
+.btn-download-alt .fname {
   font-weight: 500;
   opacity: 0.85;
-  font-size: 13px;
+  font-size: 12px;
+  font-family: var(--mono);
+}
+.btn-download .os-hint,
+.btn-download-alt .os-hint {
+  font-family: var(--font, inherit);
+  font-weight: 600;
+}
+
+/* 3단계: OS별 실행 방법 안내 */
+.os-runs {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--s2);
+  margin-top: var(--s3);
+}
+.os-run {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.os-run-h {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--primary);
+  margin-bottom: 4px;
+}
+.os-run-b {
+  font-size: 12px;
+  color: var(--on-surface-muted);
+  line-height: 1.6;
+}
+.os-run-b .cmd {
+  display: block;
+  margin-top: 6px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  background: var(--surface-hover);
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: var(--on-surface);
+  word-break: break-all;
+}
+.tree .tree-note {
+  color: var(--on-surface-muted);
+  opacity: 0.7;
 }
 
 /* 설치 단계 카드 (반응형: 넓으면 4열, 좁으면 자동 줄바꿈) */

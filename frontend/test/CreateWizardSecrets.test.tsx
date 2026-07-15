@@ -91,6 +91,25 @@ describe("④ 마법사 — 시크릿/평문 분리 전송", () => {
     expect("secrets" in body).toBe(false);
   });
 
+  it("환경변수 행이 한 줄 배치(kv-row)이고 이름/값 placeholder가 있다", async () => {
+    // 버그: .row 안 .input 두 개가 각각 100% 폭이라 세로로 쌓였음.
+    // kv-row/kv-key/kv-value 클래스로 데스크톱에서 한 줄에 나란히 배치되어야 한다.
+    renderWithProviders(<CreateWizard />, new MockApiClient());
+    await gotoEnvStep();
+    fireEvent.click(screen.getByRole("button", { name: /설정값 추가/ }));
+
+    const nameInput = screen.getByLabelText("설정 이름") as HTMLInputElement;
+    const valueInput = screen.getByLabelText("설정 값") as HTMLInputElement;
+    expect(nameInput.placeholder).toBe("이름 (예: API_KEY)");
+    expect(valueInput.placeholder).toBe("값");
+    // 두 입력이 같은 kv-row 컨테이너 안에 나란히 있다.
+    const row = nameInput.closest(".kv-row");
+    expect(row).not.toBeNull();
+    expect(row).toBe(valueInput.closest(".kv-row"));
+    expect(nameInput.classList.contains("kv-key")).toBe(true);
+    expect(valueInput.classList.contains("kv-value")).toBe(true);
+  });
+
   it("mockApi.patchApp: secrets/secretsRemove 로 App.secretArns 가 갱신된다", async () => {
     const client = new MockApiClient();
     // 픽스처 앱 a1b2c3d4 는 secretArns={OPENAI_API_KEY:...}. 새 키 추가 + 기존 키 삭제.

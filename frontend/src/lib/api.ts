@@ -21,6 +21,7 @@ import type {
   PlatformUser,
   Provider,
   RepoConnection,
+  RestartResult,
   SingleEnvelope,
   SubdomainCheck,
   UserPermissionTemplate,
@@ -49,6 +50,8 @@ export interface ApiClient {
   deploy(appId: string): Promise<Deployment>;
   listDeployments(appId: string, limit?: number): Promise<Deployment[]>;
   rollback(appId: string, deploymentId: string): Promise<Deployment>;
+  // 재시작 — 지금 버전 그대로 앱만 다시 켠다(빌드/배포 없음). ACTIVE 일 때만.
+  restartApp(appId: string): Promise<RestartResult>;
   // 로그
   getLogs(appId: string, opts?: { limit?: number; nextToken?: string; startTime?: number }): Promise<{ events: LogEvent[]; nextToken?: string }>;
   // 모니터링 지표 (api-requests.md #6, backend 병렬 구현)
@@ -209,6 +212,9 @@ export class HttpApiClient implements ApiClient {
   }
   rollback(appId: string, deploymentId: string): Promise<Deployment> {
     return this.single<Deployment>("POST", `/apps/${appId}/rollback`, { deploymentId });
+  }
+  restartApp(appId: string): Promise<RestartResult> {
+    return this.single<RestartResult>("POST", `/apps/${appId}/restart`);
   }
 
   // 로그

@@ -109,6 +109,30 @@ describe("④ 앱 상세 설정 — 비밀값 관리", () => {
     expect(body.envVars).toEqual({ GREETING: "hi" });
   });
 
+  it("환경변수 행의 이름/값 칸에 안내 placeholder가 마법사와 동일 문구로 있다", async () => {
+    // 버그: 이름/값 칸에 placeholder가 없어 '정체불명의 빈 칸'으로 보였음.
+    // 이름 칸은 마법사(StepEnv)와 동일한 "이름 (예: API_KEY)", 값 칸은 "값".
+    await openSettings(new SettingsStub(APP));
+    const nameInput = screen.getByLabelText("설정 이름") as HTMLInputElement;
+    const valueInput = screen.getByLabelText("설정 값") as HTMLInputElement;
+    expect(nameInput.placeholder).toBe("이름 (예: API_KEY)");
+    expect(valueInput.placeholder).toBe("값");
+    // 한 줄 나란히 배치되도록 kv-row/kv-key/kv-value 클래스가 붙어 있다.
+    expect(nameInput.closest(".kv-row")).not.toBeNull();
+    expect(nameInput.classList.contains("kv-key")).toBe(true);
+    expect(valueInput.classList.contains("kv-value")).toBe(true);
+  });
+
+  it("새 비밀값 행 입력칸이 한 줄 배치(kv-row)로 렌더된다", async () => {
+    await openSettings(new SettingsStub(APP));
+    fireEvent.click(screen.getByRole("button", { name: /비밀 설정값 추가/ }));
+    const secretNameInput = screen.getByLabelText("새 비밀값 이름") as HTMLInputElement;
+    const secretValueInput = screen.getByLabelText("새 비밀값 값") as HTMLInputElement;
+    expect(secretNameInput.closest(".kv-row")).not.toBeNull();
+    expect(secretNameInput.classList.contains("kv-key")).toBe(true);
+    expect(secretValueInput.classList.contains("kv-value")).toBe(true);
+  });
+
   it("비밀값을 건드리지 않으면 secrets/secretsRemove 키를 보내지 않는다", async () => {
     const client = new SettingsStub(APP);
     const patchSpy = vi.spyOn(client, "patchApp");

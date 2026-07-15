@@ -84,6 +84,13 @@ export interface Deployment {
   note?: string; // POST deploy/rollback 응답에만
 }
 
+// POST /apps/{id}/restart 응답 — 지금 버전 그대로 앱만 다시 켠다(배포 아님).
+// 계약: {data:{appId, note}}. note 는 사용자에게 그대로 보여줄 한국어 안내.
+export interface RestartResult {
+  appId: string;
+  note: string;
+}
+
 export interface RepoConnection {
   connId: string;
   ownerId: string;

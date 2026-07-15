@@ -30,6 +30,7 @@ from .handlers.apps import (
     get_app_detail,
     list_my_apps,
     patch_app,
+    restart_app,
 )
 from .handlers.catalog import (
     check_subdomain,
@@ -69,6 +70,9 @@ def build_router() -> Router:
     r.post("/apps/:id/deploy", trigger_deploy)
     r.get("/apps/:id/deployments", list_app_deployments)
     r.post("/apps/:id/rollback", rollback_deploy)
+
+    # ── 재시작 (같은 이미지·설정으로 컨테이너 재기동 — 배포/파이프라인과 구분) ──
+    r.post("/apps/:id/restart", restart_app)
 
     # ── 로그 ─────────────────────────────────────────────────────────────────
     r.get("/apps/:id/logs", get_app_logs)

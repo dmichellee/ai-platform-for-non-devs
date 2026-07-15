@@ -800,16 +800,16 @@ function StepEnv({
       </div>
       <div className="stack">
         {rows.map((r, i) => (
-          <div key={i} className="row" style={{ alignItems: "flex-start" }}>
+          <div key={i} className="row kv-row" style={{ alignItems: "flex-start" }}>
             <input
-              className="input"
+              className="input kv-key"
               placeholder="이름 (예: API_KEY)"
               aria-label="설정 이름"
               value={r.key}
               onChange={(e) => update(i, { key: e.target.value })}
             />
             <input
-              className="input"
+              className="input kv-value"
               placeholder="값"
               aria-label="설정 값"
               type={r.secret ? "password" : "text"}

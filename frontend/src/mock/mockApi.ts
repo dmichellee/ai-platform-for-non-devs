@@ -21,6 +21,7 @@ import type {
   PlatformUser,
   Provider,
   RepoConnection,
+  RestartResult,
   SubdomainCheck,
   UserPermissionTemplate,
 } from "../lib/types.js";
@@ -191,6 +192,31 @@ export class MockApiClient implements ApiClient {
     };
     this.deployments[appId] = [dep, ...(this.deployments[appId] ?? [])];
     return clone(dep);
+  }
+
+  // POST /apps/{id}/restart — 지금 버전 그대로 앱만 다시 켠다(빌드/배포 없음).
+  // 계약 에러: SLEEPING 은 자동 기상 안내(409), 그 외 비ACTIVE 는 준비 상태 안내(409).
+  async restartApp(appId: string): Promise<RestartResult> {
+    await delay();
+    const app = this.findApp(appId);
+    if (app.status === "ACTIVE" && app.runtimeState === "SLEEPING") {
+      throw new ApiError(
+        "INVALID_STATE",
+        "앱이 잠자는 중이에요. 접속 주소로 들어가면 자동으로 켜져요.",
+        409,
+      );
+    }
+    if (app.status !== "ACTIVE") {
+      throw new ApiError(
+        "INVALID_STATE",
+        "앱이 준비된 상태(정상)일 때만 다시 시작할 수 있어요.",
+        409,
+      );
+    }
+    return {
+      appId,
+      note: "앱을 다시 시작하고 있어요. 잠시 후(약 1분) 새로고침해 주세요.",
+    };
   }
 
   async getLogs(

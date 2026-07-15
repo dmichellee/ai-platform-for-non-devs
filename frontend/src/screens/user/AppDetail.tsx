@@ -57,6 +57,7 @@ import type {
   MetricPoint,
   MetricRange,
   PatchAppRequest,
+  RestartResult,
   Schedule,
   SleepMode,
 } from "../../lib/types.js";
@@ -192,15 +193,24 @@ function FailureNotice({ reason }: { reason: string }): JSX.Element {
   );
 }
 
-// ── 상단 액션 (수동 배포 / 재시작 / 삭제) ──
+// ── 상단 액션 (지금 배포 / 재시작 / 삭제) ──
+// "지금 배포"와 "재시작"은 전혀 다른 동작이라 각각 독립 mutation 으로 다룬다:
+//  - 지금 배포: 최신 코드로 다시 빌드해서 배포(몇 분). deploy(appId).
+//  - 재시작:    지금 버전 그대로 앱만 다시 켜기(약 1분). restartApp(appId).
+// 한쪽이 진행 중이어도 다른 쪽 버튼을 잘못 눌러 엉뚱한 동작이 돌지 않도록 각자 disabled/로딩을 가진다.
 function AppActions({ app, onChanged }: { app: App; onChanged: () => void }): JSX.Element {
   const nav = useNavigate();
   const deployMut = useMutation<void, Deployment>((a) => a.deploy(app.appId));
+  const restartMut = useMutation<void, RestartResult>((a) => a.restartApp(app.appId));
   const deleteMut = useMutation<void, unknown>((a) => a.deleteApp(app.appId));
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteText, setDeleteText] = useState("");
+  // 재시작 접수 성공 시 서버가 준 안내(note)를 그대로 보여준다.
+  const [restartNote, setRestartNote] = useState<string | null>(null);
 
   const busy = app.status !== "ACTIVE";
+  // 두 액션 중 하나라도 진행 중이면 서로 간섭하지 않도록 버튼 전체를 비활성.
+  const actionBusy = deployMut.loading || restartMut.loading;
 
   // 배포/재시작 접수 실패는 조용히 삼키지 않고 사용자에게 원인을 보여준다(방침 ② — 에러 노출).
   const runDeploy = async (): Promise<void> => {
@@ -212,15 +222,27 @@ function AppActions({ app, onChanged }: { app: App; onChanged: () => void }): JS
     onChanged();
   };
 
+  // 재시작: 성공하면 note 를 알림으로 보여주고 최신 상태를 다시 불러온다.
+  const runRestart = async (): Promise<void> => {
+    setRestartNote(null);
+    try {
+      const res = await restartMut.run();
+      setRestartNote(res.note);
+    } catch {
+      /* restartMut.error 로 표시 */
+    }
+    onChanged();
+  };
+
   return (
     <div className="stack" style={{ alignItems: "flex-end" }}>
       <div className="row">
         <button
           type="button"
           className="btn btn-ghost"
-          disabled={busy || deployMut.loading}
+          disabled={busy || actionBusy}
           onClick={runDeploy}
-          title="지금 최신 코드로 다시 배포"
+          title="최신 코드로 다시 빌드해서 배포해요 (몇 분 걸려요)"
         >
           <Rocket size={15} className="icon" />
           {deployMut.loading ? "배포 접수 중…" : "지금 배포"}
@@ -228,12 +250,12 @@ function AppActions({ app, onChanged }: { app: App; onChanged: () => void }): JS
         <button
           type="button"
           className="btn btn-ghost"
-          disabled={busy || deployMut.loading}
-          onClick={runDeploy}
-          title="앱 다시 시작"
+          disabled={busy || actionBusy}
+          onClick={runRestart}
+          title="지금 버전 그대로 앱만 다시 켜요 (약 1분)"
         >
           <RefreshCw size={15} className="icon" />
-          재시작
+          {restartMut.loading ? "재시작 중…" : "재시작"}
         </button>
         <button
           type="button"
@@ -246,6 +268,8 @@ function AppActions({ app, onChanged }: { app: App; onChanged: () => void }): JS
         </button>
       </div>
       {deployMut.error && <ErrorNotice error={deployMut.error} />}
+      {restartMut.error && <ErrorNotice error={restartMut.error} />}
+      {restartNote && !restartMut.error && <InfoNotice>{restartNote}</InfoNotice>}
 
       {confirmDelete && (
         <Modal title="앱을 삭제할까요?" onClose={() => setConfirmDelete(false)}>
@@ -746,18 +770,20 @@ function SettingsTab({ app, onSaved }: { app: App; onSaved: () => void }): JSX.E
         <h4>설정값 (환경변수)</h4>
         <div className="stack">
           {envRows.map((r, i) => (
-            <div key={i} className="row">
+            <div key={i} className="row kv-row">
               <input
-                className="input"
+                className="input kv-key"
                 aria-label="설정 이름"
+                placeholder="이름 (예: API_KEY)"
                 value={r.key}
                 onChange={(e) =>
                   setEnvRows((rows) => rows.map((x, idx) => (idx === i ? { ...x, key: e.target.value } : x)))
                 }
               />
               <input
-                className="input"
+                className="input kv-value"
                 aria-label="설정 값"
+                placeholder="값"
                 value={r.value}
                 onChange={(e) =>
                   setEnvRows((rows) => rows.map((x, idx) => (idx === i ? { ...x, value: e.target.value } : x)))
@@ -844,16 +870,16 @@ function SecretsPanel({
           const removed = st?.removed ?? false;
           const replacing = !removed && st?.newValue !== null && st?.newValue !== undefined;
           return (
-            <div key={key} className="row" style={{ alignItems: "center", opacity: removed ? 0.5 : 1 }}>
+            <div key={key} className="row kv-row" style={{ alignItems: "center", opacity: removed ? 0.5 : 1 }}>
               <input
                 className="input mono"
                 aria-label="비밀값 이름"
                 value={key}
                 readOnly
-                style={{ maxWidth: 220, fontWeight: 600 }}
+                style={{ flex: "0 0 220px", maxWidth: 220, fontWeight: 600 }}
               />
               <input
-                className="input"
+                className="input kv-value"
                 type="password"
                 aria-label={`${key} 새 값`}
                 placeholder={removed ? "삭제될 값이에요" : "값 유지 (바꾸려면 새 값 입력)"}
@@ -884,9 +910,9 @@ function SecretsPanel({
         })}
 
         {newSecrets.map((r, i) => (
-          <div key={`new-${i}`} className="row" style={{ alignItems: "center" }}>
+          <div key={`new-${i}`} className="row kv-row" style={{ alignItems: "center" }}>
             <input
-              className="input"
+              className="input kv-key"
               aria-label="새 비밀값 이름"
               placeholder="이름 (예: DB_PASSWORD)"
               value={r.key}
@@ -895,7 +921,7 @@ function SecretsPanel({
               }
             />
             <input
-              className="input"
+              className="input kv-value"
               type="password"
               aria-label="새 비밀값 값"
               placeholder="값"
