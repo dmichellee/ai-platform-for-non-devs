@@ -94,8 +94,28 @@ def poll_build(e: dict[str, Any]) -> dict[str, Any]:
 
 
 def first_deploy(e: dict[str, Any]) -> dict[str, Any]:
-    """앱 파이프라인 첫 실행 트리거 + Deployment(PENDING) 최초 레코드 생성."""
+    """앱 파이프라인 첫 배포 확보 — autoDeployEnabled 여부로 분기(DESIGN.md 3.2/109 정밀화).
+
+    CodePipeline 은 CloudFormation 이 파이프라인을 생성하는 순간 AWS 가 자동으로 첫 실행한다
+    (`CreatePipeline` 트리거 — source 트리거 설정과 무관하게 생성 시 1회, CDK L2 에 억제 옵션 없음).
+    그 자동 실행을 deploy-notify 가 Source STARTED 이벤트로 잡아 auto 배포 레코드를 만든다.
+
+      - autoDeployEnabled=true(기본): 여기서 다시 StartPipelineExecution + put_deployment 하면
+        실행·레코드가 중복된다(이력 2건 버그). 따라서 자동 실행에 위임하고 아무것도 트리거하지
+        않는다(no-op, finalize 로 흐름만 유지). DESIGN.md 109(자동 배포 ON=push 트리거)와 정합.
+      - autoDeployEnabled=false: DESIGN.md 109 상 "OFF 면 웹 배포 버튼(StartPipelineExecution)만"이
+        트리거 소스다. 여기서 명시적으로 StartPipelineExecution + put_deployment(PENDING) 한다.
+        (주의: `CreatePipeline` 자동 실행은 트리거 OFF 여도 문서상 1회 발생할 수 있어, 이 경로가
+         자동 실행과 겹쳐 여전히 2건이 될 여지가 남는다 — autoDeploy=false 앱으로 실측 확인 필요.
+         이번 수정 범위는 기본값 true 경로의 중복 제거다.)
+    """
     app_id = e["appId"]
+    app = _require_app(app_id)
+    # 기본값 true(validate.parse_create_app: autoDeployEnabled 기본 True). 값이 없거나 true 면
+    #  자동 배포로 간주해 파이프라인 생성 시 AWS 자동 첫 실행에 위임한다.
+    if app.get("autoDeployEnabled", True):
+        return {"step": "first-deploy", "appId": app_id, "autoDeploy": True}
+
     pipeline_execution_id = start_pipeline(stage(), app_id)
     put_deployment(
         app_id=app_id,
@@ -103,7 +123,7 @@ def first_deploy(e: dict[str, Any]) -> dict[str, Any]:
         status="PENDING",
         pipeline_execution_id=pipeline_execution_id,
     )
-    out: dict[str, Any] = {"step": "first-deploy", "appId": app_id}
+    out: dict[str, Any] = {"step": "first-deploy", "appId": app_id, "autoDeploy": False}
     if pipeline_execution_id:
         out["pipelineExecutionId"] = pipeline_execution_id
     return out

@@ -144,12 +144,17 @@ def test_poll_build_requires_build_id(ddb_table, p2_clients, prov_env) -> None:
         provision.handle({"step": "poll-build", "appId": "a"})
 
 
-def test_first_deploy_starts_pipeline_and_records_deployment(ddb_table, p2_clients, prov_env) -> None:
-    seed_app(ddb_table, "app5abcd", "user-1", status="CREATING")
+def test_first_deploy_auto_deploy_off_starts_pipeline_and_records_deployment(
+    ddb_table, p2_clients, prov_env
+) -> None:
+    # autoDeployEnabled=false → source 트리거 OFF 라 자동 첫 실행이 없을 수 있다.
+    #  first-deploy 가 유일한 첫 배포 트리거 → StartPipelineExecution + PENDING 레코드 생성.
+    seed_app(ddb_table, "app5abcd", "user-1", status="CREATING", autoDeployEnabled=False)
     p2_clients["codepipeline"].set_response(
         "start_pipeline_execution", {"pipelineExecutionId": "exec-9"}
     )
     out = provision.handle({"step": "first-deploy", "appId": "app5abcd"})
+    assert out["autoDeploy"] is False
     assert out["pipelineExecutionId"] == "exec-9"
     call = p2_clients["codepipeline"].calls_for("start_pipeline_execution")[0]
     assert call["name"] == "apphub-test-app-app5abcd"
@@ -159,6 +164,34 @@ def test_first_deploy_starts_pipeline_and_records_deployment(ddb_table, p2_clien
     assert deps[0]["status"] == "PENDING"
     assert deps[0]["trigger"] == "auto"
     assert deps[0]["pipelineExecutionId"] == "exec-9"
+
+
+def test_first_deploy_auto_deploy_on_delegates_to_auto_execution(
+    ddb_table, p2_clients, prov_env
+) -> None:
+    # autoDeployEnabled=true(기본) → 파이프라인 생성 시 AWS 자동 첫 실행됨.
+    #  first-deploy 는 아무것도 트리거하지 않는다(중복 실행·이력 방지). deploy-notify 가
+    #  Source STARTED 에서 auto 배포 레코드를 만드는 게 유일한 경로.
+    seed_app(ddb_table, "app5auto", "user-1", status="CREATING", autoDeployEnabled=True)
+    out = provision.handle({"step": "first-deploy", "appId": "app5auto"})
+    assert out == {"step": "first-deploy", "appId": "app5auto", "autoDeploy": True}
+    # StartPipelineExecution 미호출.
+    assert p2_clients["codepipeline"].calls_for("start_pipeline_execution") == []
+    # Deployment 레코드도 만들지 않는다(자동 실행이 만든 것을 신뢰).
+    assert list_deployments("app5auto") == []
+
+
+def test_first_deploy_defaults_to_auto_when_flag_missing(ddb_table, p2_clients, prov_env) -> None:
+    # autoDeployEnabled 필드가 없는 앱(구 레코드 등) → 기본 true 로 간주해 no-op(자동 실행 위임).
+    seed_app(ddb_table, "app5miss", "user-1", status="CREATING")
+    ddb_table.update_item(
+        Key={"PK": "APP#app5miss", "SK": "META"},
+        UpdateExpression="REMOVE autoDeployEnabled",
+    )
+    out = provision.handle({"step": "first-deploy", "appId": "app5miss"})
+    assert out["autoDeploy"] is True
+    assert p2_clients["codepipeline"].calls_for("start_pipeline_execution") == []
+    assert list_deployments("app5miss") == []
 
 
 def test_finalize_success_transitions_creating_to_active(ddb_table, p2_clients, prov_env) -> None:
