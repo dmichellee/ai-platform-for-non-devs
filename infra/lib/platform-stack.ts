@@ -605,10 +605,12 @@ export class PlatformStack extends Stack {
     const cdkSourceS3Uri = `s3://${assetsBucket.bucketName}/cdk-source/cdk-src.tgz`;
 
     // ── Kiro 설정 다운로드 정적 경로 (P-M7-01) ─────────────────────────────
-    // "Kiro 설정 다운로드" 버튼은 자산 버킷의 `kiro-config/kiro-config.zip`(고정 키)을 받는다.
-    //  API 왕복 없이(메인 서버 무부하) SPA CloudFront에 `/kiro-config/*` behavior를 붙여 자산 버킷을
-    //  별도 오리진(OAC)으로 서빙한다. SPA 기본 origin은 그대로. 민감정보 없음(공개 다운로드).
-    //  업로드는 scripts/build-kiro-bundle.sh --upload(또는 deploy.sh)가 동일 고정 키로 수행.
+    // "Kiro 설정 다운로드" 버튼은 자산 버킷의 OS별 zip 2개(고정 키)를 받는다:
+    //  `kiro-config/kiro-config-mac.zip`, `kiro-config/kiro-config-windows.zip`.
+    //  API 왕복 없이(메인 서버 무부하) SPA CloudFront에 `/kiro-config/*` behavior(와일드카드)를 붙여
+    //  자산 버킷을 별도 오리진(OAC)으로 서빙한다. 두 zip 모두 이 단일 behavior로 커버된다.
+    //  SPA 기본 origin은 그대로. 민감정보 없음(공개 다운로드).
+    //  업로드는 scripts/build-kiro-bundle.sh --upload(또는 deploy.sh)가 두 고정 키로 모두 수행.
     distribution.addBehavior(
       "/kiro-config/*",
       origins.S3BucketOrigin.withOriginAccessControl(assetsBucket),
@@ -618,8 +620,11 @@ export class PlatformStack extends Stack {
         allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
       },
     );
-    // 프론트 다운로드 고정 경로(config/문서용): https://{cloudFrontDomain}/kiro-config/kiro-config.zip
-    const kiroConfigUrlPath = "/kiro-config/kiro-config.zip";
+    // 프론트 다운로드 고정 경로(config/문서용). OS별 2개:
+    //  https://{cloudFrontDomain}/kiro-config/kiro-config-mac.zip
+    //  https://{cloudFrontDomain}/kiro-config/kiro-config-windows.zip
+    const kiroConfigUrlPathMac = "/kiro-config/kiro-config-mac.zip";
+    const kiroConfigUrlPathWindows = "/kiro-config/kiro-config-windows.zip";
 
     // ── provisioner CodeBuild (앱 스택 cdk deploy용) ────────────────────────
     // D-M5-06: 실 buildspec(provisioner.yml)로 app-pipeline/runtime을 원격 배포한다.
@@ -658,8 +663,9 @@ export class PlatformStack extends Stack {
 
     // 자산 버킷 참조 발행(Output+SSM). deploy.sh(3b)가 Output으로 버킷명을 읽어 고정 키로 업로드.
     this.output("AssetsBucketName", assetsBucket.bucketName);
-    // P-M7-01: Kiro 설정 다운로드 정적 경로. 프론트는 `https://{CloudFrontDomain}{KiroConfigUrlPath}`.
-    this.output("KiroConfigUrlPath", kiroConfigUrlPath);
+    // P-M7-01: Kiro 설정 다운로드 정적 경로(OS별 2개). 프론트는 `https://{CloudFrontDomain}{KiroConfigUrlPath*}`.
+    this.output("KiroConfigUrlPathMac", kiroConfigUrlPathMac);
+    this.output("KiroConfigUrlPathWindows", kiroConfigUrlPathWindows);
 
     // ── Step Functions (ProvisionApp / DeleteApp) — 실 ASL (D-M5-01) ────────
     // 단일 task Lambda + step 디스패치. ASL은 Task 나열 + Wait/Choice(폴링) + Catch(실패 전이) 봉투.
@@ -811,8 +817,9 @@ export class PlatformStack extends Stack {
       "assets-bucket-name": assetsBucket.bucketName,
       "validator-s3-uri": validatorS3Uri,
       "cdk-source-s3-uri": cdkSourceS3Uri,
-      // P-M7-01: Kiro 설정 다운로드 정적 경로(CloudFront behavior). 프론트가 이 경로로 직접 링크.
-      "kiro-config-url-path": kiroConfigUrlPath,
+      // P-M7-01: Kiro 설정 다운로드 정적 경로(CloudFront behavior, OS별 2개). 프론트가 이 경로로 직접 링크.
+      "kiro-config-url-path-mac": kiroConfigUrlPathMac,
+      "kiro-config-url-path-windows": kiroConfigUrlPathWindows,
     });
 
     // ── CloudFormation Outputs (deploy.sh / 문서 소비용) ────────────────────

@@ -3,10 +3,12 @@
  *
  * 검증:
  *  1) 페이지가 렌더되고 핵심 안내 문구가 보인다.
- *  2) 다운로드 버튼(a[download])의 href가 정확하다 — config.kiroConfigUrl 우선, 없으면 기본 경로 폴백.
+ *  2) OS별 다운로드 버튼 2개(Mac / Windows)의 href가 정확하다 —
+ *     config override(kiroConfigUrlMac/Windows) 우선, 없으면 기본 경로 폴백.
  *  3) 탑바 "Kiro 설정" 링크를 누르면 #/kiro-setup 으로 이동한다.
  *  4) 사용자 화면 금지 용어(apphub-conventions §6)가 노출되지 않는다.
- *     (Dockerfile/Kiro/.kiro/8080은 예외 — 사용자가 실제 다루는 단어라 허용)
+ *     (Dockerfile/Kiro/.kiro/8080은 예외 — 사용자가 실제 다루는 단어라 허용.
+ *      PowerShell은 이 페이지 한정 예외 — Windows 사용자가 실제 다루는 도구명. FORBIDDEN에 없음.)
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
@@ -14,7 +16,8 @@ import { KiroSetup } from "../src/screens/user/KiroSetup.js";
 import { TopBar } from "../src/components/common.js";
 import { AuthProvider } from "../src/auth/AuthContext.js";
 import {
-  DEFAULT_KIRO_CONFIG_URL,
+  DEFAULT_KIRO_CONFIG_URL_MAC,
+  DEFAULT_KIRO_CONFIG_URL_WINDOWS,
   setConfigForTest,
   type RuntimeConfig,
 } from "../src/lib/config.js";
@@ -68,10 +71,23 @@ describe("Kiro 설정 다운로드 페이지", () => {
     expect(screen.getByText("프로젝트 맨 위에 복사")).toBeInTheDocument();
     expect(screen.getByText("검사 설치 한 번 실행")).toBeInTheDocument();
     expect(screen.getByText("이제부터 자동 검사")).toBeInTheDocument();
-    // 설치 스크립트 실행 명령 안내(여러 섹션에 등장하므로 존재만 확인).
+    // 설치 스크립트 실행 명령 안내(여러 섹션에 등장하므로 존재만 확인) — Mac/Linux, Windows 둘 다.
     expect(screen.getAllByText(/install-hooks\.sh/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/install-hooks\.ps1/).length).toBeGreaterThan(0);
     // 비개발자 대안(Kiro에게 요청) 문구.
     expect(screen.getByText(/커밋 검사 설치해줘/)).toBeInTheDocument();
+  });
+
+  it("설치 3단계에 Mac/리눅스와 Windows 각각의 실행 방법이 안내된다", async () => {
+    renderWithProviders(<KiroSetup />);
+    await screen.findByText("Kiro 설정 다운로드");
+    // Mac/리눅스: sh install-hooks.sh
+    expect(screen.getAllByText(/sh install-hooks\.sh/).length).toBeGreaterThan(0);
+    // Windows: PowerShell 실행 명령 + 비개발자 힌트(Shift+우클릭).
+    expect(
+      screen.getByText(/powershell -ExecutionPolicy Bypass -File install-hooks\.ps1/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/여기에 PowerShell 창 열기/)).toBeInTheDocument();
   });
 
   it("폴더 트리에 새 번들 구성(steering + hooks/pre-commit + install-hooks.sh)이 반영된다", async () => {
@@ -84,7 +100,9 @@ describe("Kiro 설정 다운로드 페이지", () => {
     expect(treeText).toContain("deployment-standard.md");
     expect(treeText).toContain("hooks/");
     expect(treeText).toContain("pre-commit");
+    // OS별 설치기 2종이 트리에 모두 보인다.
     expect(treeText).toContain("install-hooks.sh");
+    expect(treeText).toContain("install-hooks.ps1");
     // 옛 Kiro hook 파일은 더 이상 트리에 없다.
     expect(treeText).not.toContain("validate-deploy-ready.kiro.hook");
   });
@@ -94,7 +112,8 @@ describe("Kiro 설정 다운로드 페이지", () => {
     await screen.findByText("Kiro 설정 다운로드");
     expect(screen.getByText(/배포 표준 지침 \(steering\)/)).toBeInTheDocument();
     expect(screen.getByText(/커밋 검사 \(pre-commit\)/)).toBeInTheDocument();
-    expect(screen.getByText(/설치 스크립트 \(install-hooks\.sh\)/)).toBeInTheDocument();
+    // 설치 스크립트 카드는 OS별 2종(sh / ps1)을 함께 안내한다.
+    expect(screen.getByText(/설치 스크립트 \(install-hooks\.sh \/ \.ps1\)/)).toBeInTheDocument();
   });
 
   it("팁에 '커밋이 멈췄을 때 안내를 Kiro에게 붙여넣기' 가이드가 있다", async () => {
@@ -103,17 +122,26 @@ describe("Kiro 설정 다운로드 페이지", () => {
     expect(screen.getByText(/커밋이 멈췄을 때/)).toBeInTheDocument();
   });
 
-  it("config에 kiroConfigUrl이 없으면 기본 경로로 다운로드 링크를 건다", async () => {
-    // MOCK_CONFIG에는 kiroConfigUrl이 없다 → 기본 경로 폴백.
+  it("override가 없으면 Mac/Windows 버튼이 각각 기본 경로로 링크된다", async () => {
+    // MOCK_CONFIG에는 kiroConfigUrlMac/Windows가 없다 → 각 기본 경로 폴백.
     renderWithProviders(<KiroSetup />);
-    const dl = await screen.findByTestId("kiro-download");
-    expect(dl).toHaveAttribute("href", DEFAULT_KIRO_CONFIG_URL);
-    expect(dl).toHaveAttribute("download");
+    const mac = await screen.findByTestId("kiro-download-mac");
+    const win = await screen.findByTestId("kiro-download-windows");
+    expect(mac).toHaveAttribute("href", DEFAULT_KIRO_CONFIG_URL_MAC);
+    expect(win).toHaveAttribute("href", DEFAULT_KIRO_CONFIG_URL_WINDOWS);
+    // 둘 다 실제 다운로드 링크여야 한다.
+    expect(mac).toHaveAttribute("download");
+    expect(win).toHaveAttribute("download");
   });
 
-  it("config에 kiroConfigUrl이 있으면 그 값으로 다운로드 링크를 건다", async () => {
-    const custom = "https://cdn.example.com/kiro-config/kiro-config.zip";
-    const cfg: RuntimeConfig = { ...MOCK_CONFIG, kiroConfigUrl: custom };
+  it("override(kiroConfigUrlMac/Windows)가 있으면 각 버튼이 그 값으로 링크된다", async () => {
+    const macCustom = "https://cdn.example.com/kiro-config/kiro-config-mac.zip";
+    const winCustom = "https://cdn.example.com/kiro-config/kiro-config-windows.zip";
+    const cfg: RuntimeConfig = {
+      ...MOCK_CONFIG,
+      kiroConfigUrlMac: macCustom,
+      kiroConfigUrlWindows: winCustom,
+    };
     // renderWithProviders는 내부적으로 setConfigForTest(MOCK_CONFIG)로 설정을 초기화하므로,
     // 여기서는 커스텀 설정을 주입한 뒤 직접 렌더한다(KiroSetup은 useAuth만 필요, useApi 미사용).
     setConfigForTest(cfg);
@@ -122,8 +150,10 @@ describe("Kiro 설정 다운로드 페이지", () => {
         <KiroSetup />
       </AuthProvider>,
     );
-    const dl = await screen.findByTestId("kiro-download");
-    expect(dl).toHaveAttribute("href", custom);
+    const mac = await screen.findByTestId("kiro-download-mac");
+    const win = await screen.findByTestId("kiro-download-windows");
+    expect(mac).toHaveAttribute("href", macCustom);
+    expect(win).toHaveAttribute("href", winCustom);
   });
 
   it("사용자 화면에 AWS 내부 용어가 노출되지 않는다", async () => {

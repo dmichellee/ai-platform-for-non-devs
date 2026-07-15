@@ -15,11 +15,14 @@ export interface RuntimeConfig {
   redirectUri?: string; // 로그인 콜백 (기본: 현재 origin)
   stage?: string;
   /**
-   * Kiro 설정 번들(.zip) 다운로드 경로. CloudFront가 SPA와 같은 오리진에서
-   * `/kiro-config/*` behavior로 자산 버킷을 서빙하므로(platform Output KiroConfigUrlPath),
-   * 기본값은 SPA-상대 경로다. deploy.sh가 config.json에 넣어주면 그 값을 쓰고, 없으면 기본값.
+   * Kiro 설정 번들(.zip) 다운로드 경로 — OS별 2개(Mac / Windows).
+   * CloudFront가 SPA와 같은 오리진에서 `/kiro-config/*` behavior로 자산 버킷을 서빙하므로
+   * (platform Output KiroConfigUrlPath) 기본값은 SPA-상대 경로다. API 왕복 없음(정적 다운로드).
+   * deploy.sh는 이 값들을 config.json에 주입하지 않으므로(기본 경로 폴백이 정상 동작),
+   * override가 없어도 완벽히 동작한다. 사설 CDN 등으로 재정의하고 싶을 때만 넣는다.
    */
-  kiroConfigUrl?: string;
+  kiroConfigUrlMac?: string;
+  kiroConfigUrlWindows?: string;
   /**
    * 앱 접속 도메인(예: apps-dev.example.com). 화면에서 `{subdomain}.{appsDomain}`
    * 실제 접속 주소를 보여주는 데 쓴다. deploy.sh가 config.json에 넣는다.
@@ -37,8 +40,13 @@ export function appsDomainLabel(): string {
   return getCachedConfig()?.appsDomain ?? "apps.회사도메인";
 }
 
-/** Kiro 설정 다운로드 기본 경로(SPA-상대). config.json에 kiroConfigUrl이 없을 때 폴백. */
-export const DEFAULT_KIRO_CONFIG_URL = "/kiro-config/kiro-config.zip";
+/**
+ * Kiro 설정 다운로드 기본 경로(SPA-상대) — OS별 2개.
+ * config.json에 override(kiroConfigUrlMac / kiroConfigUrlWindows)가 없을 때 폴백.
+ * CloudFront `/kiro-config/*` 와일드카드가 두 경로를 모두 서빙한다.
+ */
+export const DEFAULT_KIRO_CONFIG_URL_MAC = "/kiro-config/kiro-config-mac.zip";
+export const DEFAULT_KIRO_CONFIG_URL_WINDOWS = "/kiro-config/kiro-config-windows.zip";
 
 const DEFAULT_MOCK_CONFIG: RuntimeConfig = {
   apiUrl: "",
@@ -79,7 +87,8 @@ export async function loadConfig(): Promise<RuntimeConfig> {
     };
     if (raw.cognitoDomain) cfg.cognitoDomain = raw.cognitoDomain;
     if (raw.region) cfg.region = raw.region;
-    if (raw.kiroConfigUrl) cfg.kiroConfigUrl = raw.kiroConfigUrl;
+    if (raw.kiroConfigUrlMac) cfg.kiroConfigUrlMac = raw.kiroConfigUrlMac;
+    if (raw.kiroConfigUrlWindows) cfg.kiroConfigUrlWindows = raw.kiroConfigUrlWindows;
     if (raw.appsDomain) cfg.appsDomain = raw.appsDomain;
     cached = cfg;
     return cfg;

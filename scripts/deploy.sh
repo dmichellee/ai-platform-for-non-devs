@@ -307,11 +307,12 @@ else
 fi
 
 # ── 3c. Kiro 설정 zip 자동 빌드·업로드 (P-M7-01) ─────────────────────────────
-# 프론트 "Kiro 설정 다운로드"가 서빙하는 정적 zip을 자산 버킷 고정 키로 올린다:
-#   s3://{AssetsBucketName}/kiro-config/kiro-config.zip
-# CloudFront `/kiro-config/*` behavior(P-M7-01)가 이 오브젝트를 서빙한다. 과거에는 수동
+# 프론트 "Kiro 설정 다운로드"가 서빙하는 OS별 정적 zip 2개를 자산 버킷 고정 키로 올린다:
+#   s3://{AssetsBucketName}/kiro-config/kiro-config-mac.zip
+#   s3://{AssetsBucketName}/kiro-config/kiro-config-windows.zip
+# CloudFront `/kiro-config/*` behavior(P-M7-01, 와일드카드)가 두 오브젝트를 모두 서빙한다. 과거에는 수동
 #  (build-kiro-bundle.sh --upload)이라 새 환경 배포 시 zip이 없어 다운로드가 깨졌다 → 자동화.
-# 멱등: build-kiro-bundle.sh 는 zip을 결정적으로 재생성하고 동일 고정 키를 덮어쓴다(재실행 안전).
+# 멱등: build-kiro-bundle.sh 는 두 zip을 결정적으로 재생성하고 동일 고정 키를 덮어쓴다(재실행 안전).
 # 실패 방침(경고+계속): kiro zip 업로드 실패는 "Kiro 설정 다운로드" 페이지만 깨뜨릴 뿐
 #  플랫폼 자체 기동에는 영향이 없으므로 전체 배포를 중단하지 않는다. 대신 명확히 경고하고
 #  사용자에게 수동 재실행 방법을 안내한다(배포 exit 코드는 성공 유지).
@@ -319,9 +320,9 @@ step "3c/5 Kiro 설정 zip 자동 업로드 (build-kiro-bundle.sh --upload)"
 KIRO_UPLOAD_OK="false"
 if [[ -z "${ASSETS_BUCKET}" ]]; then
   log "경고: AssetsBucketName Output 없음 — Kiro 설정 zip 업로드 건너뜀."
-elif bash "${ROOT_DIR}/scripts/build-kiro-bundle.sh" --upload --stage "${STAGE}" --region "${REGION}"; then
+elif bash "${ROOT_DIR}/scripts/build-kiro-bundle.sh" --upload --stage "${STAGE}" --region "${REGION}" --assets-bucket "${ASSETS_BUCKET}"; then
   KIRO_UPLOAD_OK="true"
-  log "Kiro 설정 zip 업로드 OK → s3://${ASSETS_BUCKET}/kiro-config/kiro-config.zip"
+  log "Kiro 설정 zip 업로드 OK → s3://${ASSETS_BUCKET}/kiro-config/{kiro-config-mac.zip, kiro-config-windows.zip}"
 else
   log "경고: Kiro 설정 zip 업로드 실패 — 배포는 계속합니다."
   log "      다운로드 페이지가 깨질 수 있으니 아래를 수동 실행하세요:"
@@ -460,9 +461,11 @@ echo "  앱 도메인       : *.${APPS_DOMAIN}"
 echo "  User Pool       : ${USER_POOL_ID:-<n/a>}"
 if [[ -n "${CF_DOMAIN}" ]]; then
   if [[ "${KIRO_UPLOAD_OK}" == "true" ]]; then
-    echo "  Kiro 설정 다운로드 : https://${CF_DOMAIN}/kiro-config/kiro-config.zip (자동 업로드됨)"
+    echo "  Kiro 설정(Mac)     : https://${CF_DOMAIN}/kiro-config/kiro-config-mac.zip (자동 업로드됨)"
+    echo "  Kiro 설정(Windows) : https://${CF_DOMAIN}/kiro-config/kiro-config-windows.zip (자동 업로드됨)"
   else
-    echo "  Kiro 설정 다운로드 : https://${CF_DOMAIN}/kiro-config/kiro-config.zip"
+    echo "  Kiro 설정(Mac)     : https://${CF_DOMAIN}/kiro-config/kiro-config-mac.zip"
+    echo "  Kiro 설정(Windows) : https://${CF_DOMAIN}/kiro-config/kiro-config-windows.zip"
     echo "                       (경고: 자동 업로드 실패 — 'bash scripts/build-kiro-bundle.sh --upload --stage ${STAGE} --region ${REGION}' 수동 실행 필요)"
   fi
 fi

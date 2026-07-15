@@ -260,10 +260,15 @@ describe("platform 스택", () => {
       expect(paths).toContain("/kiro-config/*");
     });
 
-    it("KiroConfigUrlPath Output이 발행된다(프론트 다운로드 링크 계약, P-M7-01)", () => {
+    it("KiroConfigUrlPath Output(OS별 2개)이 발행된다(프론트 다운로드 링크 계약, P-M7-01)", () => {
       const json = template.toJSON() as { Outputs?: Record<string, { Value?: unknown }> };
-      expect(Object.keys(json.Outputs ?? {})).toContain("KiroConfigUrlPath");
-      expect(json.Outputs!["KiroConfigUrlPath"].Value).toBe("/kiro-config/kiro-config.zip");
+      const keys = Object.keys(json.Outputs ?? {});
+      // OS별 2개 Output. 기존 단일 KiroConfigUrlPath는 제거됐다(하위호환 없음).
+      expect(keys).toContain("KiroConfigUrlPathMac");
+      expect(keys).toContain("KiroConfigUrlPathWindows");
+      expect(keys).not.toContain("KiroConfigUrlPath");
+      expect(json.Outputs!["KiroConfigUrlPathMac"].Value).toBe("/kiro-config/kiro-config-mac.zip");
+      expect(json.Outputs!["KiroConfigUrlPathWindows"].Value).toBe("/kiro-config/kiro-config-windows.zip");
     });
   });
 
