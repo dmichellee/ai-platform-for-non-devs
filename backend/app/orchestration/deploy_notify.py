@@ -11,6 +11,13 @@ DESIGN.md 3.3 마지막 단계 `[Notify] EventBridge → Lambda → DDB Deployme
   2) CodePipeline Pipeline Execution State Change — 파이프라인 종결(SUCCEEDED|FAILED|...).
      SUCCEEDED→SUCCEEDED, FAILED/CANCELED/STOPPED→FAILED(+failureCategory 조회), SUPERSEDED→스킵.
 
+App.status 전이(A안): 파이프라인 종결이 **첫 배포**면 App.status 도 함께 전이한다 — SUCCEEDED 면
+CREATING→ACTIVE(+clear_failure, runtimeState=RUNNING), FAILED 면 CREATING→FAILED(+set_failure).
+"첫 배포인지" 별도 판별하지 않는다 — transition_status 가 allowed_from=["CREATING"] 조건부라
+이미 ACTIVE(2번째 이후 재배포/자동배포)면 조건 불충족으로 no-op 다. 프로비저닝 SFN 의 finalize 는
+성공해도 ACTIVE 로 바꾸지 않으므로(첫 배포는 별도 비동기 파이프라인), 이 전이가 CREATING→ACTIVE 의
+유일한 경로다.
+
 멱등·역행 금지: 이미 종결(SUCCEEDED/FAILED)된 레코드는 스테이지 이벤트로 되돌리지 않는다.
 STATUS_ORDER 인덱스가 현재보다 낮은 값으로도 내리지 않는다(늦게 도착한 이벤트 방어).
 
@@ -22,6 +29,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..data.apps import clear_failure, set_failure, set_runtime_state, transition_status
 from ..data.deployments import list_deployments, put_deployment, update_deployment
 from ..integrations.clients import client
 from ..wake import stage
@@ -40,6 +48,18 @@ _STAGE_STARTED_STATUS = {
 
 # 종결 status(이미 여기 도달했으면 스테이지 이벤트로 되돌리지 않는다).
 _TERMINAL = {"SUCCEEDED", "FAILED"}
+
+# 첫 배포 FAILED 시 App.failureReason 으로 남길 사용자용 한국어 요약(비개발자 대상).
+#  failureCategory(apphub-conventions §4) → 요약. 미상/미매핑은 폴백. 배포 이력에서 상세를 보라는 안내.
+_FIRST_DEPLOY_FAILURE_REASON: dict[str, str] = {
+    "DOCKERFILE_MISSING": "첫 배포에 실패했어요 — 배포에 필요한 설정 파일(Dockerfile)이 없어요. 배포 이력에서 원인을 확인하세요.",
+    "DOCKERFILE_INVALID": "첫 배포에 실패했어요 — 앱 설정이 배포 표준과 달라요. 배포 이력에서 원인을 확인하세요.",
+    "BUILD_FAILED": "첫 배포에 실패했어요 — 앱을 빌드하는 중 오류가 발생했어요. 배포 이력에서 원인을 확인하세요.",
+    "HEALTHCHECK_FAILED": "첫 배포에 실패했어요 — 앱이 상태 확인(/health)에 응답하지 않아요. 배포 이력에서 원인을 확인하세요.",
+    "SOURCE_UNAVAILABLE": "첫 배포에 실패했어요 — 코드 저장소에 접근할 수 없어요. 저장소 연결 상태를 확인하세요.",
+    "DEPLOY_FAILED": "첫 배포에 실패했어요 — 새 버전 적용에 실패했어요. 배포 이력에서 원인을 확인하세요.",
+}
+_FIRST_DEPLOY_FAILURE_FALLBACK = "첫 배포에 실패했어요. 배포 이력에서 원인을 확인하세요."
 
 
 def _pipeline_name(stage_value: str, app_id: str) -> str:
@@ -227,7 +247,12 @@ def _handle_pipeline_event(detail: dict[str, Any], stage_value: str) -> dict[str
     failure_category = None
     if target_status == "FAILED":
         failure_category = _failure_category(stage_value, app_id, execution_id)
-    return _advance(app_id, existing, target_status, failure_category=failure_category)
+    result = _advance(app_id, existing, target_status, failure_category=failure_category)
+    # 첫 배포 완료를 App.status 로도 반영(A안). 조건부 전이라 이미 ACTIVE(재배포)면 no-op.
+    app_transition = _advance_app_status(app_id, target_status, failure_category)
+    if app_transition:
+        result["appStatus"] = app_transition
+    return result
 
 
 def _advance(
@@ -256,6 +281,48 @@ def _advance(
     if failure_category is not None:
         result["failureCategory"] = failure_category
     return result
+
+
+def _advance_app_status(
+    app_id: str, deployment_status: str, failure_category: str | None
+) -> str | None:
+    """첫 배포 파이프라인 종결을 App.status 로 반영(A안). CREATING 일 때만 전이(조건부·멱등).
+
+    - 배포 SUCCEEDED → CREATING→ACTIVE(+clear_failure, +runtimeState=RUNNING). 이미 ACTIVE(재배포)면 no-op.
+    - 배포 FAILED    → CREATING→FAILED(+set_failure). 이미 ACTIVE 인 앱의 재배포 실패는 status 를
+      건드리지 않는다(allowed_from=["CREATING"] 이 보장 — ACTIVE 유지).
+
+    멱등: transition_status 는 조건부 쓰기라 조건 불충족(이미 다른 상태)이면 예외를 던진다 — 여기서
+    삼켜 no-op 로 만든다. 같은 종결 이벤트가 여러 번 와도(재시도) 두 번째부터는 이미 전이돼 no-op.
+    상태 부수효과(clear_failure/set_failure/runtimeState)는 전이가 실제로 성공한 경우에만 수행한다.
+
+    반환: 실제로 전이가 일어났으면 새 status("ACTIVE"|"FAILED"), 아니면 None(로그·결과 표기용).
+    """
+    if deployment_status == "SUCCEEDED":
+        try:
+            transition_status(app_id, "ACTIVE", ["CREATING"])
+        except Exception:  # noqa: BLE001 - CREATING 아니면(이미 ACTIVE 재배포 등) 조건 실패를 삼킴(멱등)
+            return None
+        # 첫 배포 성공 잔재(프로비저닝 재시도 실패 사유 등) 제거 + 태스크가 실제로 떴으니 RUNNING.
+        #  Deploy 스테이지가 TG healthy 를 확인하고 SUCCEEDED 이므로 태스크는 기동+정상 상태다.
+        #  wake-restore 는 첫 배포 중엔 status!=ACTIVE 라 runtimeState 를 못 올려 SLEEPING 에 갇힌다 —
+        #  여기서 RUNNING 을 명시 기록해 always-on/on-demand 모두 화면·잠자기 판정을 정합화한다.
+        clear_failure(app_id)
+        try:
+            set_runtime_state(app_id, "RUNNING")
+        except Exception:  # noqa: BLE001 - runtimeState 기록 실패는 상태 전이를 막지 않음(멱등)
+            pass
+        return "ACTIVE"
+
+    # deployment_status == "FAILED"
+    try:
+        transition_status(app_id, "FAILED", ["CREATING"])
+    except Exception:  # noqa: BLE001 - CREATING 아니면(이미 ACTIVE 재배포 실패 등) 삼킴 → ACTIVE 유지
+        return None
+    reason = _FIRST_DEPLOY_FAILURE_REASON.get(failure_category or "", _FIRST_DEPLOY_FAILURE_FALLBACK)
+    detail = f"첫 배포 실패 — 분류: {failure_category or '미상'}"
+    set_failure(app_id, reason, detail)
+    return "FAILED"
 
 
 def handle_event(event: dict[str, Any]) -> dict[str, Any]:

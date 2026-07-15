@@ -11,6 +11,7 @@ CodePipeline 상태변화 EventBridge 이벤트 → DDB Deployment 갱신:
 from __future__ import annotations
 
 import pytest
+from app.data.apps import get_app
 from app.data.deployments import list_deployments, put_deployment
 from app.orchestration import deploy_notify as dn
 
@@ -57,6 +58,12 @@ def _seed_manual_pending(ddb_table) -> None:
     """수동 배포 접수 레코드(pipelineExecutionId=EXEC, PENDING) 시드."""
     seed_app(ddb_table, APP, OWNER, status="ACTIVE")
     put_deployment(app_id=APP, trigger="manual", pipeline_execution_id=EXEC)
+
+
+def _seed_first_deploy_pending(ddb_table, **app_overrides) -> None:
+    """첫 배포 상황 시드 — App=CREATING(runtimeState=SLEEPING) + 자동 배포 레코드(PENDING)."""
+    seed_app(ddb_table, APP, OWNER, status="CREATING", runtimeState="SLEEPING", **app_overrides)
+    put_deployment(app_id=APP, trigger="auto", pipeline_execution_id=EXEC)
 
 
 def _only(ddb_table) -> dict:
@@ -177,6 +184,110 @@ def test_pipeline_superseded_skipped_not_succeeded(ddb_table, p2_clients, notify
     res = dn.handle_event(_pipeline_event("SUPERSEDED"))
     assert "skipped" in res["reason"]
     assert _only(ddb_table)["status"] == "VALIDATING"
+
+
+# ── 첫 배포 완료 → App.status 전이(A안) ───────────────────────────────────────
+
+
+def test_first_deploy_succeeded_promotes_app_to_active(ddb_table, p2_clients, notify_env) -> None:
+    """첫 배포 SUCCEEDED → App CREATING→ACTIVE(+runtimeState=RUNNING). Deployment 도 SUCCEEDED."""
+    _seed_first_deploy_pending(ddb_table)
+    res = dn.handle_event(_pipeline_event("SUCCEEDED"))
+    assert res["status"] == "SUCCEEDED"  # Deployment 종결
+    assert res["appStatus"] == "ACTIVE"  # App 전이 발생
+    app = get_app(APP)
+    assert app["status"] == "ACTIVE"
+    assert app["runtimeState"] == "RUNNING"
+
+
+def test_first_deploy_succeeded_clears_prior_failure(ddb_table, p2_clients, notify_env) -> None:
+    """첫 배포 SUCCEEDED 로 ACTIVE 전이 시 이전 실패 사유 잔재를 제거한다."""
+    _seed_first_deploy_pending(
+        ddb_table,
+        failureReason="이전 실패 사유",
+        failureDetail="단계: allocate-slot | boom",
+    )
+    dn.handle_event(_pipeline_event("SUCCEEDED"))
+    app = get_app(APP)
+    assert app["status"] == "ACTIVE"
+    assert "failureReason" not in app
+    assert "failureDetail" not in app
+
+
+def test_first_deploy_failed_marks_app_failed_with_reason(ddb_table, p2_clients, notify_env) -> None:
+    """첫 배포 FAILED → App CREATING→FAILED(+failureReason). failureCategory 에 맞춘 한국어 요약."""
+    _seed_first_deploy_pending(ddb_table)
+    p2_clients["codepipeline"].set_response(
+        "list_action_executions",
+        {
+            "actionExecutionDetails": [
+                {
+                    "stageName": "ValidateBuild",
+                    "status": "Failed",
+                    "output": {"executionResult": {"externalExecutionId": "build-1"}},
+                }
+            ]
+        },
+    )
+    p2_clients["codebuild"].set_response(
+        "batch_get_builds",
+        {
+            "builds": [
+                {
+                    "exportedEnvironmentVariables": [
+                        {"name": "FAILURE_CATEGORY", "value": "DOCKERFILE_INVALID"}
+                    ]
+                }
+            ]
+        },
+    )
+    res = dn.handle_event(_pipeline_event("FAILED"))
+    assert res["failureCategory"] == "DOCKERFILE_INVALID"
+    assert res["appStatus"] == "FAILED"
+    app = get_app(APP)
+    assert app["status"] == "FAILED"
+    assert "첫 배포에 실패했어요" in app["failureReason"]
+    assert "DOCKERFILE_INVALID" in app["failureDetail"]
+
+
+def test_first_deploy_failed_unknown_category_uses_fallback_reason(ddb_table, p2_clients, notify_env) -> None:
+    """failureCategory 미매핑(INTERNAL_ERROR 등)이면 폴백 한국어 요약을 남긴다."""
+    _seed_first_deploy_pending(ddb_table)
+    # list_action_executions stub 기본 {} → INTERNAL_ERROR 로 분류.
+    res = dn.handle_event(_pipeline_event("FAILED"))
+    assert res["failureCategory"] == "INTERNAL_ERROR"
+    assert res["appStatus"] == "FAILED"
+    assert get_app(APP)["failureReason"] == "첫 배포에 실패했어요. 배포 이력에서 원인을 확인하세요."
+
+
+def test_redeploy_failed_does_not_flip_active_to_failed(ddb_table, p2_clients, notify_env) -> None:
+    """이미 ACTIVE 인 앱의 재배포 실패는 App.status 를 FAILED 로 만들지 않는다(ACTIVE 유지)."""
+    _seed_manual_pending(ddb_table)  # App=ACTIVE
+    res = dn.handle_event(_pipeline_event("FAILED"))
+    assert res["status"] == "FAILED"  # Deployment 는 FAILED
+    assert "appStatus" not in res  # App 전이는 no-op(CREATING 아님)
+    assert get_app(APP)["status"] == "ACTIVE"  # ACTIVE 유지
+
+
+def test_redeploy_succeeded_does_not_touch_active_status(ddb_table, p2_clients, notify_env) -> None:
+    """이미 ACTIVE 인 앱의 재배포 SUCCEEDED 는 App.status/runtimeState 를 건드리지 않는다."""
+    _seed_manual_pending(ddb_table)  # App=ACTIVE, runtimeState=RUNNING(seed 기본)
+    dn.handle_event(_stage_event("Deploy", "STARTED"))
+    res = dn.handle_event(_pipeline_event("SUCCEEDED"))
+    assert res["status"] == "SUCCEEDED"
+    assert "appStatus" not in res  # 조건부 전이 no-op
+    assert get_app(APP)["status"] == "ACTIVE"
+
+
+def test_first_deploy_succeeded_idempotent_second_event_noop(ddb_table, p2_clients, notify_env) -> None:
+    """첫 배포 SUCCEEDED 이벤트가 두 번 와도 두 번째는 이미 ACTIVE 라 no-op(멱등)."""
+    _seed_first_deploy_pending(ddb_table)
+    first = dn.handle_event(_pipeline_event("SUCCEEDED"))
+    assert first["appStatus"] == "ACTIVE"
+    # 두 번째 동일 이벤트 — Deployment 는 terminal 보존, App 전이는 조건 불충족 no-op.
+    second = dn.handle_event(_pipeline_event("SUCCEEDED"))
+    assert "appStatus" not in second
+    assert get_app(APP)["status"] == "ACTIVE"
 
 
 # ── failureCategory 3분기 ────────────────────────────────────────────────────

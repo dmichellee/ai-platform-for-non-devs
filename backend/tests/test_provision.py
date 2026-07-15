@@ -183,12 +183,13 @@ def test_first_deploy_noop_regardless_of_missing_flag(ddb_table, p2_clients, pro
     assert list_deployments("app5miss") == []
 
 
-def test_finalize_success_transitions_creating_to_active(ddb_table, p2_clients, prov_env) -> None:
+def test_finalize_success_keeps_creating(ddb_table, p2_clients, prov_env) -> None:
+    # A안: 프로비저닝 성공 finalize 는 ACTIVE 로 전이하지 않고 CREATING 을 유지한다.
+    #  ACTIVE 전이는 첫 배포 파이프라인 SUCCEEDED 시 deploy-notify 가 수행한다.
     seed_app(ddb_table, "app6abcd", "user-1", status="CREATING", runtimeState="SLEEPING")
     out = provision.handle({"step": "finalize", "appId": "app6abcd"})
-    assert out["status"] == "ACTIVE"
-    assert out["runtimeState"] == "SLEEPING"
-    assert get_app("app6abcd")["status"] == "ACTIVE"
+    assert out["status"] == "CREATING"
+    assert get_app("app6abcd")["status"] == "CREATING"
 
 
 def test_finalize_failure_transitions_creating_to_failed(ddb_table, p2_clients, prov_env) -> None:
@@ -276,8 +277,9 @@ def test_finalize_failure_without_step_uses_provision_fallback(ddb_table, p2_cli
     assert app["failureReason"].startswith("앱을 만드는 중 문제가 발생했어요.")
 
 
-def test_finalize_success_clears_prior_failure(ddb_table, p2_clients, prov_env) -> None:
-    # 재시도 성공 후 이전 실패 잔재가 제거되어야 한다.
+def test_finalize_success_does_not_clear_failure_yet(ddb_table, p2_clients, prov_env) -> None:
+    # A안: 성공 finalize 는 status 를 CREATING 유지하고 clear_failure 도 하지 않는다.
+    #  실패 사유 잔재 제거는 첫 배포 SUCCEEDED 시 deploy-notify 가 담당한다(status→ACTIVE 와 함께).
     seed_app(
         ddb_table,
         "appf06abc",
@@ -287,7 +289,6 @@ def test_finalize_success_clears_prior_failure(ddb_table, p2_clients, prov_env) 
         failureDetail="단계: allocate-slot | boom",
     )
     out = provision.handle({"step": "finalize", "appId": "appf06abc"})
-    assert out["status"] == "ACTIVE"
+    assert out["status"] == "CREATING"
     app = get_app("appf06abc")
-    assert "failureReason" not in app
-    assert "failureDetail" not in app
+    assert app["status"] == "CREATING"

@@ -3,8 +3,12 @@
 step 흐름(ASL 이 Wait/Choice/Retry/Catch 로 감싼다):
   allocate-slot → deploy-pipeline(provisioner CodeBuild StartBuild)
     → poll-build(Choice buildStatus=SUCCEEDED + Wait 루프) → first-deploy(StartPipelineExecution)
-    → finalize(status CREATING→ACTIVE/FAILED).
+    → finalize(성공: status CREATING 유지 / 실패: CREATING→FAILED).
 Catch(States.ALL) → finalize(outcome=failure) → Fail.
+
+프로비저닝 성공은 status 를 ACTIVE 로 바꾸지 않는다(A안) — 첫 배포(앱 빌드·기동)는 별도 비동기
+파이프라인이라, 그 파이프라인이 SUCCEEDED 로 종결될 때 deploy-notify 가 CREATING→ACTIVE 로,
+FAILED 면 CREATING→FAILED 로 전이한다. CREATING 은 프로비저닝 시작부터 첫 배포 완료까지 유지된다.
 
 각 step 반환에 다음 Choice 가 쓸 필드(buildId/buildStatus 등)를 포함한다.
 appId 기준 중복 실행 방지는 SFN execution name(=appId)이 1차, finalize 의 조건부 전이가 2차 방어선.
@@ -15,7 +19,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from ..data.alb_registry import allocate_alb_slot
-from ..data.apps import clear_failure, get_app, set_failure, transition_status, update_app
+from ..data.apps import get_app, set_failure, transition_status, update_app
 from ..integrations.codebuild import get_build_status, start_provisioner_build
 from ..integrations.ssm import alb_arn_for_scheme, network_param, platform_param
 from . import stage
@@ -113,10 +117,20 @@ def first_deploy(e: dict[str, Any]) -> dict[str, Any]:
 
 
 def finalize(e: dict[str, Any]) -> dict[str, Any]:
-    """상태 전이 확정. 실패면 CREATING→FAILED, 성공이면 CREATING→ACTIVE(조건부·멱등).
+    """프로비저닝 단계 종결. 실패면 CREATING→FAILED. 성공이면 status 를 건드리지 않는다.
 
-    실패 시 App 레코드에 failureReason/failureDetail 을 남겨 앱 상세에서 사유를 볼 수 있게 한다
-    (배포 이력에 잡히기 전 단계 실패도 화면 노출). 성공 시 이전 실패 사유 잔재를 제거한다.
+    성공(outcome=success)의 의미: ALB 슬롯 배정 + provisioner 빌드(app-pipeline 스택 cdk deploy)
+    완료 + 첫 배포 파이프라인의 CreatePipeline 자동 실행 트리거까지. 하지만 이 시점엔 아직 첫 배포
+    (앱 빌드·기동)가 진행 중이라 앱이 실제로 뜬 게 아니다. 따라서 CREATING→ACTIVE 전이는 여기서
+    하지 않고, 첫 배포 파이프라인이 SUCCEEDED 로 종결될 때 deploy-notify 가 수행한다(A안).
+      - 첫 배포 SUCCEEDED → deploy-notify 가 CREATING→ACTIVE (+ clear_failure, runtimeState=RUNNING)
+      - 첫 배포 FAILED    → deploy-notify 가 CREATING→FAILED (+ set_failure)
+    finalize 성공은 status 를 CREATING 그대로 두므로 clear_failure 도 여기서 하지 않는다
+    (첫 배포 성공 시 deploy-notify 가 잔재를 제거한다).
+
+    실패 시(outcome=failure)는 프로비저닝 단계 자체 실패(슬롯 배정/빌드 환경 구성/스택 생성)이므로
+    첫 배포에 도달하지 못한다 — 여전히 여기서 CREATING→FAILED 로 확정하고 App 레코드에
+    failureReason/failureDetail 을 남겨 앱 상세에서 사유를 볼 수 있게 한다(배포 이력에 잡히기 전 단계).
     """
     app_id = e["appId"]
     if e.get("outcome") == "failure":
@@ -128,11 +142,9 @@ def finalize(e: dict[str, Any]) -> dict[str, Any]:
         except Exception:  # noqa: BLE001 - 이미 다른 상태면 전이 실패를 삼킴(멱등)
             pass
         return {"step": "finalize", "appId": app_id, "status": "FAILED"}
-    transition_status(app_id, "ACTIVE", ["CREATING"])
-    clear_failure(app_id)  # 재시도 성공 후 잔재 제거.
-    app = get_app(app_id)
-    runtime_state = (app or {}).get("runtimeState") or "SLEEPING"
-    return {"step": "finalize", "appId": app_id, "status": "ACTIVE", "runtimeState": runtime_state}
+    # 성공: status 는 CREATING 유지(ACTIVE 전이는 첫 배포 완료 시 deploy-notify 담당).
+    #  ASL 은 finalize 반환 status 를 검사하지 않고 곧장 Succeed 로 종료하므로 흐름은 그대로 유효하다.
+    return {"step": "finalize", "appId": app_id, "status": "CREATING"}
 
 
 _DISPATCH: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
