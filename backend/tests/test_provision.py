@@ -24,6 +24,8 @@ def _ssm(overrides: dict[str, str] | None = None) -> SsmStub:
     params = {
         f"/apphub/{STAGE}/network/internal-alb-arn": INTERNAL_ALB,
         f"/apphub/{STAGE}/network/internet-alb-arn": "arn:...:internet",
+        # VPC 선택 제거 후: allocate-slot 이 배치 VPC 를 network SSM(vpc-id)에서 확정한다.
+        f"/apphub/{STAGE}/network/vpc-id": "vpc-platform",
         f"/apphub/{STAGE}/platform/provisioner-project-name": "apphub-test-provisioner",
     }
     params.update(overrides or {})
@@ -39,7 +41,8 @@ def test_unknown_step_raises(ddb_table, prov_env) -> None:
 
 def test_allocate_slot_assigns_priority_and_persists(ddb_table, p2_clients, prov_env) -> None:
     _ssm()
-    seed_app(ddb_table, "app1abcd", "user-1", status="CREATING", scheme="internal", vpcId="vpc-1")
+    # App 레코드에 vpcId 는 더 이상 없다(VPC 선택 제거). 배치 VPC 는 network SSM 에서 확정된다.
+    seed_app(ddb_table, "app1abcd", "user-1", status="CREATING", scheme="internal")
     out = provision.handle({"step": "allocate-slot", "appId": "app1abcd"})
     assert out["step"] == "allocate-slot"
     assert out["albArn"] == INTERNAL_ALB
@@ -49,8 +52,10 @@ def test_allocate_slot_assigns_priority_and_persists(ddb_table, p2_clients, prov
     app = get_app("app1abcd")
     assert app["albArn"] == INTERNAL_ALB
     assert app["rulePriority"] == 1
-    # 레지스트리 시드됨.
-    assert any(i.get("albArn") == INTERNAL_ALB for i in list_alb_registry())
+    # 레지스트리 시드됨 — vpcId 는 network SSM(vpc-id)에서 확정된 플랫폼 VPC.
+    reg_items = [i for i in list_alb_registry() if i.get("albArn") == INTERNAL_ALB]
+    assert len(reg_items) == 1
+    assert reg_items[0]["vpcId"] == "vpc-platform"
 
 
 def test_allocate_slot_idempotent_when_already_assigned(ddb_table, p2_clients, prov_env) -> None:

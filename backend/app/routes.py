@@ -22,7 +22,9 @@ from .handlers.admin import (
     update_preset,
 )
 from .handlers.apps import (
+    admin_delete_app,
     admin_list_apps,
+    admin_stop_app,
     create_app,
     delete_app,
     get_app_detail,
@@ -34,7 +36,6 @@ from .handlers.catalog import (
     get_permission_templates_public,
     get_presets_public,
     get_providers_public,
-    get_vpcs_public,
 )
 from .handlers.connections import (
     create_connection_repo,
@@ -79,7 +80,6 @@ def build_router() -> Router:
     r.get("/presets", get_presets_public)
     r.get("/permission-templates", get_permission_templates_public)
     r.get("/subdomains/check", check_subdomain)
-    r.get("/vpcs", get_vpcs_public)
     r.get("/providers", get_providers_public)
 
     # ── 레포 연결 ──────────────────────────────────────────────────────────────
@@ -113,6 +113,8 @@ def build_router() -> Router:
 
     # ── 관리자: 전체 현황 / 인프라 ───────────────────────────────────────────
     r.get("/admin/apps", admin_list_apps)
+    r.post("/admin/apps/:id/stop", admin_stop_app)
+    r.delete("/admin/apps/:id", admin_delete_app)
     r.get("/admin/alb-registry", get_alb_registry)
 
     return r

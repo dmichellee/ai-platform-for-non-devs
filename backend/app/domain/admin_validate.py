@@ -79,13 +79,6 @@ def parse_admin_settings(raw: str | None) -> dict[str, Any]:
     ):
         raise errors.validation("저장소 방식 목록이 올바르지 않아요.")
 
-    registered_vpcs = body.get("registeredVpcs")
-    if not isinstance(registered_vpcs, list) or not all(
-        isinstance(v, dict) and isinstance(v.get("vpcId"), str) and isinstance(v.get("label"), str)
-        for v in registered_vpcs
-    ):
-        raise errors.validation("VPC 목록 형식이 올바르지 않아요.")
-
     user_app_quota = body.get("userAppQuota")
     if not _is_int(user_app_quota) or user_app_quota < 0:
         raise errors.validation("앱 쿼터는 0 이상의 정수여야 해요.")
@@ -94,17 +87,14 @@ def parse_admin_settings(raw: str | None) -> dict[str, Any]:
     if not isinstance(allow_internet_facing, bool):
         raise errors.validation("회사 밖 접속 허용 값은 true/false여야 해요.")
 
-    log_retention_days = body.get("logRetentionDays", 30)
-    if not _is_number(log_retention_days) or log_retention_days <= 0:
-        raise errors.validation("로그 보존 기간이 올바르지 않아요.")
-
-    # allowedBaseImages 는 제거됨(베이스 이미지 허용목록 기능 폐기). body 에 와도 무시한다.
+    # 아래 두 필드는 제거됨(body 에 와도 무시 — allowedBaseImages 와 동일 패턴):
+    #  - registeredVpcs: VPC 등록/선택 기능 폐기(1차 플랫폼 부트스트랩 VPC 단일 배치, DESIGN 3.7·10장).
+    #  - logRetentionDays: 미사용 설정 폐기.
+    #  구 클라이언트가 이 키들을 보내도 검증하지 않고 반환 dict 에도 담지 않는다.
     return {
         "enabledProviders": enabled_providers,
-        "registeredVpcs": registered_vpcs,
         "userAppQuota": user_app_quota,
         "allowInternetFacing": allow_internet_facing,
-        "logRetentionDays": log_retention_days,
     }
 
 

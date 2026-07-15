@@ -9,9 +9,6 @@
                               displayName/permId 만 노출(마법사 선택에는 이 둘이면 충분).
                               "기본"(permId="default")이 있으면 맨 앞에 정렬(마법사 첫 선택지).
 - GET /subdomains/check     → 서브도메인 실시간 중복/형식 확인(입력 중 가벼운 확인).
-- GET /vpcs                 → 관리자가 등록한 네트워크 목록({vpcId, label}만).
-                              admin settings 는 admin 전용이라 마법사가 못 보므로,
-                              앱을 만들 네트워크 선택에 필요한 두 필드만 노출한다.
 - GET /providers            → 관리자가 활성화한 저장소 provider 목록(기능 요구사항 3:
                               연결 가능한 저장소 종류는 관리자가 활성/비활성).
                               연결 추가 화면이 활성 provider 카드만 보여주는 데 사용.
@@ -62,22 +59,6 @@ def get_providers_public(ctx: RouteContext) -> ProxyResult:
     require_user(ctx.identity)
     enabled = get_admin_settings().get("enabledProviders") or []
     items = [p for p in enabled if isinstance(p, str)]
-    return list_response(items)
-
-
-def get_vpcs_public(ctx: RouteContext) -> ProxyResult:
-    """마법사: 관리자가 등록한 네트워크 목록. 인증만 필요.
-
-    admin settings 전체는 admin 전용이므로, 앱 생성에 필요한
-    registeredVpcs 의 {vpcId, label} 두 필드만 노출한다.
-    """
-    require_user(ctx.identity)
-    vpcs = get_admin_settings().get("registeredVpcs") or []
-    items = [
-        {"vpcId": v.get("vpcId"), "label": v.get("label")}
-        for v in vpcs
-        if isinstance(v, dict) and v.get("vpcId")
-    ]
     return list_response(items)
 
 

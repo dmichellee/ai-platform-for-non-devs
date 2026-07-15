@@ -13,6 +13,8 @@ import {
   aws_codebuild as codebuild,
   aws_cognito as cognito,
   aws_dynamodb as dynamodb,
+  aws_events as events,
+  aws_events_targets as events_targets,
   aws_iam as iam,
   aws_lambda as lambda,
   aws_logs as logs,
@@ -54,6 +56,8 @@ export class PlatformStack extends Stack {
   readonly provisioner: codebuild.Project;
   readonly provisionStateMachine: sfn.StateMachine;
   readonly deleteStateMachine: sfn.StateMachine;
+  /** DESIGN 3.3 [Notify]: CodePipeline 상태 → DDB Deployment 레코드 갱신 Lambda */
+  readonly deployNotifyFunction: lambda.Function;
 
   constructor(scope: Construct, id: string, props: PlatformStackProps) {
     super(scope, id, props);
@@ -213,6 +217,12 @@ export class PlatformStack extends Stack {
         USER_POOL_CLIENT_ID: userPoolClient.userPoolClientId,
         STAGE: config.stage,
         APPS_DOMAIN: config.appsDomain,
+        // D18: 공유 ECS 클러스터명(`${prefix}-cluster`). 관리자 강제 중지(POST /admin/apps/{id}/stop →
+        //  sleep_app(force=True))가 API Lambda 프로세스 안에서 app/wake/ecs_service.py의
+        //  describe_services/update_service를 cluster 인자로 호출한다(app/wake/__init__.py cluster_name()이
+        //  이 env를 읽음 — 미주입 시 RuntimeError, 폴백 없음). network-stack commonEnv와 동일 규약으로
+        //  결정론적 이름을 직접 주입(크로스스택 참조/SSM 런타임 조회 없음).
+        CLUSTER_NAME: `${prefix}-cluster`,
         // 핸들러 CORS(app/http/cors.py)가 요청 Origin을 허용 목록과
         //  대조해 그대로 에코한다(와일드카드 * 미사용 — D17/PLATFORM-ENGINEERING과 무관하나 보안 관행).
         //  허용 origin은 SPA CloudFront 도메인. dev는 Vite dev 서버(localhost:5173)도 함께 허용
@@ -391,6 +401,120 @@ export class PlatformStack extends Stack {
       }),
     );
 
+    // (6) 관리자 강제 중지 (POST /admin/apps/{id}/stop → app/wake/sleep.py sleep_app(force=True), D-M4-04/D-M5-03).
+    //     이 경로는 API Lambda 프로세스 안에서(비동기 Waker/SFN 아님) 앱을 재운다:
+    //       ECS desiredCount=0(ensure_stopped) + 리스너 규칙 forward를 공유 Waker TG로 전환(transition_listener_rule)
+    //       + runtimeState=SLEEPING. 이를 위해 network의 wake Lambda(waker/sleep)와 동일한 ECS/SSM/ELB 권한이
+    //       API 역할에도 필요하다(network-stack.ts grantWakeFunctionPermissions와 동일 ARN 패턴).
+    //     주의: DescribeTargetGroups(find_app_target_group_arn)는 위 AppMetricsRead에 이미 있으므로 중복 추가하지 않는다.
+    //
+    // (6a) ECS 강제 중지 — 공유 클러스터(D18) 하위 앱 서비스만.
+    //      ARN 경로: service/{prefix}-cluster/{prefix}-app-*  (network-stack appServiceArn과 동일 — 공유 클러스터 경로).
+    //      D18 이전엔 클러스터명=서비스명 가정이었으나 공유 클러스터로 경로가 변경됐다(service/{cluster}/{service}).
+    apiHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "AdminStopEcs",
+        actions: ["ecs:DescribeServices", "ecs:UpdateService"],
+        resources: [
+          this.formatArn({
+            service: "ecs",
+            resource: "service",
+            resourceName: `${prefix}-cluster/${prefix}-app-*`,
+          }),
+        ],
+      }),
+    );
+    // (6b) network 공유값 SSM 읽기 — sleep_app이 listener_arn_for_scheme/network_param으로 리스너 ARN·
+    //      waker-tg-arn·apps-domain을 읽는다(app/integrations/ssm.py, /apphub/{stage}/network/* 경로만 사용).
+    //      network-stack grantWakeFunctionPermissions의 ssmNetworkArn(ReadNetworkSsm)과 동일 패턴.
+    apiHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "ReadNetworkSsm",
+        actions: ["ssm:GetParameter", "ssm:GetParameters"],
+        resources: [
+          this.formatArn({
+            service: "ssm",
+            resource: "parameter",
+            resourceName: `apphub/${config.stage}/network/*`,
+          }),
+        ],
+      }),
+    );
+    // (6c) 리스너 규칙 forward 전환 — transition_listener_rule이 host 규칙의 forward 대상을 공유 Waker TG로 교체.
+    //      ModifyRule은 listener-rule ARN을 지원하나 앱 규칙 ARN을 사전에 알 수 없어(런타임 조회)
+    //      listener-rule/app/* 와일드카드로 좁힌다(network-stack elbControl의 listenerRuleArn과 동일 패턴).
+    apiHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "AdminStopElbRules",
+        actions: ["elasticloadbalancing:ModifyRule"],
+        resources: [
+          this.formatArn({
+            service: "elasticloadbalancing",
+            resource: "listener-rule/app",
+            resourceName: "*",
+            arnFormat: ArnFormat.SLASH_RESOURCE_NAME,
+          }),
+        ],
+      }),
+    );
+    // (6d) ELB Describe 계열 — DescribeRules(find_rule_by_host)·DescribeListeners는 리소스 레벨 미지원 →
+    //      Resource:"*" (정당 예외, conventions 7장). network-stack elbControl의 ElbDescribe와 동일 근거(read-only).
+    //      DescribeTargetGroups는 AppMetricsRead에 이미 있어 여기서는 제외(중복 금지).
+    apiHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "AdminStopElbDescribe",
+        actions: [
+          "elasticloadbalancing:DescribeRules",
+          "elasticloadbalancing:DescribeListeners",
+        ],
+        resources: ["*"],
+      }),
+    );
+
+    // (7) 앱 시크릿 CRUD (POST/DELETE /apps/{id}/secrets 등, D-M5-03 시크릿 관리).
+    //     backend가 `apphub/{stage}/app/{appId}/{KEY}`(슬래시) 이름으로 시크릿을 CRUD한다.
+    //     appSecretArn(path 스타일 `apphub/{stage}/app/*`)이 6자 랜덤 suffix까지 커버 —
+    //     delete-task의 DeleteSecret과 동일 상수를 공유(하이픈 규약 AccessDenied 회귀 방지).
+    apiHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "AppSecretsCrud",
+        actions: [
+          "secretsmanager:CreateSecret",
+          "secretsmanager:PutSecretValue",
+          "secretsmanager:DescribeSecret",
+          "secretsmanager:DeleteSecret",
+        ],
+        resources: [this.appSecretArn(config.stage)],
+      }),
+    );
+    // (8) 롤백 이미지 태그 확인 (GET /apps/{id}/deployments 등 롤백 후보 조회, D-M5-03 롤백).
+    //     ecr:DescribeImages는 repository ARN을 지원 → 앱 ECR 리포(apphub-{stage}-app-*)로 한정.
+    //     (app-pipeline construct가 만드는 리포 명명 규약 apphub-{stage}-app-{appId}.)
+    apiHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "AppEcrImages",
+        actions: ["ecr:DescribeImages"],
+        resources: [
+          this.formatArn({
+            service: "ecr",
+            resource: "repository",
+            resourceName: `${prefix}-app-*`,
+            arnFormat: ArnFormat.SLASH_RESOURCE_NAME,
+          }),
+        ],
+      }),
+    );
+    // (9) 롤백 runtime 재배포 트리거 (POST /apps/{id}/rollback → provisioner StartBuild, D-M5-03 롤백).
+    //     롤백은 선택 이미지 태그로 runtime 스택을 재배포하므로 provisioner CodeBuild를 시작한다.
+    //     provisionerBuildArn(`${prefix}-provisioner`)로 한정 — task Lambda의 StartPollProvisioner와 동일 대상.
+    apiHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "StartProvisionerBuild",
+        actions: ["codebuild:StartBuild"],
+        resources: [this.provisionerBuildArn(prefix)],
+      }),
+    );
+
     const api = new apigw.RestApi(this, "Api", {
       restApiName: `${prefix}-api`,
       description: "AppHub control plane REST API",
@@ -551,6 +675,100 @@ export class PlatformStack extends Stack {
     apiHandler.addEnvironment("PROVISION_SM_ARN", provisionStateMachine.stateMachineArn);
     apiHandler.addEnvironment("DELETE_SM_ARN", deleteStateMachine.stateMachineArn);
 
+    // ── [Notify] deploy-notify Lambda + EventBridge 규칙 2개 (DESIGN 3.3) ────
+    // DESIGN.md 3.3 배포 파이프라인의 마지막 단계:
+    //   [Notify] EventBridge(CodePipeline 상태 변경) → Lambda → DDB Deployment 레코드 갱신.
+    // 이 단계가 없으면 배포 진행 상황이 영원히 PENDING에 머문다(파이프라인이 성공/실패해도
+    //  Deployment.status 전이가 안 됨). backend가 `app.orchestration.deploy_notify.handle`을 구현하고
+    //  build.sh가 자산(infra/lambda/deploy-notify: handler.py shim + app/)을 산출한다.
+    //
+    // 소속: **platform 스택**(컨트롤 플레인). DDB 테이블·파이프라인·Step Functions와 동일 층위.
+    //  (network의 wake Lambda 3종과 로그/함수 스타일은 같으나, 앱 트래픽이 아닌 컨트롤 플레인 이벤트다.)
+    // 앱별 아님: EventBridge 규칙은 파이프라인명 prefix(`${prefix}-app-`) 패턴으로 모든 앱 파이프라인을
+    //  단일 규칙으로 커버한다 → 앱 삭제 시 platform에 잔여 리소스 없음(network wake-restore 규칙과 동일 원칙).
+    const deployNotifyLogGroup = new logs.LogGroup(this, "DeployNotifyLogs", {
+      logGroupName: `/apphub/${config.stage}/deploy-notify`,
+      retention: logs.RetentionDays.ONE_MONTH,
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
+    const deployNotify = new lambda.Function(this, "DeployNotifyFn", {
+      functionName: `${prefix}-deploy-notify`,
+      runtime: lambda.Runtime.PYTHON_3_13,
+      handler: "handler.handler",
+      // D-M8: backend(Python)가 진실. build.sh가 app/ + handler.py shim(app.orchestration.deploy_notify.handle
+      //  재노출)을 infra/lambda/deploy-notify로 동기화한다(다른 task/wake 자산 5종과 동일 방식).
+      code: lambda.Code.fromAsset(path.join(__dirname, "..", "lambda", "deploy-notify")),
+      timeout: Duration.seconds(60),
+      memorySize: 256,
+      logGroup: deployNotifyLogGroup,
+      // 데이터 계층(app.data.client.table)이 요구하는 TABLE_NAME(폴백 없음) + STAGE.
+      //  테이블명은 결정론적(`${prefix}-main`)이라 크로스스택/SSM 없이 직접 주입(task Lambda와 동일 규약).
+      environment: { STAGE: config.stage, TABLE_NAME: `${prefix}-main` },
+      description: "CodePipeline state -> DDB Deployment update ([Notify], DESIGN 3.3)",
+    });
+    this.deployNotifyFunction = deployNotify;
+
+    // ── deploy-notify IAM (ARN 범위 — conventions 7장, Resource:"*" 금지) ────
+    // (1) DDB — Deployment 레코드 갱신(App 조회 포함). network-stack ddbRw 패턴(테이블 + index/*).
+    deployNotify.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "DeployNotifyTableRw",
+        actions: ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Query"],
+        resources: [
+          this.formatArn({ service: "dynamodb", resource: "table", resourceName: `${prefix}-main` }),
+          this.formatArn({ service: "dynamodb", resource: "table", resourceName: `${prefix}-main/index/*` }),
+        ],
+      }),
+    );
+    // (2) codepipeline — 파이프라인 실행/액션 상세 조회로 배포 단계·실패 정보를 얻는다.
+    //     GetPipelineExecution/ListActionExecutions는 파이프라인 ARN(리소스 레벨) 지원 → 앱 파이프라인(`${prefix}-app-*`)으로 한정.
+    deployNotify.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "DeployNotifyPipelineRead",
+        actions: ["codepipeline:GetPipelineExecution", "codepipeline:ListActionExecutions"],
+        resources: [this.formatArn({ service: "codepipeline", resource: `${prefix}-app-*` })],
+      }),
+    );
+    // (3) codebuild — 빌드 상세(실패 phase 등) 조회. BatchGetBuilds는 project ARN(리소스 레벨) 지원 →
+    //     앱 파이프라인의 CodeBuild 프로젝트(`project/${prefix}-app-*`)로 한정.
+    //     CodeBuild 프로젝트 ARN은 슬래시 구분(`project/name`) — 기본 arnFormat(provisionerBuildArn과 동일).
+    //     콜론(`project:name`)으로 지정하면 라이브 IAM 매칭이 실패한다(AccessDenied).
+    deployNotify.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "DeployNotifyBuildRead",
+        actions: ["codebuild:BatchGetBuilds"],
+        resources: [
+          this.formatArn({ service: "codebuild", resource: "project", resourceName: `${prefix}-app-*` }),
+        ],
+      }),
+    );
+
+    // EventBridge 규칙 2개 — 앱 파이프라인(`${prefix}-app-*`) prefix 패턴 공유 규칙(앱별 아님).
+    //  둘 다 target = deploy-notify Lambda. CodePipeline은 두 종류의 상태 이벤트를 발행하므로 각각 구독한다:
+    //   (1) Stage Execution State Change — 단계(Source/Validate/Build/Deploy) 진입·성공·실패 → Deployment.status 세분 전이.
+    //   (2) Pipeline Execution State Change — 파이프라인 전체 성공/실패 → SUCCEEDED/FAILED 종결.
+    const deployNotifyStageRule = new events.Rule(this, "DeployNotifyStageRule", {
+      ruleName: `${prefix}-deploy-notify-stage`,
+      description: "CodePipeline stage state change (app-*) -> deploy-notify ([Notify], DESIGN 3.3)",
+      eventPattern: {
+        source: ["aws.codepipeline"],
+        detailType: ["CodePipeline Stage Execution State Change"],
+        detail: { pipeline: [{ prefix: `${prefix}-app-` }] },
+      },
+    });
+    deployNotifyStageRule.addTarget(new events_targets.LambdaFunction(deployNotify));
+
+    const deployNotifyExecRule = new events.Rule(this, "DeployNotifyExecRule", {
+      ruleName: `${prefix}-deploy-notify-exec`,
+      description: "CodePipeline execution state change (app-*) -> deploy-notify ([Notify], DESIGN 3.3)",
+      eventPattern: {
+        source: ["aws.codepipeline"],
+        detailType: ["CodePipeline Pipeline Execution State Change"],
+        detail: { pipeline: [{ prefix: `${prefix}-app-` }] },
+      },
+    });
+    deployNotifyExecRule.addTarget(new events_targets.LambdaFunction(deployNotify));
+
     // ── CloudWatch 대시보드(관리자 관측성) 최소 ─────────────────────────────
     // DESIGN.md 9: 파이프라인 성공률, Step Functions 실패, ALB 규칙 사용량, 앱 수.
     //  M2에서는 존재하는 리소스(API Lambda, provisioner, SFN) 지표만. 나머지는 후속 확장.
@@ -608,6 +826,8 @@ export class PlatformStack extends Stack {
     this.output("ProvisionerProjectName", provisioner.projectName);
     this.output("ProvisionStateMachineArn", provisionStateMachine.stateMachineArn);
     this.output("DeleteStateMachineArn", deleteStateMachine.stateMachineArn);
+    // DESIGN 3.3 [Notify]: deploy-notify Lambda ARN(관측/운영 참고, SSM 발행은 소비자 없어 생략).
+    this.output("DeployNotifyFunctionArn", deployNotify.functionArn);
   }
 
   private publishSsm(stage: string, values: Record<string, string>): void {
@@ -621,6 +841,32 @@ export class PlatformStack extends Stack {
 
   private output(id: string, value: string): void {
     new CfnOutput(this, id, { value });
+  }
+
+  // ── 공유 ARN 상수 (API 역할 · task Lambda가 같은 값을 소비) ────────────────
+  // secret CRUD/삭제·codebuild:StartBuild 는 API 역할(constructor)과 task Lambda(buildStateMachines)
+  //  양쪽이 쓰므로 단일 소스로 만든다. 결정론적(prefix/stage 기반)이라 부수효과 없이 재호출 가능.
+
+  /**
+   * 앱 시크릿 ARN(범위). backend가 만드는 이름 규약 `apphub/{stage}/app/{appId}/{KEY}`(슬래시)를
+   * 커버한다. path 스타일 `apphub/{stage}/app/*` 의 뒤 `*`가 하위 경로(`{appId}/{KEY}`)와
+   * Secrets Manager가 자동으로 붙이는 하이픈+6자 랜덤 suffix(`-a1b2c3`)를 모두 매칭한다
+   * (AWS 문서 "Access all secrets in a path" — `TestEnv/*` 예시와 동일). 별도 suffix 불필요.
+   *  ⚠ 이전 하이픈 규약(`apphub-{stage}-*`)은 슬래시 이름을 커버하지 못해 delete-task의
+   *    DeleteSecret이 라이브에서 AccessDenied 났다 → path 규약으로 통일(delete-task·API 역할 공용).
+   */
+  private appSecretArn(stage: string): string {
+    return this.formatArn({
+      service: "secretsmanager",
+      resource: "secret",
+      resourceName: `apphub/${stage}/app/*`,
+      arnFormat: ArnFormat.COLON_RESOURCE_NAME,
+    });
+  }
+
+  /** provisioner CodeBuild 프로젝트 ARN(`${prefix}-provisioner`). 롤백 runtime 재배포·롤백 트리거. */
+  private provisionerBuildArn(prefix: string): string {
+    return this.formatArn({ service: "codebuild", resource: "project", resourceName: `${prefix}-provisioner` });
   }
 
   /**
@@ -690,9 +936,9 @@ export class PlatformStack extends Stack {
       new iam.PolicyStatement({
         sid: "AppEcsElbEcrDeploy",
         actions: [
-          // ECS 서비스/태스크정의/클러스터
-          "ecs:CreateService", "ecs:UpdateService", "ecs:DeleteService", "ecs:CreateCluster",
-          "ecs:DeleteCluster", "ecs:RegisterTaskDefinition", "ecs:DeregisterTaskDefinition",
+          // ECS 서비스/태스크정의 — 클러스터는 D18로 network 스택 소유(공유), 앱 배포가 만들지 않는다.
+          "ecs:CreateService", "ecs:UpdateService", "ecs:DeleteService",
+          "ecs:RegisterTaskDefinition", "ecs:DeregisterTaskDefinition",
           "ecs:TagResource",
           // ELB v2 target group/리스너 규칙
           "elasticloadbalancing:CreateTargetGroup", "elasticloadbalancing:DeleteTargetGroup",
@@ -709,7 +955,9 @@ export class PlatformStack extends Stack {
           "logs:CreateLogGroup", "logs:DeleteLogGroup", "logs:PutRetentionPolicy", "logs:TagResource",
         ],
         resources: [
-          appArn("ecs", "service"), appArn("ecs", "task-definition"), appArn("ecs", "cluster"),
+          // ECS 서비스 ARN은 신형식 `service/{cluster}/{service}` — 공유 클러스터(D18) 하위 앱 서비스로 한정.
+          this.formatArn({ service: "ecs", resource: "service", resourceName: `${prefix}-cluster/${prefix}-app-*`, arnFormat: ArnFormat.SLASH_RESOURCE_NAME }),
+          appArn("ecs", "task-definition"),
           appArn("elasticloadbalancing", "targetgroup"), appArn("elasticloadbalancing", "listener-rule"),
           appArn("ecr", "repository"),
           appArn("scheduler", "schedule"),
@@ -804,15 +1052,12 @@ export class PlatformStack extends Stack {
   ): { provisionStateMachine: sfn.StateMachine; deleteStateMachine: sfn.StateMachine } {
     // ── task Lambda 2개 (PYTHON_3_13, handler.handler, STAGE + TABLE_NAME env) ──
     const tableArn = this.formatArn({ service: "dynamodb", resource: "table", resourceName: `${prefix}-main` });
-    const provisionerBuildArn = this.formatArn({ service: "codebuild", resource: "project", resourceName: `${prefix}-provisioner` });
+    // provisionerBuildArn·appSecretArn 은 API 역할과 공유하는 단일 소스(private 메서드) 사용.
+    //  delete-task의 DeleteSecret이 API 역할과 정확히 같은 ARN(`apphub/{stage}/app/*`)을 쓰게 통일한다.
+    const provisionerBuildArn = this.provisionerBuildArn(prefix);
     const appPipelineArn = this.formatArn({ service: "codepipeline", resource: `${prefix}-app-*` });
     const appStackArn = this.formatArn({ service: "cloudformation", resource: "stack", resourceName: `${prefix}-app-*` });
-    const appSecretArn = this.formatArn({
-      service: "secretsmanager",
-      resource: "secret",
-      resourceName: `${prefix}-*`,
-      arnFormat: ArnFormat.COLON_RESOURCE_NAME,
-    });
+    const appSecretArn = this.appSecretArn(stage);
     const platformSsmArn = this.formatArn({
       service: "ssm",
       resource: "parameter",

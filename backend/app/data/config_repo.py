@@ -17,16 +17,17 @@ from .keys import (
 )
 
 _CONFIG_DROP = ("PK", "SK", "entityType")
-# AdminSettings 응답에서 추가로 떨어뜨릴 폐기 필드(구 스키마 잔여) — allowedBaseImages 제거.
-_SETTINGS_DROP = (*_CONFIG_DROP, "allowedBaseImages")
+# AdminSettings 응답에서 추가로 떨어뜨릴 폐기 필드(구 스키마 잔여, 스키마리스 — 저장은 무해):
+#  - allowedBaseImages: 베이스 이미지 허용목록 기능 폐기.
+#  - registeredVpcs: VPC 등록/선택 기능 폐기(1차 플랫폼 부트스트랩 VPC 단일 배치).
+#  - logRetentionDays: 미사용 설정 폐기.
+_SETTINGS_DROP = (*_CONFIG_DROP, "allowedBaseImages", "registeredVpcs", "logRetentionDays")
 
 # 플랫폼 기본 설정(부트스트랩용). GET 시 없으면 이 값으로 응답.
 DEFAULT_ADMIN_SETTINGS: dict[str, Any] = {
     "enabledProviders": ["codecommit"],
-    "registeredVpcs": [],
     "userAppQuota": 5,
     "allowInternetFacing": False,
-    "logRetentionDays": 30,
     "updatedAt": "1970-01-01T00:00:00.000Z",
 }
 

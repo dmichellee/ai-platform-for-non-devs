@@ -16,6 +16,9 @@ _SCHEMES = ("internet-facing", "internal")
 _SLEEP_MODES = ("always-on", "on-demand", "schedule")
 _PROVIDERS = ("codecommit", "github", "gitlab")
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+# 시크릿/환경변수 KEY: 컨테이너 env 로 주입되므로 env 변수명 규약(대문자·숫자·밑줄, 숫자로 시작 금지).
+#  Secrets Manager 이름 경로 세그먼트로도 안전하다(apphub/{stage}/app/{appId}/{KEY}).
+_SECRET_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def parse_body(raw: str | None) -> dict[str, Any]:
@@ -65,6 +68,28 @@ def _string_map(body: dict[str, Any], key: str) -> dict[str, str]:
     for k, v in value.items():
         if not isinstance(v, str):
             raise errors.validation(f"'{key}.{k}' 값은 문자열이어야 해요.")
+        out[k] = v
+    return out
+
+
+def _parse_secrets(body: dict[str, Any]) -> dict[str, str]:
+    """시크릿 맵 {KEY: value} 파싱. KEY 는 env 변수명 규약. **값은 여기서만 통과(로그 금지).
+
+    envVars(평문)와 분리된 필드다. 값은 Secrets Manager 로만 가고 DDB/응답엔 ARN 만 남는다.
+    """
+    value = body.get("secrets")
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise errors.validation("'secrets' 값은 객체여야 해요.")
+    out: dict[str, str] = {}
+    for k, v in value.items():
+        if not isinstance(k, str) or not _SECRET_KEY_RE.match(k):
+            raise errors.validation(
+                "비밀 값 이름은 영문 대소문자·숫자·밑줄(_)만 쓸 수 있고 숫자로 시작할 수 없어요."
+            )
+        if not isinstance(v, str):
+            raise errors.validation(f"'{k}' 비밀 값은 문자열이어야 해요.")
         out[k] = v
     return out
 
@@ -137,10 +162,14 @@ def parse_create_app(raw: str | None) -> dict[str, Any]:
         "presetId": _str(body, "presetId"),
         "permissionTemplateId": _str(body, "permissionTemplateId"),
         "scheme": scheme,
-        "vpcId": _str(body, "vpcId"),
+        # vpcId 는 제거됨(1차 플랫폼 부트스트랩 VPC 단일 배치 — DESIGN 3.7·10장).
+        #  body 에 와도(구 클라이언트) 파싱하지 않고 무시한다(App 레코드에 저장하지 않음).
         "autoDeployEnabled": _bool(body, "autoDeployEnabled", True),
         "sleepMode": sleep_mode,
         "envVars": _string_map(body, "envVars"),
+        # 시크릿(평문 값)은 계약상 envVars 와 분리된 별도 필드. 핸들러가 Secrets Manager 로
+        #  옮기고 App.secretArns 에 ARN 만 기록한다(값은 DDB/응답에 남기지 않음).
+        "secrets": _parse_secrets(body),
         "cognitoProtect": _bool(body, "cognitoProtect", scheme == "internet-facing"),
     }
     if connection_id is not None:
@@ -150,8 +179,31 @@ def parse_create_app(raw: str | None) -> dict[str, Any]:
     return result
 
 
+def _parse_secrets_remove(body: dict[str, Any]) -> list[str]:
+    """PATCH 의 secretsRemove: 삭제할 시크릿 KEY 목록. 각 KEY 는 env 변수명 규약."""
+    value = body.get("secretsRemove")
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise errors.validation("'secretsRemove' 값은 목록이어야 해요.")
+    out: list[str] = []
+    for k in value:
+        if not isinstance(k, str) or not _SECRET_KEY_RE.match(k):
+            raise errors.validation(
+                "비밀 값 이름은 영문 대소문자·숫자·밑줄(_)만 쓸 수 있고 숫자로 시작할 수 없어요."
+            )
+        out.append(k)
+    return out
+
+
 def parse_patch_app(raw: str | None) -> dict[str, Any]:
-    """앱 설정 변경(부분). 변경 가능한 필드만 허용 — name/subdomain/scheme/vpc 등 불변."""
+    """앱 설정 변경(부분). 변경 가능한 필드만 허용 — name/subdomain/scheme/vpc 등 불변.
+
+    시크릿은 프론트 계약(api-requests.md 항목 9)에 맞춰 부분 갱신 + 명시 삭제로 분리한다:
+      - secrets: {KEY: value} — 보낸 KEY 만 upsert(기존 유지, 빠진 KEY 를 자동 삭제하지 않음).
+      - secretsRemove: [KEY, ...] — 명시된 KEY 만 삭제.
+    둘 다 값이므로 update_app 에 직접 넣지 않는다 — 핸들러가 소비 후 secretArns 만 갱신한다.
+    """
     body = parse_body(raw)
     out: dict[str, Any] = {}
     if "autoDeployEnabled" in body:
@@ -166,6 +218,12 @@ def parse_patch_app(raw: str | None) -> dict[str, Any]:
         out["schedule"] = schedule
     if "envVars" in body:
         out["envVars"] = _string_map(body, "envVars")
+    if "secrets" in body:
+        # 부분 upsert 대상(보낸 KEY 만 저장/갱신). 핸들러가 소비 후 제거.
+        out["secrets"] = _parse_secrets(body)
+    if "secretsRemove" in body:
+        # 명시 삭제 KEY 목록. 핸들러가 소비 후 제거.
+        out["secretsRemove"] = _parse_secrets_remove(body)
     if "cognitoProtect" in body:
         out["cognitoProtect"] = _bool(body, "cognitoProtect", False)
     if len(out) == 0:

@@ -19,7 +19,7 @@ from ..data.apps import clear_failure, get_app, set_failure, transition_status, 
 from ..data.deployments import put_deployment
 from ..integrations.codebuild import get_build_status, start_provisioner_build
 from ..integrations.codepipeline import start_pipeline
-from ..integrations.ssm import alb_arn_for_scheme, platform_param
+from ..integrations.ssm import alb_arn_for_scheme, network_param, platform_param
 from . import stage
 from .failure import build_failure
 
@@ -43,8 +43,13 @@ def allocate_slot(e: dict[str, Any]) -> dict[str, Any]:
             "rulePriority": app["rulePriority"],
         }
     scheme = app["scheme"]
-    alb_arn = alb_arn_for_scheme(stage(), scheme)
-    slot = allocate_alb_slot(alb_arn, scheme, app.get("vpcId"))
+    st = stage()
+    alb_arn = alb_arn_for_scheme(st, scheme)
+    # VPC 선택 기능 제거 — 1차는 플랫폼 부트스트랩 VPC 단일 배치(DESIGN 3.7·10장).
+    #  App 레코드에 vpcId 가 없으므로 배치 VPC 는 network SSM(vpc-id)에서 확정한다.
+    #  이 값은 AlbRegistry 아이템의 vpcId 속성(관리자 인프라 현황용)으로만 쓰인다.
+    vpc_id = network_param(st, "vpc-id")
+    slot = allocate_alb_slot(alb_arn, scheme, vpc_id)
     update_app(app_id, {"albArn": slot["albArn"], "rulePriority": slot["rulePriority"]})
     return {
         "step": "allocate-slot",

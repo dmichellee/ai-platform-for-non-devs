@@ -151,6 +151,10 @@ describe("platform 스택", () => {
             TABLE_NAME: Match.anyValue(),
             USER_POOL_ID: Match.anyValue(),
             STAGE: "dev",
+            // D18: 관리자 강제 중지(sleep_app(force=True))가 in-process ECS 조작 시 cluster 인자로 쓴다.
+            //  app/wake/__init__.py cluster_name()이 이 env를 읽음(미주입 시 RuntimeError, 폴백 없음).
+            //  결정론적 이름 직접 주입 → network commonEnv와 동일 규약.
+            CLUSTER_NAME: "apphub-dev-cluster",
             // 핸들러 CORS(app/http/cors.py)가 읽는 허용 origin. dev는 CloudFront 도메인 + localhost:5173.
             ALLOWED_ORIGINS: Match.anyValue(),
           }),
@@ -332,6 +336,7 @@ describe("platform 스택", () => {
         "CodeConnectionsCreateList", // API: CreateConnection/ListConnections (리소스 레벨 미지원, IAM 시뮬레이터 검증)
         "CodeCommitRepos", // API: ListRepositories/CreateRepository (리소스 레벨 미지원, IAM 시뮬레이터 검증)
         "AppMetricsRead", // API: GetMetricData/DescribeTargetGroups (리소스 레벨 미지원 read-only, 모니터링 탭)
+        "AdminStopElbDescribe", // API: DescribeRules/DescribeListeners (리소스 레벨 미지원 read-only, 관리자 강제 중지)
       ]);
       let star = 0;
       let starWithCondition = 0;
@@ -450,6 +455,147 @@ describe("platform 스택", () => {
       expect(joined).toContain("DELETE_COMPLETE");
       expect(joined).toContain('"Type":"Wait"');
       expect(joined).toContain("States.ALL");
+    });
+  });
+
+  describe("[Notify] deploy-notify Lambda + EventBridge 규칙 (DESIGN 3.3)", () => {
+    // 배경: [Notify] 단계(EventBridge → Lambda → DDB Deployment 갱신)가 없으면 배포 진행 상황이
+    //  영원히 PENDING. platform 스택(컨트롤 플레인 소속)에 함수 + 규칙 2개 + IAM(DDB/pipeline/build)을 고정한다.
+    type Stmt = { Sid?: string; Action?: unknown; Resource?: unknown };
+    function stmtsBySid(sidPart: string): Stmt[] {
+      const policies = template.findResources("AWS::IAM::Policy");
+      const out: Stmt[] = [];
+      for (const pol of Object.values(policies)) {
+        const doc = (pol.Properties as { PolicyDocument?: { Statement?: Stmt[] } }).PolicyDocument;
+        for (const st of doc?.Statement ?? []) {
+          if (typeof st.Sid === "string" && st.Sid.includes(sidPart)) out.push(st);
+        }
+      }
+      return out;
+    }
+    const asArray = (a: unknown): string[] =>
+      Array.isArray(a) ? (a as string[]) : typeof a === "string" ? [a] : [];
+    const isStar = (r: unknown): boolean =>
+      r === "*" || (Array.isArray(r) && r.length === 1 && r[0] === "*");
+
+    it("deploy-notify 함수가 PYTHON_3_13 / handler.handler / STAGE+TABLE_NAME env로 존재한다", () => {
+      // D-M8: 런타임 Python 3.13, 진입점 handler.handler(자산 루트 shim). 데이터 계층이 요구하는
+      //  TABLE_NAME(폴백 없음)이 결정론적 apphub-dev-main으로 주입된다(task Lambda와 동일 규약).
+      template.hasResourceProperties("AWS::Lambda::Function", {
+        FunctionName: "apphub-dev-deploy-notify",
+        Runtime: "python3.13",
+        Handler: "handler.handler",
+        Environment: {
+          Variables: Match.objectLike({ STAGE: "dev", TABLE_NAME: "apphub-dev-main" }),
+        },
+      });
+    });
+
+    it("deploy-notify 로그 그룹(/apphub/dev/deploy-notify)이 1개월 retention으로 생성된다", () => {
+      template.hasResourceProperties("AWS::Logs::LogGroup", {
+        LogGroupName: "/apphub/dev/deploy-notify",
+        RetentionInDays: 30,
+      });
+    });
+
+    it("규칙 (1) stage: CodePipeline Stage Execution State Change + pipeline prefix apphub-dev-app-", () => {
+      template.hasResourceProperties("AWS::Events::Rule", {
+        Name: "apphub-dev-deploy-notify-stage",
+        EventPattern: Match.objectLike({
+          source: ["aws.codepipeline"],
+          "detail-type": ["CodePipeline Stage Execution State Change"],
+          detail: Match.objectLike({
+            pipeline: [{ prefix: "apphub-dev-app-" }],
+          }),
+        }),
+      });
+    });
+
+    it("규칙 (2) exec: CodePipeline Pipeline Execution State Change + pipeline prefix apphub-dev-app-", () => {
+      template.hasResourceProperties("AWS::Events::Rule", {
+        Name: "apphub-dev-deploy-notify-exec",
+        EventPattern: Match.objectLike({
+          source: ["aws.codepipeline"],
+          "detail-type": ["CodePipeline Pipeline Execution State Change"],
+          detail: Match.objectLike({
+            pipeline: [{ prefix: "apphub-dev-app-" }],
+          }),
+        }),
+      });
+    });
+
+    it("두 규칙 모두 deploy-notify Lambda를 EventBridge InvokePermission으로 호출한다", () => {
+      // 규칙 → Lambda invoke 권한(Principal events.amazonaws.com)이 deploy-notify 함수 대상으로 2건 이상.
+      const perms = template.findResources("AWS::Lambda::Permission");
+      const notifyInvokes = Object.values(perms).filter((p) => {
+        const props = p.Properties as Record<string, unknown>;
+        const fnRef = JSON.stringify(props["FunctionName"]);
+        return (
+          props["Principal"] === "events.amazonaws.com" &&
+          props["Action"] === "lambda:InvokeFunction" &&
+          fnRef.includes("DeployNotifyFn")
+        );
+      });
+      expect(notifyInvokes.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it("IAM (1) DDB GetItem/PutItem/UpdateItem/Query가 apphub-dev-main 테이블 + index/*로 범위 한정된다", () => {
+      const stmts = stmtsBySid("DeployNotifyTableRw");
+      expect(stmts.length, "DeployNotifyTableRw statement가 존재해야 함").toBe(1);
+      const st = stmts[0];
+      expect(asArray(st.Action)).toEqual(
+        expect.arrayContaining([
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:Query",
+        ]),
+      );
+      const resJson = JSON.stringify(st.Resource);
+      // 테이블 ARN + index/* (GSI Query 대비). Resource:"*" 아님.
+      expect(resJson).toContain("table/apphub-dev-main");
+      expect(resJson).toContain("index/*");
+      expect(isStar(st.Resource), "DDB는 범위 한정(* 아님)").toBe(false);
+    });
+
+    it("IAM (2) codepipeline GetPipelineExecution/ListActionExecutions가 앱 파이프라인 ARN(apphub-dev-app-*)으로 한정된다", () => {
+      const stmts = stmtsBySid("DeployNotifyPipelineRead");
+      expect(stmts.length, "DeployNotifyPipelineRead statement가 존재해야 함").toBe(1);
+      const st = stmts[0];
+      expect(asArray(st.Action)).toEqual(
+        expect.arrayContaining([
+          "codepipeline:GetPipelineExecution",
+          "codepipeline:ListActionExecutions",
+        ]),
+      );
+      const resJson = JSON.stringify(st.Resource);
+      expect(resJson).toContain("apphub-dev-app-*");
+      expect(isStar(st.Resource), "codepipeline read는 범위 한정(* 아님)").toBe(false);
+    });
+
+    it("IAM (3) codebuild BatchGetBuilds가 앱 CodeBuild 프로젝트 ARN(project/apphub-dev-app-*)으로 한정된다", () => {
+      const stmts = stmtsBySid("DeployNotifyBuildRead");
+      expect(stmts.length, "DeployNotifyBuildRead statement가 존재해야 함").toBe(1);
+      const st = stmts[0];
+      expect(asArray(st.Action)).toEqual(["codebuild:BatchGetBuilds"]);
+      const resJson = JSON.stringify(st.Resource);
+      // BatchGetBuilds는 리소스 레벨(project ARN) 지원 → 앱 프로젝트로 한정, Resource:"*" 아님.
+      expect(resJson).toContain("project/apphub-dev-app-*");
+      expect(isStar(st.Resource), "codebuild BatchGetBuilds는 범위 한정(* 아님)").toBe(false);
+    });
+
+    it("deploy-notify IAM 3종 어디에도 Resource:'*'가 없다(전부 ARN 범위 한정)", () => {
+      // 회귀 가드: 세 statement 전부 리소스 레벨 지원 액션이라 * 예외가 없어야 한다.
+      for (const sid of ["DeployNotifyTableRw", "DeployNotifyPipelineRead", "DeployNotifyBuildRead"]) {
+        for (const st of stmtsBySid(sid)) {
+          expect(isStar(st.Resource), `${sid}에 Resource:"*" 금지`).toBe(false);
+        }
+      }
+    });
+
+    it("DeployNotifyFunctionArn Output이 발행된다", () => {
+      const json = template.toJSON() as { Outputs?: Record<string, unknown> };
+      expect(Object.keys(json.Outputs ?? {})).toContain("DeployNotifyFunctionArn");
     });
   });
 
@@ -597,6 +743,159 @@ describe("platform 스택", () => {
       // Create/List(전역 * statement)가 이 좁은 statement에 섞여 들어가면 안 된다(회귀 방지).
       expect(actions).not.toContain("codecommit:CreateRepository");
       expect(actions).not.toContain("codecommit:ListRepositories");
+    });
+  });
+
+  describe("API 역할 — 관리자 강제 중지 (POST /admin/apps/{id}/stop → sleep_app(force=True), D18)", () => {
+    // 회귀 방지: 관리자 강제 중지는 API Lambda 프로세스 안에서(비동기 아님) 앱을 재운다:
+    //  ECS desiredCount=0 + 리스너 규칙 forward를 공유 Waker TG로 전환 + SSM(network) 읽기.
+    //  이 권한이 없으면 (a) CLUSTER_NAME RuntimeError, (b) ECS/SSM/ELB AccessDenied로 깨진다.
+    //  network wake Lambda(waker/sleep)와 동일 ARN 패턴을 API 역할에 부여했는지 고정한다.
+    type Stmt = { Sid?: string; Action?: unknown; Resource?: unknown };
+    function stmtsBySid(sidPart: string): Stmt[] {
+      const policies = template.findResources("AWS::IAM::Policy");
+      const out: Stmt[] = [];
+      for (const pol of Object.values(policies)) {
+        const doc = (pol.Properties as { PolicyDocument?: { Statement?: Stmt[] } }).PolicyDocument;
+        for (const st of doc?.Statement ?? []) {
+          if (typeof st.Sid === "string" && st.Sid.includes(sidPart)) out.push(st);
+        }
+      }
+      return out;
+    }
+    const asArray = (a: unknown): string[] =>
+      Array.isArray(a) ? (a as string[]) : typeof a === "string" ? [a] : [];
+
+    it("ecs:UpdateService/DescribeServices가 공유 클러스터 경로 ARN(service/{prefix}-cluster/{prefix}-app-*)으로 부여된다", () => {
+      const stmts = stmtsBySid("AdminStopEcs");
+      expect(stmts.length, "AdminStopEcs statement가 존재해야 함").toBe(1);
+      const st = stmts[0];
+      const actions = asArray(st.Action);
+      expect(actions).toEqual(
+        expect.arrayContaining(["ecs:DescribeServices", "ecs:UpdateService"]),
+      );
+      // D18: 공유 클러스터 경로. 클러스터명=서비스명 가정(구 경로)이 아니라 service/{cluster}/{service}.
+      const resJson = JSON.stringify(st.Resource);
+      expect(resJson).toContain("apphub-dev-cluster/apphub-dev-app-*");
+      // Resource:"*" 아님(범위 한정).
+      expect(resJson).not.toBe('"*"');
+    });
+
+    it("ssm:GetParameter/GetParameters가 network 경로(/apphub/{stage}/network/*)로 부여된다", () => {
+      const stmts = stmtsBySid("ReadNetworkSsm");
+      expect(stmts.length, "ReadNetworkSsm statement가 존재해야 함").toBe(1);
+      const st = stmts[0];
+      const actions = asArray(st.Action);
+      expect(actions).toEqual(
+        expect.arrayContaining(["ssm:GetParameter", "ssm:GetParameters"]),
+      );
+      const resJson = JSON.stringify(st.Resource);
+      // sleep_app은 network 경로만 읽는다(listener ARN·waker-tg-arn·apps-domain). platform 경로 불필요.
+      expect(resJson).toContain("apphub/dev/network/*");
+    });
+
+    it("elasticloadbalancing:ModifyRule이 listener-rule/app 범위로 부여된다(Resource:'*' 아님)", () => {
+      const stmts = stmtsBySid("AdminStopElbRules");
+      expect(stmts.length, "AdminStopElbRules statement가 존재해야 함").toBe(1);
+      const st = stmts[0];
+      expect(asArray(st.Action)).toEqual(["elasticloadbalancing:ModifyRule"]);
+      const resJson = JSON.stringify(st.Resource);
+      expect(resJson).toContain("listener-rule/app");
+      const isStar = (r: unknown): boolean =>
+        r === "*" || (Array.isArray(r) && r.length === 1 && r[0] === "*");
+      expect(isStar(st.Resource), "ModifyRule은 리소스 레벨 지원 → * 아님").toBe(false);
+    });
+
+    it("DescribeRules/DescribeListeners는 Resource:'*'(리소스 레벨 미지원), DescribeTargetGroups는 중복 추가하지 않는다", () => {
+      const stmts = stmtsBySid("AdminStopElbDescribe");
+      expect(stmts.length, "AdminStopElbDescribe statement가 존재해야 함").toBe(1);
+      const st = stmts[0];
+      const actions = asArray(st.Action);
+      expect(actions).toEqual(
+        expect.arrayContaining([
+          "elasticloadbalancing:DescribeRules",
+          "elasticloadbalancing:DescribeListeners",
+        ]),
+      );
+      // DescribeTargetGroups는 AppMetricsRead에 이미 있으므로 이 sid엔 없어야 한다(중복 금지).
+      expect(actions).not.toContain("elasticloadbalancing:DescribeTargetGroups");
+    });
+  });
+
+  describe("API 역할 — 시크릿 CRUD · 롤백 (secret/ECR/StartBuild, D-M5-03)", () => {
+    // 회귀 방지 핵심: backend는 시크릿을 `apphub/{stage}/app/{appId}/{KEY}`(슬래시)로 만든다.
+    //  이전 하이픈 규약(`apphub-{stage}-*`)은 이 이름을 커버하지 못해 DeleteSecret이 라이브에서
+    //  AccessDenied 났다. API 역할(CRUD)과 delete-task(DeleteSecret)가 **동일한 path 스타일 ARN**
+    //  (`arn:...:secret:apphub/{stage}/app/*`)을 쓰는지 고정한다. path 뒤 `*`가 하위 경로 +
+    //  Secrets Manager 6자 랜덤 suffix를 모두 커버한다(AWS "Access all secrets in a path").
+    type Stmt = { Sid?: string; Action?: unknown; Resource?: unknown };
+    function stmtsBySid(sidPart: string): Stmt[] {
+      const policies = template.findResources("AWS::IAM::Policy");
+      const out: Stmt[] = [];
+      for (const pol of Object.values(policies)) {
+        const doc = (pol.Properties as { PolicyDocument?: { Statement?: Stmt[] } }).PolicyDocument;
+        for (const st of doc?.Statement ?? []) {
+          if (typeof st.Sid === "string" && st.Sid.includes(sidPart)) out.push(st);
+        }
+      }
+      return out;
+    }
+    const asArray = (a: unknown): string[] =>
+      Array.isArray(a) ? (a as string[]) : typeof a === "string" ? [a] : [];
+    const isStar = (r: unknown): boolean =>
+      r === "*" || (Array.isArray(r) && r.length === 1 && r[0] === "*");
+
+    it("secretsmanager CRUD(Create/Put/Describe/Delete)가 path 스타일 시크릿 ARN(apphub/{stage}/app/*)으로 부여된다", () => {
+      const stmts = stmtsBySid("AppSecretsCrud");
+      expect(stmts.length, "AppSecretsCrud statement가 존재해야 함").toBe(1);
+      const st = stmts[0];
+      expect(asArray(st.Action)).toEqual(
+        expect.arrayContaining([
+          "secretsmanager:CreateSecret",
+          "secretsmanager:PutSecretValue",
+          "secretsmanager:DescribeSecret",
+          "secretsmanager:DeleteSecret",
+        ]),
+      );
+      const resJson = JSON.stringify(st.Resource);
+      // path 스타일(슬래시). backend 이름 규약을 커버한다.
+      expect(resJson).toContain("secret:apphub/dev/app/*");
+      // 회귀 가드: 옛 하이픈 규약(apphub-dev-*)이 아니어야 한다(AccessDenied 원인).
+      expect(resJson).not.toContain("secret:apphub-dev-*");
+      expect(isStar(st.Resource), "시크릿 ARN은 범위 한정(* 아님)").toBe(false);
+    });
+
+    it("delete-task의 DeleteSecret도 API 역할과 동일한 path 스타일 ARN을 쓴다(단일 소스 통일)", () => {
+      const stmts = stmtsBySid("DeleteAppSecrets");
+      expect(stmts.length, "DeleteAppSecrets statement가 존재해야 함").toBe(1);
+      const st = stmts[0];
+      expect(asArray(st.Action)).toEqual(["secretsmanager:DeleteSecret"]);
+      const resJson = JSON.stringify(st.Resource);
+      // 라이브 AccessDenied 회귀 방지: path 스타일이어야 하고 옛 하이픈 규약이면 안 된다.
+      expect(resJson).toContain("secret:apphub/dev/app/*");
+      expect(resJson).not.toContain("secret:apphub-dev-*");
+    });
+
+    it("ecr:DescribeImages(롤백 이미지 태그 확인)가 앱 ECR 리포 ARN(repository/apphub-{stage}-app-*)으로 부여된다", () => {
+      const stmts = stmtsBySid("AppEcrImages");
+      expect(stmts.length, "AppEcrImages statement가 존재해야 함").toBe(1);
+      const st = stmts[0];
+      expect(asArray(st.Action)).toEqual(["ecr:DescribeImages"]);
+      const resJson = JSON.stringify(st.Resource);
+      expect(resJson).toContain("repository/apphub-dev-app-*");
+      // ecr:DescribeImages는 repository ARN 지원 → Resource:"*" 아님.
+      expect(isStar(st.Resource), "ecr:DescribeImages는 범위 한정(* 아님)").toBe(false);
+    });
+
+    it("codebuild:StartBuild(롤백 runtime 재배포)가 provisioner 프로젝트 ARN으로 부여된다(task Lambda와 동일 대상)", () => {
+      const stmts = stmtsBySid("StartProvisionerBuild");
+      expect(stmts.length, "StartProvisionerBuild statement가 존재해야 함").toBe(1);
+      const st = stmts[0];
+      expect(asArray(st.Action)).toEqual(["codebuild:StartBuild"]);
+      const resJson = JSON.stringify(st.Resource);
+      // 기존 provisionerBuildArn 상수 재사용 — apphub-dev-provisioner 프로젝트.
+      expect(resJson).toContain("project/apphub-dev-provisioner");
+      expect(isStar(st.Resource), "StartBuild는 범위 한정(* 아님)").toBe(false);
     });
   });
 

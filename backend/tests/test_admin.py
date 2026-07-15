@@ -25,7 +25,6 @@ def test_user_put_settings_forbidden_no_write(ddb_table, stub_clients):
             groups=["user"],
             body={
                 "enabledProviders": ["codecommit"],
-                "registeredVpcs": [],
                 "userAppQuota": 5,
                 "allowInternetFacing": True,
             },
@@ -136,6 +135,7 @@ def test_admin_invalid_fargate_combo(ddb_table, stub_clients):
 
 
 def test_admin_put_settings_ok(ddb_table, stub_clients):
+    # 신 body: registeredVpcs·logRetentionDays 없음(프론트가 더 이상 싣지 않음).
     res = handler(
         make_event(
             "PUT",
@@ -144,19 +144,67 @@ def test_admin_put_settings_ok(ddb_table, stub_clients):
             groups=["admin"],
             body={
                 "enabledProviders": ["codecommit", "github"],
-                "registeredVpcs": [{"vpcId": "vpc-1", "label": "기본"}],
                 "userAppQuota": 10,
                 "allowInternetFacing": True,
-                "logRetentionDays": 30,
             },
         )
     )
     out = parse_result(res)
     assert out["status"] == 200
     assert out["data"]["userAppQuota"] == 10
+    # 폐기 필드는 응답에 없다.
+    assert "registeredVpcs" not in out["data"]
+    assert "logRetentionDays" not in out["data"]
     # 실제 저장됐는지
     item = ddb_table.get_item(Key={"PK": "CONFIG", "SK": "SETTINGS"})["Item"]
     assert item["userAppQuota"] == 10
+    # 서버가 폐기 필드를 저장하지 않는다.
+    assert "registeredVpcs" not in item
+    assert "logRetentionDays" not in item
+
+
+def test_admin_put_settings_ignores_legacy_fields(ddb_table, stub_clients):
+    """구 클라이언트가 registeredVpcs·logRetentionDays 를 보내도 검증 없이 무시하고 저장 성공."""
+    res = handler(
+        make_event(
+            "PUT",
+            "/admin/settings",
+            user_id="a1",
+            groups=["admin"],
+            body={
+                "enabledProviders": ["codecommit"],
+                "userAppQuota": 7,
+                "allowInternetFacing": False,
+                # 폐기 필드(무시 대상) — 형식이 이상해도 거부되지 않아야 한다.
+                "registeredVpcs": "이건-이제-검증-안-함",
+                "logRetentionDays": -999,
+            },
+        )
+    )
+    out = parse_result(res)
+    assert out["status"] == 200
+    assert out["data"]["userAppQuota"] == 7
+    assert "registeredVpcs" not in out["data"]
+    assert "logRetentionDays" not in out["data"]
+    item = ddb_table.get_item(Key={"PK": "CONFIG", "SK": "SETTINGS"})["Item"]
+    assert "registeredVpcs" not in item
+    assert "logRetentionDays" not in item
+
+
+def test_admin_get_settings_drops_legacy_vpc_and_retention(ddb_table, stub_clients):
+    """DDB 에 폐기 필드가 남아 있어도 GET 응답에서 무시된다(스키마리스)."""
+    from .conftest import seed_settings
+
+    seed_settings(
+        ddb_table,
+        registeredVpcs=[{"vpcId": "vpc-x", "label": "구"}],
+        logRetentionDays=30,
+    )
+    res = handler(make_event("GET", "/admin/settings", user_id="a1", groups=["admin"]))
+    out = parse_result(res)
+    assert out["status"] == 200
+    assert "registeredVpcs" not in out["data"]
+    assert "logRetentionDays" not in out["data"]
 
 
 def test_admin_put_settings_invalid_provider(ddb_table, stub_clients):
@@ -168,7 +216,6 @@ def test_admin_put_settings_invalid_provider(ddb_table, stub_clients):
             groups=["admin"],
             body={
                 "enabledProviders": ["svn"],
-                "registeredVpcs": [],
                 "userAppQuota": 5,
                 "allowInternetFacing": False,
             },

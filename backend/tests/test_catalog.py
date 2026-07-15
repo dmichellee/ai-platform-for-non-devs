@@ -138,34 +138,14 @@ def test_subdomain_check_missing_value(ddb_table, stub_clients):
     assert out["data"]["reason"] == "INVALID"
 
 
-# ── 이슈5: user 네트워크 목록 (GET /vpcs) ────────────────────────────────────
+# ── VPC 선택 제거: GET /vpcs 폐기 → 라우트 없음(404 ROUTE_NOT_FOUND) ──────────
 
 
-def test_user_get_vpcs_returns_id_and_label_only(ddb_table, stub_clients):
-    from .conftest import seed_settings
-
-    seed_settings(
-        ddb_table,
-        registeredVpcs=[
-            {"vpcId": "vpc-aaa", "label": "메인", "extra": "숨겨야 함"},
-            {"vpcId": "vpc-bbb", "label": "보조"},
-        ],
-    )
+def test_get_vpcs_removed_route_not_found(ddb_table, stub_clients):
     res = handler(make_event("GET", "/vpcs", user_id=USER, groups=["user"]))
     out = parse_result(res)
-    assert out["status"] == 200
-    items = out["data"]["items"]
-    assert items == [
-        {"vpcId": "vpc-aaa", "label": "메인"},
-        {"vpcId": "vpc-bbb", "label": "보조"},
-    ]
-
-
-def test_user_get_vpcs_empty_when_no_settings(ddb_table, stub_clients):
-    res = handler(make_event("GET", "/vpcs", user_id=USER, groups=["user"]))
-    out = parse_result(res)
-    assert out["status"] == 200
-    assert out["data"]["items"] == []
+    assert out["status"] == 404
+    assert out["error"]["code"] == "ROUTE_NOT_FOUND"
 
 
 # ── 이슈3: "기본"(default) 템플릿 우선 정렬 ──────────────────────────────────

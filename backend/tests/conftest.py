@@ -26,6 +26,9 @@ def _test_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("USER_POOL_CLIENT_ID", "testclient")
     monkeypatch.setenv("STAGE", "test")
     monkeypatch.setenv("APPS_DOMAIN", "apps.example.com")
+    # 공유 ECS 클러스터(DESIGN.md D18) — 관리자 강제 중지(sleep_app→ensure_stopped)가 API
+    # Lambda 컨텍스트에서도 CLUSTER_NAME 을 읽으므로 API env 에 포함(network 스택 주입 계약).
+    monkeypatch.setenv("CLUSTER_NAME", "apphub-test-cluster")
     monkeypatch.setenv(
         "PROVISION_SM_ARN",
         "arn:aws:states:ap-northeast-2:111122223333:stateMachine:apphub-test-provision-app",
@@ -232,15 +235,15 @@ def parse_result(res: dict[str, Any]) -> dict[str, Any]:
 
 
 def seed_settings(table, **overrides: Any) -> None:
+    # registeredVpcs·logRetentionDays 는 폐기된 필드 — 기본 시드에 넣지 않는다.
+    #  구 필드가 저장돼 있어도 무시됨을 검증하려면 개별 테스트에서 overrides 로 넣는다.
     item = {
         "PK": "CONFIG",
         "SK": "SETTINGS",
         "entityType": "AdminSettings",
         "enabledProviders": ["codecommit", "github"],
-        "registeredVpcs": [{"vpcId": "vpc-123", "label": "기본"}],
         "userAppQuota": 3,
         "allowInternetFacing": True,
-        "logRetentionDays": 30,
         "updatedAt": "2026-01-01T00:00:00.000Z",
     }
     item.update(overrides)
@@ -293,7 +296,6 @@ def seed_app(table, app_id: str, owner_id: str, status: str = "ACTIVE", **overri
         "presetId": "small",
         "permissionTemplateId": "basic",
         "scheme": "internal",
-        "vpcId": "vpc-123",
         "autoDeployEnabled": True,
         "sleepMode": "on-demand",
         "envVars": {},

@@ -31,15 +31,20 @@ def app_id_from_sleep_event(event: dict[str, Any], stage_value: str) -> str | No
     return match.group(1) if match else None
 
 
-def sleep_app(app_id: str) -> dict[str, Any]:
-    """앱을 잠재운다(멱등). always-on 이면 스킵. ECS 정지 + 규칙 to=waker + SLEEPING."""
+def sleep_app(app_id: str, force: bool = False) -> dict[str, Any]:
+    """앱을 잠재운다(멱등). ECS 정지 + 규칙 to=waker + SLEEPING.
+
+    force=False(유휴/스케줄 트리거): always-on 앱은 잠들지 않는다(스킵).
+    force=True(관리자 강제 중지, DESIGN 3.5): sleepMode 와 무관하게 재운다.
+      (관리자가 명시적으로 멈추는 것이므로 always-on 도 대상.)
+    """
     st = stage()
     app = get_app(app_id)
     if not app:
         return {"appId": app_id, "reason": "app-record-missing"}
     if app.get("status") != "ACTIVE":
         return {"appId": app_id, "reason": f"status-{app.get('status')}"}
-    if app.get("sleepMode") == "always-on":
+    if not force and app.get("sleepMode") == "always-on":
         return {"appId": app_id, "reason": "always-on"}
     stop = ensure_stopped(st, app_id)
     app_tg_arn = find_app_target_group_arn(st, app_id)

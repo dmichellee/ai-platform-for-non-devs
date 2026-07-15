@@ -16,6 +16,7 @@ from .conftest import (
 OWNER = "user-alice"
 OTHER = "user-bob"
 
+# VPC 선택 기능 제거 — 프론트는 vpcId 를 보내지 않는다(1차 플랫폼 부트스트랩 VPC 단일 배치).
 VALID_CREATE = {
     "name": "My App",
     "subdomain": "my-app",
@@ -25,7 +26,6 @@ VALID_CREATE = {
     "presetId": "small",
     "permissionTemplateId": "basic",
     "scheme": "internal",
-    "vpcId": "vpc-123",
     "autoDeployEnabled": True,
     "sleepMode": "on-demand",
     "envVars": {},
@@ -146,10 +146,36 @@ def test_create_provider_disabled(ddb_table, stub_clients):
     assert parse_result(res)["error"]["code"] == "PROVIDER_DISABLED"
 
 
-def test_create_vpc_not_registered(ddb_table, stub_clients):
-    seed_settings(ddb_table, registeredVpcs=[{"vpcId": "vpc-other", "label": "x"}])
+def test_create_ignores_legacy_vpc_id(ddb_table, stub_clients):
+    """VPC 선택 제거: 구 클라이언트가 vpcId 를 보내도 무시하고 정상 생성(거부 금지).
+
+    App 레코드에도 vpcId 를 저장하지 않는다.
+    """
+    _healthy_config(ddb_table)
+    res = handler(
+        make_event(
+            "POST",
+            "/apps",
+            user_id=OWNER,
+            groups=["user"],
+            body={**VALID_CREATE, "vpcId": "vpc-anything"},
+        )
+    )
+    out = parse_result(res)
+    assert out["status"] == 201
+    assert "vpcId" not in out["data"]
+    # DDB 레코드에도 vpcId 미저장.
+    item = ddb_table.get_item(Key={"PK": f"APP#{out['data']['appId']}", "SK": "META"})["Item"]
+    assert "vpcId" not in item
+
+
+def test_create_without_vpc_id_ok(ddb_table, stub_clients):
+    """vpcId 미전송(프론트 기본 동작)이어도 정상 생성."""
+    _healthy_config(ddb_table)
     res = handler(make_event("POST", "/apps", user_id=OWNER, groups=["user"], body=VALID_CREATE))
-    assert parse_result(res)["error"]["code"] == "VPC_NOT_REGISTERED"
+    out = parse_result(res)
+    assert out["status"] == 201
+    assert "vpcId" not in out["data"]
 
 
 # ── GET /apps/{id} — 소유자 인가 ─────────────────────────────────────────────
@@ -226,6 +252,52 @@ def test_delete_failed_to_deleting(ddb_table, stub_clients):
     out = parse_result(res)
     assert out["status"] == 200
     assert out["data"]["status"] == "DELETING"
+
+
+def test_delete_admin_can_delete_others_via_apps_path(ddb_table, stub_clients):
+    # admin 은 소유자 검사를 통과하므로 DELETE /apps/{id} 로도 타인 앱 삭제 가능(D10).
+    seed_app(ddb_table, "app00001", OWNER, status="ACTIVE")
+    res = handler(make_event("DELETE", "/apps/app00001", user_id="admin-1", groups=["admin"]))
+    out = parse_result(res)
+    assert out["status"] == 200
+    assert out["data"]["status"] == "DELETING"
+    assert len(stub_clients["stepfunctions"].calls_for("start_execution")) == 1
+
+
+# ── DELETE /admin/apps/{id} — 관리자에 의한 타인 앱 삭제(항목 10, D10) ─────────
+
+
+def test_admin_delete_other_app(ddb_table, stub_clients):
+    seed_app(ddb_table, "app00001", OWNER, status="ACTIVE")
+    res = handler(make_event("DELETE", "/admin/apps/app00001", user_id="admin-1", groups=["admin"]))
+    out = parse_result(res)
+    assert out["status"] == 200
+    assert out["data"] == {"appId": "app00001", "status": "DELETING"}
+    assert len(stub_clients["stepfunctions"].calls_for("start_execution")) == 1
+    item = ddb_table.get_item(Key={"PK": "APP#app00001", "SK": "META"})["Item"]
+    assert item["status"] == "DELETING"
+
+
+def test_admin_delete_requires_admin(ddb_table, stub_clients):
+    # user 가 /admin/apps/{id} DELETE 를 호출하면 403(그룹 검사).
+    seed_app(ddb_table, "app00001", OWNER, status="ACTIVE")
+    res = handler(make_event("DELETE", "/admin/apps/app00001", user_id=OWNER, groups=["user"]))
+    assert parse_result(res)["status"] == 403
+    assert len(stub_clients["stepfunctions"].calls_for("start_execution")) == 0
+
+
+def test_admin_delete_missing_app_404(ddb_table, stub_clients):
+    res = handler(make_event("DELETE", "/admin/apps/nope0001", user_id="admin-1", groups=["admin"]))
+    assert parse_result(res)["error"]["code"] == "NOT_FOUND"
+
+
+def test_admin_delete_creating_invalid_state(ddb_table, stub_clients):
+    seed_app(ddb_table, "app00001", OWNER, status="CREATING")
+    res = handler(make_event("DELETE", "/admin/apps/app00001", user_id="admin-1", groups=["admin"]))
+    out = parse_result(res)
+    assert out["status"] == 409
+    assert out["error"]["code"] == "INVALID_STATE"
+    assert len(stub_clients["stepfunctions"].calls_for("start_execution")) == 0
 
 
 # ── PATCH /apps/{id} — 설정 변경 ─────────────────────────────────────────────

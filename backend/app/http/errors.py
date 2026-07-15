@@ -21,7 +21,6 @@ ERROR_CODES = frozenset(
         "PRESET_NOT_FOUND",
         "PERMISSION_TEMPLATE_NOT_FOUND",
         "PROVIDER_DISABLED",
-        "VPC_NOT_REGISTERED",
         "INTERNET_FACING_NOT_ALLOWED",
         "INVALID_STATE",
         "CONNECTION_NOT_READY",
@@ -109,12 +108,6 @@ class _Errors:
     def provider_disabled() -> ApiError:
         return ApiError(
             400, "PROVIDER_DISABLED", "선택한 저장소 연결 방식이 현재 사용할 수 없어요."
-        )
-
-    @staticmethod
-    def vpc_not_registered() -> ApiError:
-        return ApiError(
-            400, "VPC_NOT_REGISTERED", "사용할 수 없는 네트워크예요. 관리자에게 문의해주세요."
         )
 
     @staticmethod
