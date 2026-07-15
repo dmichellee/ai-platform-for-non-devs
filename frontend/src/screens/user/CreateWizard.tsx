@@ -19,7 +19,6 @@ import {
   KeyRound,
   Building2,
   Loader2,
-  Network,
   Plus,
   Rocket,
   Server,
@@ -43,7 +42,6 @@ import type {
   ComputePreset,
   CreateAppRequest,
   Provider,
-  RegisteredVpc,
   RepoConnection,
   Schedule,
   Scheme,
@@ -77,7 +75,6 @@ interface Draft {
   name: string;
   subdomain: string;
   scheme: Scheme;
-  vpcId: string;
   presetId: string;
   permissionTemplateId: string;
   envVars: { key: string; value: string; secret: boolean }[];
@@ -93,7 +90,6 @@ const EMPTY: Draft = {
   name: "",
   subdomain: "",
   scheme: "internal",
-  vpcId: "", // 등록 네트워크 로드 후 자동 선택(단일) 또는 사용자 선택(복수).
   presetId: "",
   permissionTemplateId: "",
   envVars: [],
@@ -214,8 +210,6 @@ export function CreateWizard(): JSX.Element {
   // 오류를 catch로 삼키지 않고 그대로 노출한다(원인 파악 가능).
   const presets = useQuery<ComputePreset[]>((a) => a.listPresets(), []);
   const perms = useQuery<UserPermissionTemplate[]>((a) => a.listPermTemplates(), []);
-  // 이슈 5: 관리자 등록 네트워크(VPC) 목록. 하드코딩 대신 실제 등록값에서 고른다.
-  const vpcs = useQuery<RegisteredVpc[]>((a) => a.listVpcs(), []);
   const createMut = useMutation<CreateAppRequest, App>((a, body) => a.createApp(body));
 
   // 버그 2: 서브도메인 실시간 중복/형식 확인 (디바운스 500ms).
@@ -223,30 +217,17 @@ export function CreateWizard(): JSX.Element {
 
   const patch = (p: Partial<Draft>): void => setDraft((d) => ({ ...d, ...p }));
 
-  // 네트워크가 정확히 1개면 자동 선택(사용자에게 노출하지 않음). 현재 선택이 목록에 없으면 초기화.
-  const vpcItems = vpcs.data;
-  useEffect(() => {
-    if (!vpcItems) return;
-    if (vpcItems.length === 1) {
-      const only = vpcItems[0]!.vpcId;
-      setDraft((d) => (d.vpcId === only ? d : { ...d, vpcId: only }));
-    } else if (draft.vpcId && !vpcItems.some((v) => v.vpcId === draft.vpcId)) {
-      setDraft((d) => ({ ...d, vpcId: "" }));
-    }
-  }, [vpcItems, draft.vpcId]);
-
   const canNext = useMemo<boolean>(() => {
     switch (step) {
       case 0:
         return !!draft.provider && !!draft.repoUrl;
       case 1:
-        // 이름 + 3자 이상 + 중복확인이 "사용 가능" + 네트워크 선택 완료여야 다음.
-        // TAKEN/INVALID/확인중이거나 네트워크 미선택(0개 or 미선택)이면 막는다.
+        // 이름 + 3자 이상 + 중복확인이 "사용 가능"이어야 다음.
+        // TAKEN/INVALID/확인 중이면 막는다. (네트워크는 플랫폼 자동 배치라 선택 단계 없음.)
         return (
           draft.name.trim().length > 0 &&
           draft.subdomain.length >= 3 &&
-          subCheck.state === "available" &&
-          !!draft.vpcId
+          subCheck.state === "available"
         );
       case 2:
         return !!draft.presetId;
@@ -264,8 +245,14 @@ export function CreateWizard(): JSX.Element {
   }, [step, draft, subCheck.state]);
 
   async function submit(): Promise<void> {
+    // ④ 시크릿 분리: '비밀로 보관'(secret=true) 항목은 secrets 로, 나머지는 envVars(평문)로 나눠 보낸다.
     const envVars: Record<string, string> = {};
-    for (const e of draft.envVars) if (e.key) envVars[e.key] = e.value;
+    const secrets: Record<string, string> = {};
+    for (const e of draft.envVars) {
+      if (!e.key) continue;
+      if (e.secret) secrets[e.key] = e.value;
+      else envVars[e.key] = e.value;
+    }
     const body: CreateAppRequest = {
       name: draft.name.trim(),
       subdomain: sanitizeSubdomain(draft.subdomain), // 제출 직전 앞뒤/연속 하이픈 최종 정리
@@ -276,11 +263,13 @@ export function CreateWizard(): JSX.Element {
       presetId: draft.presetId,
       permissionTemplateId: draft.permissionTemplateId,
       scheme: draft.scheme,
-      vpcId: draft.vpcId,
+      // 네트워크(VPC)는 플랫폼이 자동 배치 — vpcId 를 보내지 않는다(계약: optional).
       sleepMode: draft.sleepMode,
       // "시간표대로"일 때만 schedule 을 포함(계약: sleepMode="schedule"이면 필수).
       ...(draft.sleepMode === "schedule" ? { schedule: draft.schedule } : {}),
       envVars,
+      // 비밀값이 하나라도 있으면 secrets 로 함께 전송.
+      ...(Object.keys(secrets).length > 0 ? { secrets } : {}),
     };
     try {
       const app = await createMut.run(body);
@@ -319,7 +308,7 @@ export function CreateWizard(): JSX.Element {
           <StepRepo draft={draft} patch={patch} conns={conns.data ?? []} />
         )}
         {step === 1 && (
-          <StepNameScheme draft={draft} patch={patch} subCheck={subCheck} vpcs={vpcs} />
+          <StepNameScheme draft={draft} patch={patch} subCheck={subCheck} />
         )}
         {step === 2 && <StepSize draft={draft} patch={patch} presets={presets} />}
         {step === 3 && <StepType draft={draft} patch={patch} perms={perms} />}
@@ -610,71 +599,16 @@ function SubdomainStatus({ state }: { state: SubCheckState }): JSX.Element | nul
   );
 }
 
-// ── 네트워크(VPC) 선택 — 기술 옵션 최소화 원칙(DESIGN 비개발자 UX) ──
-//  - 등록 1개: 자동 선택되어 UI 자체를 노출하지 않는다(useEffect 에서 처리).
-//  - 등록 2개↑: "네트워크" 드롭다운(label 표시)으로 고르게 한다.
-//  - 등록 0개: "관리자가 아직 네트워크를 준비하지 않았어요" 안내 + (canNext가 vpcId 없어서) 진행 불가.
-// AWS 용어(VPC) 미노출 — 사용자에게는 "네트워크"로만 표기.
-function NetworkPicker({
-  draft,
-  patch,
-  vpcs,
-}: {
-  draft: Draft;
-  patch: (p: Partial<Draft>) => void;
-  vpcs: QueryResult<RegisteredVpc[]>;
-}): JSX.Element | null {
-  if (vpcs.error) return <ErrorNotice error={vpcs.error} />;
-  if (vpcs.loading) return <Skeleton height={56} count={1} />;
-
-  const items = vpcs.data ?? [];
-  if (items.length === 0) {
-    return (
-      <InfoNotice>
-        관리자가 아직 네트워크를 준비하지 않았어요. 관리자에게 문의한 뒤 다시 시도해주세요.
-      </InfoNotice>
-    );
-  }
-  // 1개면 자동 선택되어 노출하지 않는다.
-  if (items.length === 1) return null;
-
-  return (
-    <div className="field">
-      <label htmlFor="vpc-select">네트워크</label>
-      <div className="select-wrap">
-        <Network size={15} className="icon select-ico" />
-        <select
-          id="vpc-select"
-          className="input select"
-          value={draft.vpcId}
-          onChange={(e) => patch({ vpcId: e.target.value })}
-        >
-          <option value="" disabled>
-            네트워크를 골라주세요
-          </option>
-          {items.map((v) => (
-            <option key={v.vpcId} value={v.vpcId}>
-              {v.label}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div className="hint">앱이 놓일 네트워크예요. 잘 모르겠다면 관리자에게 문의해주세요.</div>
-    </div>
-  );
-}
-
 // ── 단계 2: 이름·공개 범위 ──
+// 네트워크(VPC)는 플랫폼이 자동 배치하므로 이 단계에서 별도 선택 UI가 없다(비개발자 UX — 기술 옵션 최소화).
 function StepNameScheme({
   draft,
   patch,
   subCheck,
-  vpcs,
 }: {
   draft: Draft;
   patch: (p: Partial<Draft>) => void;
   subCheck: { state: SubCheckState; check: (v: string) => void };
-  vpcs: QueryResult<RegisteredVpc[]>;
 }): JSX.Element {
   // 사용자가 접속 주소를 직접 손댔는지 추적 — 손대기 전까지만 이름에서 자동 생성한다.
   const [subTouched, setSubTouched] = useState(draft.subdomain.length > 0);
@@ -722,8 +656,6 @@ function StepNameScheme({
         <SubdomainStatus state={subCheck.state} />
         <div className="hint">소문자·숫자·하이픈, 3~40자. 회사 안에서 유일한 주소여야 해요.</div>
       </div>
-
-      <NetworkPicker draft={draft} patch={patch} vpcs={vpcs} />
 
       <div className="field">
         <label>이 앱은 어디에서 접속할 수 있나요?</label>

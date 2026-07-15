@@ -20,7 +20,6 @@ import type {
   PermissionTemplate,
   PlatformUser,
   Provider,
-  RegisteredVpc,
   RepoConnection,
   SubdomainCheck,
   UserPermissionTemplate,
@@ -78,6 +77,12 @@ export class MockApiClient implements ApiClient {
       throw new ApiError("SUBDOMAIN_TAKEN", "이미 사용 중인 주소예요.", 409);
     }
     const nowIso = new Date().toISOString();
+    // 비밀 설정값(secrets)은 서버가 Secrets Manager 에 저장하고 App.secretArns 에 KEY→ARN 만 남긴다.
+    // 목: 각 KEY 에 대해 그럴듯한 ARN 을 만들어 준다(값 자체는 보관/노출하지 않음).
+    const secretArns: Record<string, string> = {};
+    for (const key of Object.keys(b.secrets ?? {})) {
+      secretArns[key] = `arn:mock:secret/${b.subdomain}/${key}`;
+    }
     const app: App = {
       appId: Math.random().toString(36).slice(2, 10),
       ownerId: fx.MOCK_USER_SUB,
@@ -90,12 +95,13 @@ export class MockApiClient implements ApiClient {
       presetId: b.presetId,
       permissionTemplateId: b.permissionTemplateId,
       scheme: b.scheme,
-      vpcId: b.vpcId,
+      // 네트워크는 플랫폼 자동 배치 — 프론트가 vpcId 를 안 보내거나 "platform" 을 보내도 서버가 기본값 처리.
+      vpcId: b.vpcId ?? "platform",
       autoDeployEnabled: b.autoDeployEnabled ?? true,
       sleepMode: b.sleepMode,
       ...(b.schedule ? { schedule: b.schedule } : {}),
       envVars: b.envVars ?? {},
-      secretArns: {},
+      secretArns,
       status: "CREATING",
       runtimeState: "SLEEPING",
       cognitoProtect: b.cognitoProtect ?? b.scheme === "internet-facing",
@@ -122,6 +128,15 @@ export class MockApiClient implements ApiClient {
     if (b.schedule !== undefined) app.schedule = b.schedule;
     if (b.envVars !== undefined) app.envVars = b.envVars;
     if (b.cognitoProtect !== undefined) app.cognitoProtect = b.cognitoProtect;
+    // 비밀 설정값: 보낸 KEY 만 새 ARN 부여(부분 갱신), secretsRemove 는 해당 KEY 제거.
+    if (b.secrets) {
+      for (const key of Object.keys(b.secrets)) {
+        app.secretArns[key] = `arn:mock:secret/${app.subdomain}/${key}`;
+      }
+    }
+    if (b.secretsRemove) {
+      for (const key of b.secretsRemove) delete app.secretArns[key];
+    }
     app.updatedAt = new Date().toISOString();
     return clone(app);
   }
@@ -326,11 +341,6 @@ export class MockApiClient implements ApiClient {
     // user 응답은 policyDocument 제외 (admin과 동일 목록에서 민감 필드만 뺀다).
     return this.permTemplates.map((t) => ({ permId: t.permId, displayName: t.displayName }));
   }
-  async listVpcs(): Promise<RegisteredVpc[]> {
-    await delay();
-    // GET /vpcs — 관리자 등록 VPC 중 {vpcId,label}만(마법사 선택용). 설정과 동일 원본.
-    return this.settings.registeredVpcs.map((v) => ({ vpcId: v.vpcId, label: v.label }));
-  }
   async listProviders(): Promise<Provider[]> {
     await delay();
     // GET /providers — 관리자가 활성화한 provider만(연결 추가 화면용). 설정과 동일 원본.
@@ -343,7 +353,9 @@ export class MockApiClient implements ApiClient {
   }
   async adminPutSettings(b: Omit<AdminSettings, "updatedAt">): Promise<AdminSettings> {
     await delay();
-    this.settings = { ...b, updatedAt: new Date().toISOString() };
+    // 관리자 설정 화면에서 더 이상 편집하지 않는 필드(registeredVpcs — 플랫폼 자동 배치로 전환,
+    // logRetentionDays — 미사용)는 body 에 오지 않는다. 서버가 보유한 기존 값을 보존해 병합한다.
+    this.settings = { ...this.settings, ...b, updatedAt: new Date().toISOString() };
     return clone(this.settings);
   }
   async adminListPresets(): Promise<ComputePreset[]> {
@@ -439,5 +451,27 @@ export class MockApiClient implements ApiClient {
   async adminAlbRegistry(): Promise<AlbRegistry[]> {
     await delay();
     return clone(this.alb);
+  }
+  // POST /admin/apps/{id}/stop — 강제 중지(재우기). ACTIVE 앱만 잠재울 수 있다.
+  async adminStopApp(appId: string): Promise<App> {
+    await delay();
+    const app = this.findApp(appId);
+    if (app.status !== "ACTIVE") {
+      throw new ApiError("INVALID_STATE", "준비된 앱만 재울 수 있어요.", 409);
+    }
+    app.runtimeState = "SLEEPING";
+    app.updatedAt = new Date().toISOString();
+    return clone(app);
+  }
+  // DELETE /admin/apps/{id} — 관리자에 의한 타인 앱 삭제(소유자 검사 없음). 상태 기계는 deleteApp 과 동일.
+  async adminDeleteApp(appId: string): Promise<{ appId: string; status: "DELETING" }> {
+    await delay();
+    const app = this.findApp(appId);
+    if (app.status === "CREATING") {
+      throw new ApiError("INVALID_STATE", "만드는 중인 앱은 삭제할 수 없어요.", 409);
+    }
+    app.status = "DELETING";
+    app.updatedAt = new Date().toISOString();
+    return { appId, status: "DELETING" };
   }
 }

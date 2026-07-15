@@ -1,10 +1,10 @@
 /**
- * 관리자 플랫폼 설정 — provider 활성화, VPC 등록, internet-facing 허용,
- * 사용자당 앱 쿼터, 로그 보존 기간.
+ * 관리자 플랫폼 설정 — provider 활성화, internet-facing 허용, 사용자당 앱 쿼터.
  * GET /admin/settings, PUT /admin/settings (계약).
+ * 네트워크(VPC) 등록은 플랫폼 자동 배치로 전환되어 제거, 로그 보존 기간은 미사용으로 제거.
  */
 import { useEffect, useState } from "react";
-import { Plus, Save, Trash2 } from "lucide-react";
+import { Save } from "lucide-react";
 import { ErrorNotice, SaveBanner, Skeleton, Toggle, relTime, useSaveFeedback } from "../../components/common.js";
 import { useMutation, useQuery } from "../../lib/ApiProvider.js";
 import type { AdminSettings } from "../../lib/types.js";
@@ -66,7 +66,7 @@ export function AdminSettingsTab(): JSX.Element {
         </div>
       </section>
 
-      <section className="grid-2" style={{ marginTop: 8 }}>
+      <section style={{ marginTop: 8, maxWidth: 320 }}>
         <div className="field">
           <label htmlFor="quota">사용자당 앱 쿼터</label>
           <input
@@ -78,67 +78,6 @@ export function AdminSettingsTab(): JSX.Element {
             onChange={(e) => patch({ userAppQuota: Number(e.target.value) })}
           />
         </div>
-        <div className="field">
-          <label htmlFor="retention">로그 보존 기간 (일)</label>
-          <input
-            id="retention"
-            className="input"
-            type="number"
-            min={1}
-            value={form.logRetentionDays}
-            onChange={(e) => patch({ logRetentionDays: Number(e.target.value) })}
-          />
-        </div>
-      </section>
-
-      <section>
-        <h4 style={{ marginBottom: 12 }}>등록된 VPC</h4>
-        {form.registeredVpcs.map((v, i) => (
-          <div key={i} className="row" style={{ marginBottom: 8 }}>
-            <input
-              className="input"
-              placeholder="vpc-xxxx"
-              value={v.vpcId}
-              onChange={(e) =>
-                patch({
-                  registeredVpcs: form.registeredVpcs.map((x, idx) =>
-                    idx === i ? { ...x, vpcId: e.target.value } : x,
-                  ),
-                })
-              }
-            />
-            <input
-              className="input"
-              placeholder="라벨"
-              value={v.label}
-              onChange={(e) =>
-                patch({
-                  registeredVpcs: form.registeredVpcs.map((x, idx) =>
-                    idx === i ? { ...x, label: e.target.value } : x,
-                  ),
-                })
-              }
-            />
-            <button
-              type="button"
-              className="row-act"
-              aria-label="VPC 삭제"
-              onClick={() =>
-                patch({ registeredVpcs: form.registeredVpcs.filter((_, idx) => idx !== i) })
-              }
-            >
-              <Trash2 size={16} className="icon" />
-            </button>
-          </div>
-        ))}
-        <button
-          type="button"
-          className="btn-admin"
-          onClick={() => patch({ registeredVpcs: [...form.registeredVpcs, { vpcId: "", label: "" }] })}
-        >
-          <Plus size={14} className="icon" />
-          VPC 추가
-        </button>
       </section>
 
       {saveMut.error && <ErrorNotice error={saveMut.error} />}

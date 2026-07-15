@@ -20,7 +20,6 @@ import type {
   PermissionTemplate,
   PlatformUser,
   Provider,
-  RegisteredVpc,
   RepoConnection,
   SingleEnvelope,
   SubdomainCheck,
@@ -68,8 +67,6 @@ export interface ApiClient {
   checkSubdomain(value: string): Promise<SubdomainCheck>;
   listPresets(): Promise<ComputePreset[]>;
   listPermTemplates(): Promise<UserPermissionTemplate[]>;
-  // GET /vpcs — 관리자 등록 네트워크(VPC) 목록(마법사 선택용). {vpcId,label}만.
-  listVpcs(): Promise<RegisteredVpc[]>;
   // GET /providers — 관리자가 활성화한 저장소 provider 목록(연결 추가 화면용).
   listProviders(): Promise<Provider[]>;
   // 관리자
@@ -88,6 +85,10 @@ export interface ApiClient {
   adminPatchUser(username: string, body: { group?: string; enabled?: boolean }): Promise<{ username: string }>;
   adminListAllApps(status?: string): Promise<App[]>;
   adminAlbRegistry(): Promise<AlbRegistry[]>;
+  // 강제 중지(재우기) — 관리자가 임의 사용자 앱을 즉시 잠재운다(api-requests.md #7).
+  adminStopApp(appId: string): Promise<App>;
+  // 관리자에 의한 타인 앱 삭제 — 소유자 검사 없이 삭제(api-requests.md #7).
+  adminDeleteApp(appId: string): Promise<{ appId: string; status: "DELETING" }>;
 }
 
 /**
@@ -265,9 +266,6 @@ export class HttpApiClient implements ApiClient {
   listPermTemplates(): Promise<UserPermissionTemplate[]> {
     return this.list<UserPermissionTemplate>("GET", "/permission-templates");
   }
-  listVpcs(): Promise<RegisteredVpc[]> {
-    return this.list<RegisteredVpc>("GET", "/vpcs");
-  }
   listProviders(): Promise<Provider[]> {
     return this.list<Provider>("GET", "/providers");
   }
@@ -317,5 +315,13 @@ export class HttpApiClient implements ApiClient {
   }
   adminAlbRegistry(): Promise<AlbRegistry[]> {
     return this.list<AlbRegistry>("GET", "/admin/alb-registry");
+  }
+  // POST /admin/apps/{id}/stop — 강제 중지(재우기). 응답: 갱신된 App(runtimeState=SLEEPING).
+  adminStopApp(appId: string): Promise<App> {
+    return this.single<App>("POST", `/admin/apps/${appId}/stop`);
+  }
+  // DELETE /admin/apps/{id} — 관리자에 의한 타인 앱 삭제. 응답: {appId,status:"DELETING"}.
+  adminDeleteApp(appId: string): Promise<{ appId: string; status: "DELETING" }> {
+    return this.single("DELETE", `/admin/apps/${appId}`);
   }
 }

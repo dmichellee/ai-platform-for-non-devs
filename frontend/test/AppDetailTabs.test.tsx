@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { AppDetail } from "../src/screens/user/AppDetail.js";
 import { renderWithProviders, seedSession, setHash } from "./harness.js";
 import { MockApiClient } from "../src/mock/mockApi.js";
+import { ApiError } from "../src/lib/api.js";
 import type { App, AppMetrics, Deployment, LogEvent, MetricRange } from "../src/lib/types.js";
 import { mockApps } from "../src/mock/fixtures.js";
 
@@ -187,5 +188,34 @@ describe("앱 상세 — 탭 재편(개요·배포 이력·모니터링·설정)
     fireEvent.click(screen.getByText("실행 로그 보기"));
     await screen.findByText(/실행 로그 한 줄/);
     assertNoForbidden();
+  });
+});
+
+// 방침 ② — 수동 배포/재시작 동작 + 에러 노출 확인.
+describe("앱 상세 — 수동 배포/재시작 에러 노출", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    seedSession("user");
+    setHash("/apps/tab-app-1");
+  });
+
+  it("'지금 배포'가 deploy(appId) 를 호출한다", async () => {
+    const client = makeStub();
+    const deploySpy = vi.spyOn(client, "deploy");
+    renderWithProviders(<AppDetail appId="tab-app-1" />, client);
+    await screen.findByText(RUNNING.name);
+    fireEvent.click(screen.getByRole("button", { name: /지금 배포/ }));
+    await waitFor(() => expect(deploySpy).toHaveBeenCalledWith("tab-app-1"));
+  });
+
+  it("배포 접수가 실패하면 에러 메시지를 화면에 노출한다(조용히 삼키지 않음)", async () => {
+    const client = makeStub();
+    vi.spyOn(client, "deploy").mockRejectedValue(
+      new ApiError("INVALID_STATE", "준비된 앱만 배포할 수 있어요.", 409),
+    );
+    renderWithProviders(<AppDetail appId="tab-app-1" />, client);
+    await screen.findByText(RUNNING.name);
+    fireEvent.click(screen.getByRole("button", { name: /지금 배포/ }));
+    expect(await screen.findByText("준비된 앱만 배포할 수 있어요.")).toBeInTheDocument();
   });
 });

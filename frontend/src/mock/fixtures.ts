@@ -286,10 +286,8 @@ export const mockPermTemplates: PermissionTemplate[] = [
 
 export const mockSettings: AdminSettings = {
   enabledProviders: ["codecommit", "github", "gitlab"],
-  registeredVpcs: [{ vpcId: "vpc-01", label: "메인 VPC (ap-northeast-2)" }],
   userAppQuota: 5,
   allowInternetFacing: true,
-  logRetentionDays: 30,
   updatedAt: iso(1000 * 60 * 60 * 24 * 2),
 };
 

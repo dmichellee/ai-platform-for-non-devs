@@ -7,7 +7,7 @@
  * WAKING 상태면 "깨우는 중" 대기 안내를 상단에 보여준다.
  * 탭은 ?tab= 쿼리로 딥링크 가능(관리자 화면과 동일한 방식).
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -18,6 +18,7 @@ import {
   ExternalLink,
   History,
   Info,
+  KeyRound,
   MemoryStick,
   Play,
   RefreshCw,
@@ -201,43 +202,50 @@ function AppActions({ app, onChanged }: { app: App; onChanged: () => void }): JS
 
   const busy = app.status !== "ACTIVE";
 
+  // 배포/재시작 접수 실패는 조용히 삼키지 않고 사용자에게 원인을 보여준다(방침 ② — 에러 노출).
+  const runDeploy = async (): Promise<void> => {
+    try {
+      await deployMut.run();
+    } catch {
+      /* deployMut.error 로 표시 */
+    }
+    onChanged();
+  };
+
   return (
-    <div className="row">
-      <button
-        type="button"
-        className="btn btn-ghost"
-        disabled={busy || deployMut.loading}
-        onClick={async () => {
-          await deployMut.run().catch(() => undefined);
-          onChanged();
-        }}
-        title="지금 최신 코드로 다시 배포"
-      >
-        <Rocket size={15} className="icon" />
-        {deployMut.loading ? "배포 접수 중…" : "지금 배포"}
-      </button>
-      <button
-        type="button"
-        className="btn btn-ghost"
-        disabled={busy}
-        onClick={async () => {
-          await deployMut.run().catch(() => undefined);
-          onChanged();
-        }}
-        title="앱 다시 시작"
-      >
-        <RefreshCw size={15} className="icon" />
-        재시작
-      </button>
-      <button
-        type="button"
-        className="btn btn-danger"
-        disabled={app.status === "CREATING" || app.status === "DELETING"}
-        onClick={() => setConfirmDelete(true)}
-      >
-        <Trash2 size={15} className="icon" />
-        삭제
-      </button>
+    <div className="stack" style={{ alignItems: "flex-end" }}>
+      <div className="row">
+        <button
+          type="button"
+          className="btn btn-ghost"
+          disabled={busy || deployMut.loading}
+          onClick={runDeploy}
+          title="지금 최신 코드로 다시 배포"
+        >
+          <Rocket size={15} className="icon" />
+          {deployMut.loading ? "배포 접수 중…" : "지금 배포"}
+        </button>
+        <button
+          type="button"
+          className="btn btn-ghost"
+          disabled={busy || deployMut.loading}
+          onClick={runDeploy}
+          title="앱 다시 시작"
+        >
+          <RefreshCw size={15} className="icon" />
+          재시작
+        </button>
+        <button
+          type="button"
+          className="btn btn-danger"
+          disabled={app.status === "CREATING" || app.status === "DELETING"}
+          onClick={() => setConfirmDelete(true)}
+        >
+          <Trash2 size={15} className="icon" />
+          삭제
+        </button>
+      </div>
+      {deployMut.error && <ErrorNotice error={deployMut.error} />}
 
       {confirmDelete && (
         <Modal title="앱을 삭제할까요?" onClose={() => setConfirmDelete(false)}>
@@ -616,7 +624,7 @@ function MetricCard({
   );
 }
 
-// ── 설정 탭 (환경변수·가동 방식·자동배포 저장) ──
+// ── 설정 탭 (환경변수·비밀값·가동 방식·자동배포 저장) ──
 function SettingsTab({ app, onSaved }: { app: App; onSaved: () => void }): JSX.Element {
   const [autoDeploy, setAutoDeploy] = useState(app.autoDeployEnabled);
   const [sleepMode, setSleepMode] = useState<SleepMode>(app.sleepMode);
@@ -626,7 +634,27 @@ function SettingsTab({ app, onSaved }: { app: App; onSaved: () => void }): JSX.E
   const [envRows, setEnvRows] = useState(
     Object.entries(app.envVars).map(([key, value]) => ({ key, value })),
   );
+  // ④ 비밀값 관리 — 값은 응답에 없으므로(secretArns 는 KEY→ARN) 아래 규칙으로 편집한다:
+  //  - secretState[key] = { removed, newValue } — removed=삭제 표시, newValue!==null 이면 새 값으로 교체.
+  //  - newSecrets = 새로 추가하는 비밀값 rows.
+  const existingSecretKeys = useMemo(() => Object.keys(app.secretArns), [app.secretArns]);
+  const [secretState, setSecretState] = useState<Record<string, { removed: boolean; newValue: string | null }>>({});
+  const [newSecrets, setNewSecrets] = useState<{ key: string; value: string }[]>([]);
   const saveMut = useMutation<PatchAppRequest, App>((a, body) => a.patchApp(app.appId, body));
+
+  const secretsBody = useMemo(() => {
+    const secrets: Record<string, string> = {};
+    const secretsRemove: string[] = [];
+    // 기존 키: 삭제 표시 → remove, 새 값 입력 → 교체.
+    for (const key of existingSecretKeys) {
+      const st = secretState[key];
+      if (st?.removed) secretsRemove.push(key);
+      else if (st && st.newValue !== null) secrets[key] = st.newValue;
+    }
+    // 새 비밀값: key/value 모두 채운 것만.
+    for (const r of newSecrets) if (r.key && r.value) secrets[r.key] = r.value;
+    return { secrets, secretsRemove };
+  }, [existingSecretKeys, secretState, newSecrets]);
 
   const dirty = useMemo(() => {
     const envChanged =
@@ -634,14 +662,17 @@ function SettingsTab({ app, onSaved }: { app: App; onSaved: () => void }): JSX.E
       JSON.stringify(app.envVars);
     const scheduleChanged =
       sleepMode === "schedule" && JSON.stringify(schedule) !== JSON.stringify(app.schedule);
+    const secretsChanged =
+      Object.keys(secretsBody.secrets).length > 0 || secretsBody.secretsRemove.length > 0;
     return (
       autoDeploy !== app.autoDeployEnabled ||
       sleepMode !== app.sleepMode ||
       protect !== app.cognitoProtect ||
       scheduleChanged ||
-      envChanged
+      envChanged ||
+      secretsChanged
     );
-  }, [autoDeploy, sleepMode, schedule, protect, envRows, app]);
+  }, [autoDeploy, sleepMode, schedule, protect, envRows, secretsBody, app]);
 
   // "시간표대로"인데 시간표가 유효하지 않으면 저장 불가(요일 1개↑, 시각 형식).
   const scheduleBlocked = sleepMode === "schedule" && !isScheduleValid(schedule);
@@ -657,10 +688,21 @@ function SettingsTab({ app, onSaved }: { app: App; onSaved: () => void }): JSX.E
         envVars,
         // 계약: sleepMode="schedule"이면 schedule 필수. 그 외 모드에서는 보내지 않는다.
         ...(sleepMode === "schedule" ? { schedule } : {}),
+        // ④ 비밀값: 신규/교체는 secrets, 삭제는 secretsRemove. 비어 있으면 키 자체를 보내지 않는다.
+        ...(Object.keys(secretsBody.secrets).length > 0 ? { secrets: secretsBody.secrets } : {}),
+        ...(secretsBody.secretsRemove.length > 0 ? { secretsRemove: secretsBody.secretsRemove } : {}),
       })
-      .then(onSaved)
+      .then(() => {
+        // 저장 성공 후 로컬 비밀값 편집 상태 초기화(응답 App 의 secretArns 로 다시 그려진다).
+        setSecretState({});
+        setNewSecrets([]);
+        onSaved();
+      })
       .catch(() => undefined);
   }
+
+  const setKeyState = (key: string, p: Partial<{ removed: boolean; newValue: string | null }>): void =>
+    setSecretState((s) => ({ ...s, [key]: { removed: s[key]?.removed ?? false, newValue: s[key]?.newValue ?? null, ...p } }));
 
   return (
     <>
@@ -739,12 +781,15 @@ function SettingsTab({ app, onSaved }: { app: App; onSaved: () => void }): JSX.E
         >
           설정값 추가
         </button>
-        {Object.keys(app.secretArns).length > 0 && (
-          <p className="muted mt3">
-            비밀로 보관된 값({Object.keys(app.secretArns).join(", ")})은 여기서 보이지 않아요. 안전하게 따로 저장돼 있어요.
-          </p>
-        )}
       </div>
+
+      <SecretsPanel
+        existingSecretKeys={existingSecretKeys}
+        secretState={secretState}
+        setKeyState={setKeyState}
+        newSecrets={newSecrets}
+        setNewSecrets={setNewSecrets}
+      />
 
       {saveMut.error && <ErrorNotice error={saveMut.error} />}
       <div className="row" style={{ justifyContent: "flex-end" }}>
@@ -759,5 +804,126 @@ function SettingsTab({ app, onSaved }: { app: App; onSaved: () => void }): JSX.E
         </button>
       </div>
     </>
+  );
+}
+
+// ── 비밀값(시크릿) 관리 패널 ──
+// 값은 응답으로 내려오지 않으므로(secretArns 는 KEY→ARN) 키만 표시하고, 값은 "다시 볼 수 없어요"로 안내한다.
+// 기존 키: 새 값 입력 시 교체, 삭제 버튼으로 제거 표시. 새 비밀값: 이름+값 입력해 추가.
+function SecretsPanel({
+  existingSecretKeys,
+  secretState,
+  setKeyState,
+  newSecrets,
+  setNewSecrets,
+}: {
+  existingSecretKeys: string[];
+  secretState: Record<string, { removed: boolean; newValue: string | null }>;
+  setKeyState: (key: string, p: Partial<{ removed: boolean; newValue: string | null }>) => void;
+  newSecrets: { key: string; value: string }[];
+  setNewSecrets: Dispatch<SetStateAction<{ key: string; value: string }[]>>;
+}): JSX.Element {
+  return (
+    <div className="panel">
+      <h4>
+        <KeyRound size={16} className="icon" />
+        비밀 설정값
+      </h4>
+      <p className="muted" style={{ marginTop: -4, marginBottom: 12, fontSize: 13 }}>
+        비밀번호·API 키처럼 민감한 값이에요. 안전하게 따로 보관되며, <b>한 번 저장하면 값은 다시 볼 수 없어요.</b>{" "}
+        바꾸려면 새 값을 입력하세요.
+      </p>
+
+      {existingSecretKeys.length === 0 && newSecrets.length === 0 && (
+        <p className="muted">아직 저장된 비밀 설정값이 없어요.</p>
+      )}
+
+      <div className="stack">
+        {existingSecretKeys.map((key) => {
+          const st = secretState[key];
+          const removed = st?.removed ?? false;
+          const replacing = !removed && st?.newValue !== null && st?.newValue !== undefined;
+          return (
+            <div key={key} className="row" style={{ alignItems: "center", opacity: removed ? 0.5 : 1 }}>
+              <input
+                className="input mono"
+                aria-label="비밀값 이름"
+                value={key}
+                readOnly
+                style={{ maxWidth: 220, fontWeight: 600 }}
+              />
+              <input
+                className="input"
+                type="password"
+                aria-label={`${key} 새 값`}
+                placeholder={removed ? "삭제될 값이에요" : "값 유지 (바꾸려면 새 값 입력)"}
+                value={replacing ? (st?.newValue ?? "") : ""}
+                disabled={removed}
+                onChange={(e) => setKeyState(key, { newValue: e.target.value })}
+              />
+              {removed ? (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => setKeyState(key, { removed: false, newValue: null })}
+                >
+                  삭제 취소
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="row-act"
+                  aria-label={`${key} 삭제`}
+                  onClick={() => setKeyState(key, { removed: true, newValue: null })}
+                >
+                  <Trash2 size={16} className="icon" />
+                </button>
+              )}
+            </div>
+          );
+        })}
+
+        {newSecrets.map((r, i) => (
+          <div key={`new-${i}`} className="row" style={{ alignItems: "center" }}>
+            <input
+              className="input"
+              aria-label="새 비밀값 이름"
+              placeholder="이름 (예: DB_PASSWORD)"
+              value={r.key}
+              onChange={(e) =>
+                setNewSecrets((rows) => rows.map((x, idx) => (idx === i ? { ...x, key: e.target.value } : x)))
+              }
+            />
+            <input
+              className="input"
+              type="password"
+              aria-label="새 비밀값 값"
+              placeholder="값"
+              value={r.value}
+              onChange={(e) =>
+                setNewSecrets((rows) => rows.map((x, idx) => (idx === i ? { ...x, value: e.target.value } : x)))
+              }
+            />
+            <button
+              type="button"
+              className="row-act"
+              aria-label="삭제"
+              onClick={() => setNewSecrets((rows) => rows.filter((_, idx) => idx !== i))}
+            >
+              <Trash2 size={16} className="icon" />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <button
+        type="button"
+        className="btn btn-ghost mt3"
+        onClick={() => setNewSecrets((rows) => [...rows, { key: "", value: "" }])}
+      >
+        <KeyRound size={15} className="icon" />
+        비밀 설정값 추가
+      </button>
+    </div>
   );
 }

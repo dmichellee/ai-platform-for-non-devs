@@ -82,38 +82,27 @@ describe("사용자 화면 금지 용어 노출 검출", () => {
     expect(screen.getAllByText(/승인 대기 중/).length).toBeGreaterThan(0);
   });
 
-  // 이슈 4·5로 추가된 마법사 UI(네트워크 선택·시간표)에 기술 용어(VPC 등)가 새어 나오지 않는지 확인.
-  it("앱 생성 마법사 네트워크 선택·시간표에 AWS 용어(VPC 포함)가 없다", async () => {
+  // 마법사에는 네트워크(VPC) 선택 UI가 없다(방침 ① — 플랫폼 자동 배치). 시간표 UI 만 스캔한다.
+  it("앱 생성 마법사(공개 범위·시간표)에 AWS 용어(VPC 포함)가 없고 네트워크 UI 도 없다", async () => {
     setHash("/apps/new");
-    // 네트워크 2개 등록 상황을 만들어 드롭다운을 실제로 노출시킨다.
-    const { MockApiClient } = await import("../src/mock/mockApi.js");
-    const client = new MockApiClient();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (client as any).listVpcs = async () => [
-      { vpcId: "vpc-0bbe1", label: "메인 네트워크" },
-      { vpcId: "vpc-0bbe2", label: "보조 네트워크" },
-    ];
-    renderWithProviders(<CreateWizard />, client);
+    renderWithProviders(<CreateWizard />);
 
-    // 1단계 → 2단계(네트워크 드롭다운 노출)
+    // 1단계 → 2단계(이름·공개 범위). 네트워크 선택 UI 는 존재하지 않아야 한다.
     fireEvent.click(await screen.findByText("회사 GitHub"));
     fireEvent.change(screen.getByPlaceholderText(/https:\/\/github.com/), {
       target: { value: "https://github.com/example/x" },
     });
     fireEvent.click(screen.getByRole("button", { name: /다음 단계/ }));
-    await screen.findByLabelText("네트워크");
-    // 사용자에게는 label("메인 네트워크")만 보이고 vpc-id 는 노출되지 않는다.
+    await screen.findByText("앱 이름과 접속 범위를 정해주세요");
     let text = document.body.textContent ?? "";
     assertNoForbidden();
     expect(text.includes("VPC")).toBe(false);
-    expect(text.includes("vpc-")).toBe(false);
-    expect(text.includes("메인 네트워크")).toBe(true);
+    expect(screen.queryByLabelText("네트워크")).not.toBeInTheDocument();
 
     // 6단계(가동 방식)까지 진행해 시간표 UI 도 스캔.
     fireEvent.change(screen.getByLabelText("앱 이름"), { target: { value: "용어 검사 앱" } });
     fireEvent.change(screen.getByLabelText("접속 주소"), { target: { value: "term-check" } });
     await screen.findByText("사용할 수 있는 주소예요");
-    fireEvent.change(screen.getByLabelText("네트워크"), { target: { value: "vpc-0bbe1" } });
     await waitFor(() =>
       expect(screen.getByRole("button", { name: /다음 단계/ })).not.toBeDisabled(),
     );

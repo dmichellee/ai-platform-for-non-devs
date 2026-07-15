@@ -134,19 +134,12 @@ export interface SubdomainCheck {
   reason?: "INVALID" | "TAKEN";
 }
 
-// user용 네트워크(VPC) 목록 항목 — GET /vpcs (api-requests.md #5).
-// 관리자 등록 VPC 중 앱 생성 마법사가 고를 수 있는 것만. 사용자 화면에서는 "네트워크"로 노출.
-export interface RegisteredVpc {
-  vpcId: string;
-  label: string;
-}
-
 export interface AdminSettings {
   enabledProviders: string[];
-  registeredVpcs: { vpcId: string; label: string }[];
+  // registeredVpcs 는 계약상 응답에 여전히 존재할 수 있으나(플랫폼 VPC 자동 배치로 전환),
+  // 관리자 설정 화면에서는 더 이상 편집하지 않는다(죽은 UI 제거). PUT body 에도 싣지 않는다.
   userAppQuota: number;
   allowInternetFacing: boolean;
-  logRetentionDays: number;
   updatedAt?: string;
 }
 
@@ -219,11 +212,15 @@ export interface CreateAppRequest {
   presetId: string;
   permissionTemplateId: string;
   scheme: Scheme;
-  vpcId: string;
+  // 네트워크(VPC)는 플랫폼이 자동 배치한다. 계약상 optional — 미전송 또는 "platform" 고정.
+  vpcId?: string;
   autoDeployEnabled?: boolean;
   sleepMode: SleepMode;
   schedule?: Schedule;
+  // 평문 설정값(비밀 아님). secrets 와 분리 전송(계약 ④).
   envVars?: Record<string, string>;
+  // 비밀 설정값 — Secrets Manager 에 저장. 응답 App.secretArns={KEY:arn} 로 키 목록만 확인 가능.
+  secrets?: Record<string, string>;
   cognitoProtect?: boolean;
 }
 
@@ -231,6 +228,11 @@ export interface PatchAppRequest {
   autoDeployEnabled?: boolean;
   sleepMode?: SleepMode;
   schedule?: Schedule;
+  // 평문 설정값 전체 교체(기존 규칙 유지).
   envVars?: Record<string, string>;
+  // 새로/교체할 비밀 설정값(KEY→평문). 보낸 KEY 만 갱신(부분 갱신).
+  secrets?: Record<string, string>;
+  // 삭제할 비밀 설정값 KEY 목록. secrets 와 함께 보낼 수 있다.
+  secretsRemove?: string[];
   cognitoProtect?: boolean;
 }
