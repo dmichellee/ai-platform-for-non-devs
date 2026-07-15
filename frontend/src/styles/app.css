@@ -46,6 +46,9 @@ textarea {
   font-size: 16px;
   letter-spacing: -0.01em;
   cursor: pointer;
+  /* 브랜드 텍스트 색을 명시한다. 미지정 시 버튼 기본색(검정 계열)을 상속해
+     다크 배경에서 'AppHub' 글자가 안 보였음. 라이트=검정/다크=흰색으로 대비 확보. */
+  color: var(--on-surface);
 }
 .logo .mark {
   width: 30px;
@@ -73,7 +76,11 @@ textarea {
 .topbar-link {
   font-size: 14px;
   font-weight: 600;
-  color: var(--on-surface-muted);
+  /* 네비게이션 항목은 또렷해야 한다. muted(#a0a0a0)는 다크 배경에서 대비가 약해
+     '저장소 연결'/'Kiro 설정'이 흐리게 보였음. on-surface로 또렷하게 하고
+     active/hover는 배경(surface-hover)으로 구분한다. */
+  color: var(--on-surface);
+  background: transparent;
   padding: 8px 10px;
   border-radius: 10px;
   cursor: pointer;
@@ -1167,10 +1174,14 @@ textarea {
   width: 42px;
   height: 24px;
   border-radius: 999px;
-  background: var(--surface-hover);
-  border: 1px solid var(--border-strong);
+  /* off 상태: 흰 배경에서도 트랙이 뚜렷이 보이도록 명확한 회색 톤을 쓴다
+     (surface-hover는 라이트에서 거의 흰색이라 형태가 안 보였음). */
+  background: var(--on-surface-subtle);
+  border: 1px solid var(--on-surface-muted);
   cursor: pointer;
-  transition: background 0.18s ease;
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease;
   flex: none;
 }
 .switch.on {
@@ -1185,6 +1196,8 @@ textarea {
   height: 18px;
   border-radius: 999px;
   background: #fff;
+  /* 흰 knob이 밝은 배경/트랙에 묻히지 않도록 옅은 그림자로 형태를 살린다. */
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
   transition: transform 0.18s ease;
 }
 .switch.on .knob {
