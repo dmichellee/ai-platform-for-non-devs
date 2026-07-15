@@ -2,7 +2,8 @@
 
 step 흐름(ASL 이 Wait/Choice/Retry/Catch 로 감싼다):
   allocate-slot → deploy-pipeline(provisioner CodeBuild StartBuild)
-    → poll-build(Choice buildStatus=SUCCEEDED + Wait 루프) → first-deploy(StartPipelineExecution)
+    → poll-build(Choice buildStatus=SUCCEEDED + Wait 루프) → first-deploy(no-op — 파이프라인
+      생성 시 CreatePipeline 자동 실행에 위임, StartPipelineExecution 호출 안 함)
     → finalize(성공: status CREATING 유지 / 실패: CREATING→FAILED).
 Catch(States.ALL) → finalize(outcome=failure) → Fail.
 
