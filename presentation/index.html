@@ -350,7 +350,7 @@
           <tr><td class="k"><span class="num">2</span> 이름·공개 범위</td><td>앱 이름 · 접속 주소 · <b>사내에서만</b>(권장) / 인터넷</td><td>서브도메인 예약(DynamoDB 조건부 쓰기) · Route 53 레코드(private/public zone) · <b>internal / internet-facing ALB</b> 호스트 규칙</td><td>사용자 (인터넷 공개 허용은 관리자)</td></tr>
           <tr><td class="k"><span class="num">3</span> 크기</td><td>작게 / 보통 / 크게</td><td>Fargate <b>CPU·메모리</b>, 최소/최대 태스크 수, 오토스케일 기준(CPU% 또는 요청 수)</td><td>관리자 프리셋</td></tr>
           <tr><td class="k"><span class="num">4</span> 앱 유형</td><td>기본(권한 없음) / AI 기능 사용</td><td>ECS <b>Task Role 인라인 IAM 정책</b> (예: <code>bedrock:InvokeModel</code>). 기본은 정책 없음</td><td>관리자 권한 템플릿</td></tr>
-          <tr><td class="k"><span class="num">5</span> 환경변수</td><td>이름 · 값 · '비밀로 보관'</td><td>일반값 → 컨테이너 환경변수 / 비밀값 → <b>Secrets Manager</b> 저장 후 ECS <code>secrets</code>로 주입 (DB에는 ARN만)</td><td>사용자</td></tr>
+          <tr><td class="k"><span class="num">5</span> 환경변수</td><td>이름 · 값 · '비밀로 보관'</td><td>일반값 → 컨테이너 환경변수 / 비밀값 → <b>Secrets Manager</b>(앱당 1개, JSON) 저장 후 키별로 ECS <code>secrets</code> 주입 (DB에는 ARN·키 이름만)</td><td>사용자</td></tr>
           <tr><td class="k"><span class="num">6</span> 가동 방식</td><td>쓸 때만 켜기(권장) / 항상 켜두기 / 시간표대로</td><td>유휴 알람(15분 무요청) · EventBridge Scheduler(start/stop) · 상시 가동</td><td>사용자</td></tr>
           <tr><td class="k"><span class="num">6</span> 자동 배포</td><td>코드를 올릴 때마다 자동 배포 (토글)</td><td>Pipeline 소스 트리거 on/off (CodeCommit: EVENTS/NONE, Connections: <code>triggerOnPush</code>)</td><td>사용자</td></tr>
           <tr><td class="k"><span class="num">7</span> 설정 안내</td><td>배포 표준 안내 · Kiro 설정 링크</td><td>— (생성 요청 접수 후 표시. 앱은 <code>CREATING</code>)</td><td>—</td></tr>
@@ -369,7 +369,7 @@
     <div class="body vc row" style="gap:20px">
       <div class="g2 grow zoomable" style="gap:12px 14px;align-content:start">
         <div><div class="shot clip" style="--h:206px"><img src="assets/shots/t-overview.png" alt=""></div><div class="shot-cap"><b>개요</b> 상태·주소·저장소·크기·공개 범위</div></div>
-        <div><div class="shot clip" style="--h:206px"><img src="assets/shots/t-deploy.png" alt=""></div><div class="shot-cap"><b>배포 이력</b> 자동/수동, 커밋 SHA, 실행 로그</div></div>
+        <div><div class="shot clip" style="--h:206px"><img src="assets/shots/t-deploy.png" alt=""></div><div class="shot-cap"><b>배포 이력</b> 자동·수동·되돌리기·비밀값 변경, 커밋 SHA, 실행 로그</div></div>
         <div><div class="shot clip" style="--h:206px"><img src="assets/shots/t-monitor.png" alt=""></div><div class="shot-cap"><b>모니터링</b> 요청 수 · CPU · 메모리 (1h/6h/24h/7d)</div></div>
         <div><div class="shot clip" style="--h:206px"><img src="assets/shots/t-settings.png" alt=""></div><div class="shot-cap"><b>설정</b> 환경변수·비밀값·가동 방식·자동 배포</div></div>
       </div>
@@ -979,7 +979,7 @@
         </div>
       </div>
       <div class="card">
-        <div class="cap">Deployment.status — 파이프라인 이벤트로 전진만 (역행 없음)</div>
+        <div class="cap">Deployment.status — 파이프라인·provisioner 빌드 이벤트로 전진만 (역행 없음)</div>
         <div class="row center mt8" style="gap:8px;flex-wrap:wrap">
           <div class="st grey">PENDING<small>대기 중</small></div><span class="muted">→ Source</span>
           <div class="st run">VALIDATING<small>검사 중</small></div><span class="muted">→ ValidateBuild</span>
@@ -1033,7 +1033,7 @@
         <div class="g2 grow" style="gap:10px">
           <div class="card soft" style="padding:10px 12px"><div class="cap">인증 유지</div><div class="small">forward의 TargetGroupArn만 교체 — authenticate-cognito 동작은 그대로</div></div>
           <div class="card soft" style="padding:10px 12px"><div class="cap">멱등</div><div class="small">현재 값이 목표와 같으면 UpdateService·ModifyRule 호출 생략</div></div>
-          <div class="card soft" style="padding:10px 12px"><div class="cap">배포와 충돌 방지</div><div class="small">desiredCount는 첫 배포에만 지정 → 재배포가 잠자기 상태를 덮지 않음</div></div>
+          <div class="card soft" style="padding:10px 12px"><div class="cap">배포와 충돌 방지</div><div class="small">desiredCount는 첫 배포에만 지정 · 잠든 앱은 배포 성공 후 deploy-notify가 수면 상태(0대 + waker 규칙)를 다시 적용</div></div>
           <div class="card soft" style="padding:10px 12px"><div class="cap">시간표 시작</div><div class="small">Scheduler → <code>ecs:updateService</code>만 호출, 규칙 복귀는 restore가 처리</div></div>
         </div>
       </div>
@@ -1125,7 +1125,7 @@
       <div class="card"><h4><svg class="ico"><use href="#i-key"/></svg>앱 권한</h4>
         <ul class="bl sm mt8"><li>Task Role = 관리자 권한 템플릿의 인라인 정책</li><li>기본 템플릿은 빈 Statement → AWS 권한 없음</li><li>사용자에겐 템플릿 이름만, 정책 본문 비노출</li></ul></div>
       <div class="card"><h4><svg class="ico"><use href="#i-lock"/></svg>비밀값</h4>
-        <ul class="bl sm mt8"><li>Secrets Manager <code>apphub/{stage}/app/{appId}/{KEY}</code></li><li>DynamoDB·로그·CFN 파라미터엔 ARN만</li><li>ECS <code>secrets</code>로 주입, 실행 역할은 해당 ARN만 읽기</li><li>앱 삭제 시 강제 삭제</li></ul></div>
+        <ul class="bl sm mt8"><li>Secrets Manager 앱당 1개 <code>apphub/{stage}/app/{appId}</code> — JSON <code>{KEY: value}</code></li><li>DynamoDB·로그·CFN 파라미터엔 ARN만</li><li>키별로 ECS <code>secrets</code> 주입 (<code>&lt;arn&gt;:KEY::</code>), 실행 역할은 해당 ARN만 읽기</li><li>앱 삭제 시 강제 삭제</li></ul></div>
       <div class="card"><h4><svg class="ico"><use href="#i-user"/></svg>인증 · 인가</h4>
         <ul class="bl sm mt8"><li>Cognito: 자가 가입 off(초대 전용), 비밀번호 12자+ 복합</li><li>API: JWT authorizer, admin/user 그룹</li><li>앱: ALB authenticate-cognito (인터넷 공개 앱 기본 on)</li></ul></div>
       <div class="card"><h4><svg class="ico"><use href="#i-db"/></svg>저장소 · 전송</h4>
@@ -1169,15 +1169,15 @@
 <section class="slide" data-nav="테스트 전략" data-group="04 품질·보안·운영">
   <div class="pad">
     <div class="kicker">품질 · 테스트</div>
-    <h2 class="s-title">계층별 단위 테스트 657개 + 실제 AWS E2E 5개 시나리오</h2>
+    <h2 class="s-title">계층별 단위 테스트 722개 + 실제 AWS E2E 5개 시나리오</h2>
     <div class="body vc row" style="gap:22px">
       <div class="col" style="width:440px;gap:14px">
         <div class="card"><div class="cap">자동화 테스트 수 (test 함수 기준)</div>
           <div class="bars mt8">
-            <div class="bar-row"><span>backend</span><div class="track"><div class="fill" style="width:100%"></div></div><span class="val">324</span></div>
-            <div class="bar-row"><span>frontend</span><div class="track"><div class="fill" style="width:55%"></div></div><span class="val">179</span></div>
-            <div class="bar-row"><span>infra (CDK)</span><div class="track"><div class="fill" style="width:47.5%"></div></div><span class="val">154</span></div>
-            <div class="bar-row"><span>Playwright</span><div class="track"><div class="fill" style="width:2.8%"></div></div><span class="val">9</span></div>
+            <div class="bar-row"><span>backend</span><div class="track"><div class="fill" style="width:100%"></div></div><span class="val">352</span></div>
+            <div class="bar-row"><span>frontend</span><div class="track"><div class="fill" style="width:55.4%"></div></div><span class="val">195</span></div>
+            <div class="bar-row"><span>infra (CDK)</span><div class="track"><div class="fill" style="width:49.7%"></div></div><span class="val">175</span></div>
+            <div class="bar-row"><span>Playwright</span><div class="track"><div class="fill" style="width:2.6%"></div></div><span class="val">9</span></div>
           </div>
           <div class="small muted mt12">pytest · vitest + Testing Library · CDK assertions · Playwright</div></div>
         <div class="card"><div class="cap">라이브 E2E (run-e2e.sh · dev 계정 · 약 30분)</div>
@@ -1197,8 +1197,8 @@
           </tbody>
         </table>
         <div class="g2 mt12" style="gap:10px">
-          <div class="card soft" style="padding:10px 12px"><div class="cap">backend 상위</div><div class="small">apps 31 · deploy_notify 30 · cc_repos 28 · rollback/secrets/stop 22 · provision 21</div></div>
-          <div class="card soft" style="padding:10px 12px"><div class="cap">infra 상위</div><div class="small">platform-stack 57 · app-runtime 31 · network-stack 28 · app-pipeline 16</div></div>
+          <div class="card soft" style="padding:10px 12px"><div class="cap">backend 상위</div><div class="small">secrets_d8 33 · deploy_notify 32 · apps 31 · cc_repos 28 · provision 21</div></div>
+          <div class="card soft" style="padding:10px 12px"><div class="cap">infra 상위</div><div class="small">platform-stack 66 · app-runtime 34 · network-stack 29 · app-pipeline 16</div></div>
         </div>
       </div>
     </div>
