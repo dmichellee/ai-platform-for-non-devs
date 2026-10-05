@@ -3,7 +3,7 @@
 수동 배포/롤백은 무거운 작업을 직접 하지 않는다("메인 서버 무부하"):
  - deploy: 앱 파이프라인(app-pipeline)을 StartPipelineExecution 으로 트리거만 하고 접수 응답.
  - rollback: 재빌드 없이 이전 커밋 SHA 이미지 태그로 runtime 스택을 provisioner CodeBuild(StartBuild,
-   APP_STACK_KIND=runtime + IMAGE_TAG)로 재배포 트리거만. 진행 상태는 배포 이력/새로고침으로 확인
+   APP_STACK_KIND=runtime + IMAGE_TAG)로 재배포 트리거만(domain.redeploy — 시크릿 변경 재배포와 같은 경로). 진행 상태는 배포 이력/새로고침으로 확인
    (완료 폴링은 하지 않음 — Lambda 무부하 유지, 판단 명시).
 Deployment 레코드는 접수 시점에 생성하고 실행 식별자(pipelineExecutionId/buildId)를 담는다.
 """
@@ -12,14 +12,13 @@ from __future__ import annotations
 
 from ..config import load_config
 from ..data.deployments import list_deployments, put_deployment
+from ..domain.redeploy import start_runtime_redeploy
 from ..domain.validate import parse_body
 from ..http.errors import errors
 from ..http.response import ProxyResult, created, list_response, ok
 from ..http.router import RouteContext
-from ..integrations.codebuild import start_provisioner_build
 from ..integrations.codepipeline import start_pipeline
 from ..integrations.ecr import image_tag_exists
-from ..integrations.ssm import platform_param
 from .apps import load_owned_app
 
 
@@ -90,7 +89,12 @@ def rollback_deploy(ctx: RouteContext) -> ProxyResult:
             "되돌릴 버전의 앱 이미지를 찾을 수 없어요(보관 기간이 지났을 수 있어요)."
         )
 
-    build_id = _start_rollback_build_or_friendly_error(stage, app["appId"], commit_sha)
+    build_id = start_runtime_redeploy(
+        stage,
+        app["appId"],
+        commit_sha,
+        failed_message="지금은 되돌리기를 시작할 수 없어요. 잠시 후 다시 시도해주세요.",
+    )
 
     deployment = put_deployment(
         app_id=app["appId"],
@@ -112,23 +116,6 @@ def _start_pipeline_or_friendly_error(stage: str, app_id: str) -> str | None:
     except Exception as err:  # noqa: BLE001 - AWS 예외를 사용자용 친절 에러로 변환
         raise errors.invalid_state(
             "지금은 배포를 시작할 수 없어요. 앱이 아직 준비 중이거나 배포가 진행 중일 수 있어요."
-        ) from err
-
-
-def _start_rollback_build_or_friendly_error(stage: str, app_id: str, commit_sha: str) -> str | None:
-    """provisioner CodeBuild(runtime 재배포) StartBuild. 실패는 INVALID_STATE 로 마스킹."""
-    project_name = platform_param(stage, "provisioner-project-name")
-    env: dict[str, str] = {
-        "APP_ID": app_id,
-        "STAGE": stage,
-        "APP_STACK_KIND": "runtime",
-        "IMAGE_TAG": commit_sha,
-    }
-    try:
-        return start_provisioner_build(project_name, env)
-    except Exception as err:  # noqa: BLE001
-        raise errors.invalid_state(
-            "지금은 되돌리기를 시작할 수 없어요. 잠시 후 다시 시도해주세요."
         ) from err
 
 

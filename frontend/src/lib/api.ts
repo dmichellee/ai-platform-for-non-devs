@@ -17,6 +17,7 @@ import type {
   LogsEnvelope,
   MetricRange,
   PatchAppRequest,
+  PatchAppResponse,
   PermissionTemplate,
   PlatformUser,
   Provider,
@@ -44,7 +45,7 @@ export interface ApiClient {
   listApps(): Promise<App[]>;
   getApp(appId: string): Promise<App>;
   createApp(body: CreateAppRequest): Promise<App>;
-  patchApp(appId: string, body: PatchAppRequest): Promise<App>;
+  patchApp(appId: string, body: PatchAppRequest): Promise<PatchAppResponse>;
   deleteApp(appId: string): Promise<{ appId: string; status: "DELETING" }>;
   // 배포
   deploy(appId: string): Promise<Deployment>;
@@ -196,8 +197,8 @@ export class HttpApiClient implements ApiClient {
   createApp(b: CreateAppRequest): Promise<App> {
     return this.single<App>("POST", "/apps", b);
   }
-  patchApp(appId: string, b: PatchAppRequest): Promise<App> {
-    return this.single<App>("PATCH", `/apps/${appId}`, b);
+  patchApp(appId: string, b: PatchAppRequest): Promise<PatchAppResponse> {
+    return this.single<PatchAppResponse>("PATCH", `/apps/${appId}`, b);
   }
   deleteApp(appId: string): Promise<{ appId: string; status: "DELETING" }> {
     return this.single("DELETE", `/apps/${appId}`);

@@ -440,6 +440,22 @@ export class PlatformStack extends Stack {
         ],
       }),
     );
+    // (6b') platform 공유값 SSM 읽기 (QA M1) — 롤백/시크릿 재배포(handlers/deployments.py)가
+    //      platform_param("provisioner-project-name")으로 provisioner 프로젝트명을 읽는다.
+    //      network/* 만 허용하던 탓에 라이브 AccessDenied → 필요한 파라미터 1개만 정확 ARN으로 추가(최소 권한).
+    apiHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "ReadPlatformSsm",
+        actions: ["ssm:GetParameter"],
+        resources: [
+          this.formatArn({
+            service: "ssm",
+            resource: "parameter",
+            resourceName: `apphub/${config.stage}/platform/provisioner-project-name`,
+          }),
+        ],
+      }),
+    );
     // (6c) 리스너 규칙 forward 전환 — transition_listener_rule이 host 규칙의 forward 대상을 공유 Waker TG로 교체.
     //      ModifyRule은 listener-rule ARN을 지원하나 앱 규칙 ARN을 사전에 알 수 없어(런타임 조회)
     //      listener-rule/app/* 와일드카드로 좁힌다(network-stack elbControl의 listenerRuleArn과 동일 패턴).
@@ -457,6 +473,16 @@ export class PlatformStack extends Stack {
         ],
       }),
     );
+    // (6c') QA H3 — 리스너 규칙에 authenticate-cognito 액션이 포함된 경우(D16 cognitoProtect) ModifyRule 호출자는
+    //      해당 User Pool 클라이언트에 대한 cognito-idp:DescribeUserPoolClient 권한이 필요하다(ELB가 호출자 권한으로 검증).
+    //      앱 인증용 클라이언트(app-auth)는 플랫폼 User Pool 소속 → 이 User Pool ARN으로 한정.
+    apiHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "AdminStopCognitoDescribeClient",
+        actions: ["cognito-idp:DescribeUserPoolClient"],
+        resources: [userPool.userPoolArn],
+      }),
+    );
     // (6d) ELB Describe 계열 — DescribeRules(find_rule_by_host)·DescribeListeners는 리소스 레벨 미지원 →
     //      Resource:"*" (정당 예외, conventions 7장). network-stack elbControl의 ElbDescribe와 동일 근거(read-only).
     //      DescribeTargetGroups는 AppMetricsRead에 이미 있어 여기서는 제외(중복 금지).
@@ -471,20 +497,31 @@ export class PlatformStack extends Stack {
       }),
     );
 
-    // (7) 앱 시크릿 CRUD (POST/DELETE /apps/{id}/secrets 등, D-M5-03 시크릿 관리).
-    //     backend가 `apphub/{stage}/app/{appId}/{KEY}`(슬래시) 이름으로 시크릿을 CRUD한다.
+    // (7) 앱 시크릿 CRUD (D8: 앱당 시크릿 1개 `apphub/{stage}/app/{appId}`, JSON {KEY: value}).
+    //     backend(API Lambda)가 시크릿을 생성·소유하고 KEY upsert 시 JSON을 읽어 병합(GetSecretValue)한 뒤 Put 한다.
     //     appSecretArn(path 스타일 `apphub/{stage}/app/*`)이 6자 랜덤 suffix까지 커버 —
-    //     delete-task의 DeleteSecret과 동일 상수를 공유(하이픈 규약 AccessDenied 회귀 방지).
+    //     delete-task의 DeleteSecret·deploy-notify의 JSON 정리와 동일 상수를 공유.
     apiHandler.addToRolePolicy(
       new iam.PolicyStatement({
         sid: "AppSecretsCrud",
         actions: [
           "secretsmanager:CreateSecret",
           "secretsmanager:PutSecretValue",
+          "secretsmanager:GetSecretValue",
           "secretsmanager:DescribeSecret",
           "secretsmanager:DeleteSecret",
         ],
         resources: [this.appSecretArn(config.stage)],
+      }),
+    );
+    // (7b) 시크릿 변경 재배포의 커밋 폴백(domain/redeploy.py) — 마지막 성공 배포 commitSha가 없으면
+    //      서비스 PRIMARY 태스크 정의의 이미지 태그를 쓴다. DescribeServices는 AdminStopEcs에 이미 있음.
+    //      ecs:DescribeTaskDefinition 은 리소스 레벨 미지원 → Resource:"*" 정당 예외(read-only).
+    apiHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "AppTaskDefRead",
+        actions: ["ecs:DescribeTaskDefinition"],
+        resources: ["*"],
       }),
     );
     // (8) 롤백 이미지 태그 확인 (GET /apps/{id}/deployments 등 롤백 후보 조회, D-M5-03 롤백).
@@ -504,8 +541,8 @@ export class PlatformStack extends Stack {
         ],
       }),
     );
-    // (9) 롤백 runtime 재배포 트리거 (POST /apps/{id}/rollback → provisioner StartBuild, D-M5-03 롤백).
-    //     롤백은 선택 이미지 태그로 runtime 스택을 재배포하므로 provisioner CodeBuild를 시작한다.
+    // (9) 롤백·시크릿 변경 runtime 재배포 트리거 (provisioner StartBuild — deploy.yml, D-M5-03 롤백 / D8 시크릿).
+    //     롤백은 선택 이미지 태그로, 시크릿 변경은 현재 배포 커밋으로(재빌드 없이) runtime 스택을 재배포한다.
     //     provisionerBuildArn(`${prefix}-provisioner`)로 한정 — task Lambda의 StartPollProvisioner와 동일 대상.
     apiHandler.addToRolePolicy(
       new iam.PolicyStatement({
@@ -709,8 +746,9 @@ export class PlatformStack extends Stack {
       logGroup: deployNotifyLogGroup,
       // 데이터 계층(app.data.client.table)이 요구하는 TABLE_NAME(폴백 없음) + STAGE.
       //  테이블명은 결정론적(`${prefix}-main`)이라 크로스스택/SSM 없이 직접 주입(task Lambda와 동일 규약).
-      environment: { STAGE: config.stage, TABLE_NAME: `${prefix}-main` },
-      description: "CodePipeline state -> DDB Deployment update ([Notify], DESIGN 3.3)",
+      //  CLUSTER_NAME: 배포 성공 후처리(잠든 앱 재정합 sleep_app·시크릿 지연 정리)가 공유 클러스터(D18) 서비스를 조회.
+      environment: { STAGE: config.stage, TABLE_NAME: `${prefix}-main`, CLUSTER_NAME: `${prefix}-cluster` },
+      description: "CodePipeline/provisioner state -> DDB Deployment update ([Notify], DESIGN 3.3)",
     });
     this.deployNotifyFunction = deployNotify;
 
@@ -749,6 +787,112 @@ export class PlatformStack extends Stack {
       }),
     );
 
+    // (4) D8 지연 정리 — 배포 성공 시 앱 시크릿 JSON에서 DDB secretKeys에 없는 키를 제거한다.
+    //     Get(현재 JSON) → Put(정리본). 범위는 API 역할·delete-task와 같은 appSecretArn(단일 소스).
+    deployNotify.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "DeployNotifySecretPrune",
+        actions: ["secretsmanager:GetSecretValue", "secretsmanager:PutSecretValue"],
+        resources: [this.appSecretArn(config.stage)],
+      }),
+    );
+    // (5) 정리 전 실제 배포된 태스크 정의가 참조하는 KEY 확인 — 서비스 → 태스크 정의 조회.
+    //     + 잠든 앱 재정합(QA H2): sleep_app(force)의 ensure_stopped(desiredCount=0) → UpdateService.
+    //     Describe/UpdateService는 service ARN 지원 → 공유 클러스터(D18) 하위 앱 서비스로 한정.
+    deployNotify.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "DeployNotifyEcsService",
+        actions: ["ecs:DescribeServices", "ecs:UpdateService"],
+        resources: [
+          this.formatArn({
+            service: "ecs",
+            resource: "service",
+            resourceName: `${prefix}-cluster/${prefix}-app-*`,
+          }),
+        ],
+      }),
+    );
+    //     ecs:DescribeTaskDefinition 은 리소스 레벨 권한 미지원(AWS Service Authorization Reference) →
+    //     Resource:"*" 정당 예외(conventions 7장). read-only.
+    deployNotify.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "DeployNotifyEcsDescribeTaskDef",
+        actions: ["ecs:DescribeTaskDefinition"],
+        resources: ["*"],
+      }),
+    );
+
+    // (6) 잠든 앱 재정합(QA H2) — sleep_app(force)가 리스너 규칙 forward를 Waker TG로 되돌린다.
+    //     network-stack 잠자기 Lambda / API 역할(관리자 강제 중지)과 동일 ARN 패턴·근거.
+    deployNotify.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "DeployNotifyNetworkSsmRead",
+        actions: ["ssm:GetParameter", "ssm:GetParameters"],
+        resources: [
+          this.formatArn({ service: "ssm", resource: "parameter", resourceName: `apphub/${config.stage}/network/*` }),
+        ],
+      }),
+    );
+    deployNotify.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "DeployNotifyElbModifyRule",
+        actions: ["elasticloadbalancing:ModifyRule"],
+        resources: [
+          this.formatArn({
+            service: "elasticloadbalancing",
+            resource: "listener-rule/app",
+            resourceName: "*",
+            arnFormat: ArnFormat.SLASH_RESOURCE_NAME,
+          }),
+        ],
+      }),
+    );
+    //     ELB Describe 계열은 리소스 레벨 미지원 → Resource:"*" 정당 예외(read-only).
+    deployNotify.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "DeployNotifyElbDescribe",
+        actions: [
+          "elasticloadbalancing:DescribeRules",
+          "elasticloadbalancing:DescribeListeners",
+          "elasticloadbalancing:DescribeTargetGroups",
+        ],
+        resources: ["*"],
+      }),
+    );
+    //     QA H3: authenticate-cognito가 붙은 규칙의 ModifyRule → DescribeUserPoolClient(플랫폼 User Pool 한정).
+    deployNotify.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "DeployNotifyCognitoDescribeClient",
+        actions: ["cognito-idp:DescribeUserPoolClient"],
+        resources: [userPool.userPoolArn],
+      }),
+    );
+
+    // ── QA H3: network 소유 wake Lambda(복원/잠자기)의 cognito DescribeUserPoolClient ───────────
+    //  두 Lambda는 리스너 규칙을 ModifyRule 하는데, 규칙에 authenticate-cognito(D16)가 있으면 ELB가 호출자의
+    //  cognito-idp:DescribeUserPoolClient 권한을 검증한다. User Pool은 platform 소유이고 network가 먼저 배포되므로
+    //  (deploy.sh: network → platform) network 스택은 User Pool ARN을 알 수 없다 → platform 스택이
+    //  network가 SSM에 발행한 역할명으로 역할을 임포트해 정책을 부착한다(User Pool ARN으로 정확히 한정).
+    //  waker는 ModifyRule을 호출하지 않으므로(ECS 기동만) 대상 아님.
+    const wakeRuleRoles = ["wake-restore-role-name", "sleep-transition-role-name"].map((key) =>
+      iam.Role.fromRoleName(
+        this,
+        `Imported-${key}`,
+        ssm.StringParameter.valueForStringParameter(this, `/apphub/${config.stage}/network/${key}`),
+      ),
+    );
+    new iam.Policy(this, "WakeRuleCognitoDescribe", {
+      policyName: `${prefix}-wake-cognito-describe`,
+      roles: wakeRuleRoles,
+      statements: [
+        new iam.PolicyStatement({
+          sid: "CognitoDescribeClientForModifyRule",
+          actions: ["cognito-idp:DescribeUserPoolClient"],
+          resources: [userPool.userPoolArn],
+        }),
+      ],
+    });
+
     // EventBridge 규칙 2개 — 앱 파이프라인(`${prefix}-app-*`) prefix 패턴 공유 규칙(앱별 아님).
     //  둘 다 target = deploy-notify Lambda. CodePipeline은 두 종류의 상태 이벤트를 발행하므로 각각 구독한다:
     //   (1) Stage Execution State Change — 단계(Source/Validate/Build/Deploy) 진입·성공·실패 → Deployment.status 세분 전이.
@@ -774,6 +918,19 @@ export class PlatformStack extends Stack {
       },
     });
     deployNotifyExecRule.addTarget(new events_targets.LambdaFunction(deployNotify));
+    // (3) provisioner 런타임 재배포(롤백 / 시크릿 변경 재배포, D8) — 파이프라인을 거치지 않으므로
+    //     CodeBuild Build State Change를 구독한다. provisioner 프로젝트 1개로 한정(앱별 아님).
+    //     APP_STACK_KIND=runtime 필터는 핸들러가 이벤트 env(additional-information)로 판정.
+    const deployNotifyBuildRule = new events.Rule(this, "DeployNotifyBuildRule", {
+      ruleName: `${prefix}-deploy-notify-build`,
+      description: "Provisioner CodeBuild state change (runtime redeploy) -> deploy-notify (D8)",
+      eventPattern: {
+        source: ["aws.codebuild"],
+        detailType: ["CodeBuild Build State Change"],
+        detail: { "project-name": [provisioner.projectName] },
+      },
+    });
+    deployNotifyBuildRule.addTarget(new events_targets.LambdaFunction(deployNotify));
 
     // ── CloudWatch 대시보드(관리자 관측성) 최소 ─────────────────────────────
     // DESIGN.md 9: 파이프라인 성공률, Step Functions 실패, ALB 규칙 사용량, 앱 수.
@@ -855,8 +1012,8 @@ export class PlatformStack extends Stack {
   //  양쪽이 쓰므로 단일 소스로 만든다. 결정론적(prefix/stage 기반)이라 부수효과 없이 재호출 가능.
 
   /**
-   * 앱 시크릿 ARN(범위). backend가 만드는 이름 규약 `apphub/{stage}/app/{appId}/{KEY}`(슬래시)를
-   * 커버한다. path 스타일 `apphub/{stage}/app/*` 의 뒤 `*`가 하위 경로(`{appId}/{KEY}`)와
+   * 앱 시크릿 ARN(범위). backend가 만드는 이름 규약 `apphub/{stage}/app/{appId}`(D8, 앱당 1개)를
+   * 커버한다. path 스타일 `apphub/{stage}/app/*` 의 뒤 `*`가 `{appId}`와
    * Secrets Manager가 자동으로 붙이는 하이픈+6자 랜덤 suffix(`-a1b2c3`)를 모두 매칭한다
    * (AWS 문서 "Access all secrets in a path" — `TestEnv/*` 예시와 동일). 별도 suffix 불필요.
    *  ⚠ 이전 하이픈 규약(`apphub-{stage}-*`)은 슬래시 이름을 커버하지 못해 delete-task의

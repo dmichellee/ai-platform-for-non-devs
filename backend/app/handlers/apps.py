@@ -26,7 +26,8 @@ from ..data.config_repo import (
 from ..data.connections import get_connection
 from ..data.subdomains import release_subdomain, reserve_subdomain
 from ..domain.ids import generate_app_id
-from ..domain.secrets import apply_secret_changes, store_secrets
+from ..domain.redeploy import find_in_progress_deployment, trigger_secret_change_redeploy
+from ..domain.secrets import apply_secret_changes, create_initial_secret
 from ..domain.subdomain import validate_subdomain
 from ..domain.validate import parse_create_app, parse_patch_app
 from ..http.errors import errors
@@ -44,13 +45,19 @@ _VALID_STATUS = ("CREATING", "ACTIVE", "FAILED", "DELETING")
 # 기술 정보 최소화: failureDetail(실패 단계·정제된 예외 메시지)은 관리자에게만 노출.
 # failureReason(사용자용 한국어 요약)은 user/admin 모두에게 노출(앱 상세에서 원인 확인 — UX 갭 해소).
 _ADMIN_ONLY_APP_FIELDS = ("failureDetail",)
+# 내부 동시성 제어 필드(D8 시크릿 JSON 버전 조건부 갱신) — 누구에게도 노출하지 않는다.
+_INTERNAL_APP_FIELDS = ("version", "secretLockId", "secretLockExpiresAt")
 
 
 def _view_app(app: dict[str, Any], is_admin: bool) -> dict[str, Any]:
-    """응답용 App 뷰. admin 이 아니면 관리자 전용 필드를 제거한다(원본 불변)."""
-    if is_admin:
-        return app
-    return {k: v for k, v in app.items() if k not in _ADMIN_ONLY_APP_FIELDS}
+    """응답용 App 뷰(원본 불변). 내부 필드 제거 + admin 이 아니면 관리자 전용 필드 제거.
+
+    시크릿은 `secretKeys`(KEY 목록, 항상 배열) 만 노출한다 — 값은 DDB 에도 없다(D8).
+    """
+    hidden = _INTERNAL_APP_FIELDS if is_admin else _INTERNAL_APP_FIELDS + _ADMIN_ONLY_APP_FIELDS
+    view = {k: v for k, v in app.items() if k not in hidden}
+    view["secretKeys"] = list(app.get("secretKeys") or [])
+    return view
 
 
 def list_my_apps(ctx: RouteContext) -> ProxyResult:
@@ -111,11 +118,11 @@ def create_app(ctx: RouteContext) -> ProxyResult:
     # 서브도메인 전역 예약(원자적 유일성). 실패 시 SUBDOMAIN_TAKEN.
     reserve_subdomain(req["subdomain"], app_id)
 
-    # 시크릿(있으면) 을 Secrets Manager 에 먼저 저장하고 ARN 만 확보(값은 DDB/로그에 남기지 않음).
+    # 시크릿(있으면)을 앱당 1개 JSON 시크릿으로 먼저 저장하고 ARN 만 확보(값은 DDB/로그에 남기지 않음, D8).
     #  실패 시 아래 except 에서 저장된 시크릿까지 정리(오염 방지).
-    secret_arns: dict[str, str] = {}
+    secret_arn: str | None = None
     try:
-        secret_arns = store_secrets(stage, app_id, req.get("secrets") or {})
+        secret_arn, secret_keys = create_initial_secret(stage, app_id, req.get("secrets") or {})
 
         app_record: dict[str, Any] = {
             "appId": app_id,
@@ -131,14 +138,17 @@ def create_app(ctx: RouteContext) -> ProxyResult:
             "autoDeployEnabled": req["autoDeployEnabled"],
             "sleepMode": req["sleepMode"],
             "envVars": req["envVars"],
-            # 시크릿은 Secrets Manager 에만. DDB엔 {KEY: ARN} 만(값 없음).
-            "secretArns": secret_arns,
+            # 시크릿은 Secrets Manager 에만. DDB엔 ARN + KEY 목록만(값 없음, D8).
+            "secretKeys": secret_keys,
+            "version": 0,
             "status": "CREATING",
             "runtimeState": "SLEEPING",
             "cognitoProtect": req["cognitoProtect"],
         }
         if connection_arn is not None:
             app_record["connectionArn"] = connection_arn
+        if secret_arn is not None:
+            app_record["secretArn"] = secret_arn
         if "schedule" in req:
             app_record["schedule"] = req["schedule"]
 
@@ -160,45 +170,60 @@ def create_app(ctx: RouteContext) -> ProxyResult:
             provision_input["connectionArn"] = connection_arn
 
         start_provision(provision_input)
-        return created(app)
+        return created(_view_app(app, ctx.identity.is_admin))
     except Exception:
         # App 레코드 생성/SFN start 실패 시 서브도메인 예약 + 저장된 시크릿 롤백(오염 방지).
         try:
             release_subdomain(req["subdomain"])
         except Exception:
             pass
-        for arn in secret_arns.values():
+        if secret_arn:
             try:
-                delete_secret(arn)
+                delete_secret(secret_arn)
             except Exception:
                 pass
         raise
 
 
 def patch_app(ctx: RouteContext) -> ProxyResult:
-    """PATCH /apps/{id} — 설정 변경. ACTIVE/CREATING에서만(DELETING이면 409).
+    """PATCH /apps/{id} — 설정 변경. DELETING이면 409.
 
-    secrets/secretsRemove(있으면)는 update_app 에 값으로 넣지 않는다 — Secrets Manager 에
-    부분 갱신(upsert) + 명시 삭제를 반영하고 App.secretArns(값 없는 {KEY: ARN})만 갱신한다
-    (DDB/로그에 값 미노출). 프론트 계약 api-requests.md 항목 9.
+    secrets/secretsRemove(있으면, D8):
+      1) 배포가 진행 중이면 409 INVALID_STATE(진행 중 배포가 옛 KEY 목록으로 끝나 꼬이는 것 방지).
+      2) 시크릿 JSON upsert(없으면 CreateSecret) + secretKeys 재계산을 App.version 조건부로 반영
+         (삭제 KEY 는 JSON 에서 지우지 않고 secretKeys 에서만 제외 — 배포 성공 후 지연 정리).
+         동시 수정 충돌은 409 CONFLICT.
+      3) 실제 변경이 있으면 재빌드 없는 런타임 재배포를 즉시 트리거 → 응답 data.redeploy.
+    값은 Secrets Manager 로만 가고 DDB·로그·응답에는 남지 않는다.
     """
     app = _load_owned_app(ctx)
     if app["status"] == "DELETING":
         raise errors.invalid_state("삭제 중인 앱은 설정을 변경할 수 없어요.")
     patch = parse_patch_app(ctx.event.get("body"))
 
-    # 시크릿 변경(부분 갱신 + 명시 삭제): Secrets Manager 에 반영하고 secretArns 만 DDB 로.
-    #  secrets/secretsRemove 어느 하나라도 있으면 재계산(값은 여기서만 소비 — DDB 에 넣지 않음).
-    if "secrets" in patch or "secretsRemove" in patch:
-        upsert_secrets = patch.pop("secrets", {})
-        remove_secrets = patch.pop("secretsRemove", [])
-        stage = load_config().stage
-        patch["secretArns"] = apply_secret_changes(
-            stage, app["appId"], upsert_secrets, remove_secrets, app.get("secretArns")
-        )
+    secrets_requested = "secrets" in patch or "secretsRemove" in patch
+    upsert_secrets: dict[str, str] = patch.pop("secrets", {}) or {}
+    remove_secrets: list[str] = patch.pop("secretsRemove", []) or []
 
-    updated = update_app(app["appId"], patch)
-    return ok(_view_app(updated, ctx.identity.is_admin))
+    redeploy: dict[str, Any] | None = None
+    updated = app
+    if secrets_requested:
+        if find_in_progress_deployment(app["appId"]) is not None:
+            raise errors.invalid_state(
+                "지금 배포가 진행 중이에요. 배포가 끝난 뒤 비밀 값을 다시 저장해 주세요."
+            )
+        stage = load_config().stage
+        updated, changed = apply_secret_changes(stage, app, upsert_secrets, remove_secrets)
+        if changed:
+            redeploy = trigger_secret_change_redeploy(stage, updated)
+
+    if patch:
+        updated = update_app(app["appId"], patch)
+
+    view = _view_app(updated, ctx.identity.is_admin)
+    if redeploy is not None:
+        view["redeploy"] = redeploy
+    return ok(view)
 
 
 def _accept_delete(app: dict[str, Any]) -> ProxyResult:
@@ -253,7 +278,7 @@ def admin_list_apps(ctx: RouteContext) -> ProxyResult:
     require_admin(ctx.identity)
     status_filter = ctx.query.get("status")
     status = status_filter if status_filter in _VALID_STATUS else None
-    return list_response(list_all_apps(status))
+    return list_response([_view_app(a, True) for a in list_all_apps(status)])
 
 
 def admin_stop_app(ctx: RouteContext) -> ProxyResult:

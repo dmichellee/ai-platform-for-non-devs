@@ -23,6 +23,7 @@ ERROR_CODES = frozenset(
         "PROVIDER_DISABLED",
         "INTERNET_FACING_NOT_ALLOWED",
         "INVALID_STATE",
+        "CONFLICT",
         "CONNECTION_NOT_READY",
         "METHOD_NOT_ALLOWED",
         "ROUTE_NOT_FOUND",
@@ -121,6 +122,13 @@ class _Errors:
     @staticmethod
     def invalid_state(msg: str) -> ApiError:
         return ApiError(409, "INVALID_STATE", msg)
+
+    @staticmethod
+    def conflict(
+        msg: str = "다른 곳에서 이 앱의 설정이 먼저 바뀌었어요. 새로고침한 뒤 다시 저장해 주세요.",
+    ) -> ApiError:
+        """동시 수정 충돌(App.version 조건부 갱신 실패). 재시도로 해결 가능."""
+        return ApiError(409, "CONFLICT", msg)
 
     @staticmethod
     def connection_not_ready() -> ApiError:

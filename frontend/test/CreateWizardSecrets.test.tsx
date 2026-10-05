@@ -110,14 +110,26 @@ describe("④ 마법사 — 시크릿/평문 분리 전송", () => {
     expect(valueInput.classList.contains("kv-value")).toBe(true);
   });
 
-  it("mockApi.patchApp: secrets/secretsRemove 로 App.secretArns 가 갱신된다", async () => {
+  it("mockApi.patchApp: secrets/secretsRemove 로 App.secretKeys 가 갱신되고 재배포가 접수된다", async () => {
     const client = new MockApiClient();
-    // 픽스처 앱 a1b2c3d4 는 secretArns={OPENAI_API_KEY:...}. 새 키 추가 + 기존 키 삭제.
+    // 픽스처 앱 a1b2c3d4 는 secretKeys=["OPENAI_API_KEY"], 성공 배포 이력 있음. 새 키 추가 + 기존 키 삭제.
     const updated = await client.patchApp("a1b2c3d4", {
       secrets: { NEW_TOKEN: "abc" },
       secretsRemove: ["OPENAI_API_KEY"],
     });
-    expect(Object.keys(updated.secretArns)).toEqual(["NEW_TOKEN"]);
-    expect(updated.secretArns.NEW_TOKEN).toContain("arn:");
+    expect(updated.secretKeys).toEqual(["NEW_TOKEN"]);
+    // D8: 시크릿 변경 = 즉시 재배포(배포된 적 있는 앱) → PENDING + deploymentId
+    const rd = updated.redeploy;
+    if (rd?.status !== "PENDING") throw new Error("redeploy PENDING 기대");
+    const deps = await client.listDeployments("a1b2c3d4");
+    expect(deps[0]!.deploymentId).toBe(rd.deploymentId);
+    expect(deps[0]!.status).toBe("PENDING");
+    expect(deps[0]!.trigger).toBe("secret-change");
+  });
+
+  it("mockApi.patchApp: 시크릿을 안 바꾸면 redeploy 가 없다", async () => {
+    const client = new MockApiClient();
+    const updated = await client.patchApp("a1b2c3d4", { autoDeployEnabled: false });
+    expect(updated.redeploy).toBeUndefined();
   });
 });

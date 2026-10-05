@@ -168,13 +168,15 @@ export class AppRuntime extends Construct {
     const ecrRepo = ecr.Repository.fromRepositoryName(this, "Ecr", `${appPrefix}`);
     const image = ecs.ContainerImage.fromEcrRepository(ecrRepo, p.imageTag);
 
-    // 시크릿: ECS secrets 로 주입(환경변수 아님, D8). Secrets Manager ARN만 참조.
+    // 시크릿: 앱당 Secrets Manager 시크릿 1개(JSON {KEY: value}, D8). 리소스는 백엔드 소유 — 참조만.
+    //  각 KEY → ECS secrets valueFrom `<arn>:KEY::`(환경변수 아님). 실행 역할은 이 시크릿 1개만 read.
     const secrets: Record<string, ecs.Secret> = {};
-    let secretIdx = 0;
-    for (const [name, arn] of Object.entries(p.secretArns)) {
-      const sm = secretsmanager.Secret.fromSecretCompleteArn(this, `Secret${secretIdx++}`, arn);
-      sm.grantRead(executionRole);
-      secrets[name] = ecs.Secret.fromSecretsManager(sm);
+    if (p.secretArn && p.secretKeys.length > 0) {
+      const sm = secretsmanager.Secret.fromSecretCompleteArn(this, "AppSecret", p.secretArn);
+      for (const key of p.secretKeys) {
+        // fromSecretsManager(secret, field)는 실행 역할에 해당 시크릿 GetSecretValue를 자동 부여한다.
+        secrets[key] = ecs.Secret.fromSecretsManager(sm, key);
+      }
     }
 
     const container = taskDef.addContainer("app", {

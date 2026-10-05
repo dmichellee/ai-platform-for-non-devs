@@ -60,3 +60,7 @@ CLAUDE.md
 docs/
 # 로컬 테스트 앱(중첩 git 레포 — 추적 제외)
 test-tmp/
+.github/
+.kiro/
+# 로컬 접속 정보(계정/엔드포인트 — 추적 제외)
+*.local.md

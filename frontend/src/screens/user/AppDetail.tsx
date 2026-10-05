@@ -12,6 +12,7 @@ import {
   Activity,
   AlertTriangle,
   BarChart3,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
   Cpu,
@@ -57,16 +58,21 @@ import type {
   MetricPoint,
   MetricRange,
   PatchAppRequest,
+  PatchAppResponse,
+  RedeployResult,
   RestartResult,
   Schedule,
   SleepMode,
 } from "../../lib/types.js";
 import {
   DEPLOY_STATUS_LABEL,
+  DEPLOY_TRIGGER_LABEL,
   FIRST_DEPLOY_ACTION_DISABLED_HINT,
   FIRST_DEPLOY_PENDING_HINT,
   METRIC_RANGE_LABEL,
   METRIC_RANGE_ORDER,
+  REDEPLOY_PENDING_MESSAGE,
+  REDEPLOY_SKIPPED_MESSAGE,
   SCHEME_LABEL,
   SLEEP_MODE_DESC,
   SLEEP_MODE_LABEL,
@@ -103,7 +109,10 @@ export function AppDetail({ appId }: { appId: string }): JSX.Element {
   // status=ACTIVE 로 전이했더라도 첫 배포(앱 빌드·기동)가 끝나기 전이면 runtimeState 는 아직
   // 기본값(SLEEPING)이라 "잠자는 중"으로 오해되고, "지금 배포/재시작/열기"도 눌러선 안 된다.
   // 이 조회는 상세 상단에서만 한다(카드 목록 등 다른 화면은 배포 목록을 모르므로 이 판정을 하지 않음).
-  const { data: deployments } = useQuery<Deployment[]>((a) => a.listDeployments(appId), [appId]);
+  const { data: deployments, reload: reloadDeployments } = useQuery<Deployment[]>(
+    (a) => a.listDeployments(appId),
+    [appId],
+  );
   // null = 아직 판정 보류(로딩/실패). true/false = 확정.
   const everDeployed: boolean | null = deployments
     ? deployments.some((d) => d.status === "SUCCEEDED")
@@ -191,7 +200,17 @@ export function AppDetail({ appId }: { appId: string }): JSX.Element {
           {tab === "overview" && <OverviewTab app={app} firstDeployPending={firstDeployPending} />}
           {tab === "deployments" && <DeploymentsTab appId={appId} />}
           {tab === "monitoring" && <MonitoringTab app={app} />}
-          {tab === "settings" && <SettingsTab app={app} onSaved={reload} />}
+          {tab === "settings" && (
+            <SettingsTab
+              app={app}
+              onSaved={() => {
+                // 저장 후 앱 상태 + 배포 목록을 다시 불러온다(시크릿 변경 재배포 시 배지/이력 갱신).
+                reload();
+                reloadDeployments();
+              }}
+              onOpenDeployments={() => setTab("deployments")}
+            />
+          )}
         </>
       )}
     </div>
@@ -468,7 +487,7 @@ function DeploymentsTab({ appId }: { appId: string }): JSX.Element {
             <div>
               <div className="msg">{d.commitMessage ?? "배포"}</div>
               <div className="sha">
-                {TRIGGER_LABEL[d.trigger]}
+                {DEPLOY_TRIGGER_LABEL[d.trigger]}
                 {d.commitSha ? ` · ${d.commitSha}` : ""}
               </div>
             </div>
@@ -484,11 +503,6 @@ function DeploymentsTab({ appId }: { appId: string }): JSX.Element {
   );
 }
 
-const TRIGGER_LABEL: Record<Deployment["trigger"], string> = {
-  auto: "자동",
-  manual: "수동",
-  rollback: "되돌리기",
-};
 
 function DeployBadge({ status }: { status: Deployment["status"] }): JSX.Element {
   if (status === "SUCCEEDED") return <Badge tone="running" label="완료" variant="pill" />;
@@ -696,7 +710,15 @@ function MetricCard({
 }
 
 // ── 설정 탭 (환경변수·비밀값·가동 방식·자동배포 저장) ──
-function SettingsTab({ app, onSaved }: { app: App; onSaved: () => void }): JSX.Element {
+function SettingsTab({
+  app,
+  onSaved,
+  onOpenDeployments,
+}: {
+  app: App;
+  onSaved: () => void;
+  onOpenDeployments: () => void;
+}): JSX.Element {
   const [autoDeploy, setAutoDeploy] = useState(app.autoDeployEnabled);
   const [sleepMode, setSleepMode] = useState<SleepMode>(app.sleepMode);
   // 기존 시간표가 있으면 그대로, 없으면 기본(평일 09:00–19:00)으로 편집 시작.
@@ -705,13 +727,16 @@ function SettingsTab({ app, onSaved }: { app: App; onSaved: () => void }): JSX.E
   const [envRows, setEnvRows] = useState(
     Object.entries(app.envVars).map(([key, value]) => ({ key, value })),
   );
-  // ④ 비밀값 관리 — 값은 응답에 없으므로(secretArns 는 KEY→ARN) 아래 규칙으로 편집한다:
+  // ④ 비밀값 관리 — 값은 응답에 없으므로(secretKeys 는 KEY 목록뿐) 아래 규칙으로 편집한다:
   //  - secretState[key] = { removed, newValue } — removed=삭제 표시, newValue!==null 이면 새 값으로 교체.
   //  - newSecrets = 새로 추가하는 비밀값 rows.
-  const existingSecretKeys = useMemo(() => Object.keys(app.secretArns), [app.secretArns]);
+  const existingSecretKeys = app.secretKeys;
   const [secretState, setSecretState] = useState<Record<string, { removed: boolean; newValue: string | null }>>({});
   const [newSecrets, setNewSecrets] = useState<{ key: string; value: string }[]>([]);
-  const saveMut = useMutation<PatchAppRequest, App>((a, body) => a.patchApp(app.appId, body));
+  const saveMut = useMutation<PatchAppRequest, PatchAppResponse>((a, body) => a.patchApp(app.appId, body));
+  // D8: 비밀값 변경 저장 = 즉시 재배포. 저장 전 확인 모달 + 저장 후 재배포 결과 안내.
+  const [confirmRedeploy, setConfirmRedeploy] = useState(false);
+  const [redeploy, setRedeploy] = useState<RedeployResult | null>(null);
 
   const secretsBody = useMemo(() => {
     const secrets: Record<string, string> = {};
@@ -727,14 +752,15 @@ function SettingsTab({ app, onSaved }: { app: App; onSaved: () => void }): JSX.E
     return { secrets, secretsRemove };
   }, [existingSecretKeys, secretState, newSecrets]);
 
+  const secretsChanged =
+    Object.keys(secretsBody.secrets).length > 0 || secretsBody.secretsRemove.length > 0;
+
   const dirty = useMemo(() => {
     const envChanged =
       JSON.stringify(Object.fromEntries(envRows.filter((r) => r.key).map((r) => [r.key, r.value]))) !==
       JSON.stringify(app.envVars);
     const scheduleChanged =
       sleepMode === "schedule" && JSON.stringify(schedule) !== JSON.stringify(app.schedule);
-    const secretsChanged =
-      Object.keys(secretsBody.secrets).length > 0 || secretsBody.secretsRemove.length > 0;
     return (
       autoDeploy !== app.autoDeployEnabled ||
       sleepMode !== app.sleepMode ||
@@ -743,12 +769,20 @@ function SettingsTab({ app, onSaved }: { app: App; onSaved: () => void }): JSX.E
       envChanged ||
       secretsChanged
     );
-  }, [autoDeploy, sleepMode, schedule, protect, envRows, secretsBody, app]);
+  }, [autoDeploy, sleepMode, schedule, protect, envRows, secretsChanged, app]);
 
   // "시간표대로"인데 시간표가 유효하지 않으면 저장 불가(요일 1개↑, 시각 형식).
   const scheduleBlocked = sleepMode === "schedule" && !isScheduleValid(schedule);
 
+  // 저장 버튼: 비밀값 변경이 있으면 먼저 확인(취소 시 요청을 보내지 않는다). 없으면 바로 저장.
+  function requestSave(): void {
+    if (secretsChanged) setConfirmRedeploy(true);
+    else void save();
+  }
+
   async function save(): Promise<void> {
+    setConfirmRedeploy(false);
+    setRedeploy(null);
     const envVars: Record<string, string> = {};
     for (const r of envRows) if (r.key) envVars[r.key] = r.value;
     await saveMut
@@ -763,8 +797,9 @@ function SettingsTab({ app, onSaved }: { app: App; onSaved: () => void }): JSX.E
         ...(Object.keys(secretsBody.secrets).length > 0 ? { secrets: secretsBody.secrets } : {}),
         ...(secretsBody.secretsRemove.length > 0 ? { secretsRemove: secretsBody.secretsRemove } : {}),
       })
-      .then(() => {
-        // 저장 성공 후 로컬 비밀값 편집 상태 초기화(응답 App 의 secretArns 로 다시 그려진다).
+      .then((res) => {
+        // 저장 성공 후 로컬 비밀값 편집 상태 초기화(응답 App 의 secretKeys 로 다시 그려진다).
+        setRedeploy(res.redeploy ?? null);
         setSecretState({});
         setNewSecrets([]);
         onSaved();
@@ -815,6 +850,9 @@ function SettingsTab({ app, onSaved }: { app: App; onSaved: () => void }): JSX.E
 
       <div className="panel">
         <h4>설정값 (환경변수)</h4>
+        <p className="muted" style={{ marginTop: -4, marginBottom: 12, fontSize: 13 }}>
+          바꾼 설정값은 <b>다음 배포부터</b> 앱에 적용돼요. 바로 적용하려면 저장한 뒤 위의 '지금 배포'를 눌러주세요.
+        </p>
         <div className="stack">
           {envRows.map((r, i) => (
             <div key={i} className="row kv-row">
@@ -865,23 +903,107 @@ function SettingsTab({ app, onSaved }: { app: App; onSaved: () => void }): JSX.E
       />
 
       {saveMut.error && <ErrorNotice error={saveMut.error} />}
+      {redeploy && !saveMut.error && (
+        <RedeployNotice result={redeploy} onOpenDeployments={onOpenDeployments} />
+      )}
       <div className="row" style={{ justifyContent: "flex-end" }}>
         <button
           type="button"
           className="btn btn-primary"
           disabled={!dirty || scheduleBlocked || saveMut.loading}
-          onClick={save}
+          onClick={requestSave}
         >
           <Play size={15} className="icon" />
           {saveMut.loading ? "저장 중…" : "변경 사항 저장"}
         </button>
       </div>
+
+      {confirmRedeploy && (
+        <Modal title="앱을 다시 배포할까요?" onClose={() => setConfirmRedeploy(false)}>
+          <p>
+            비밀 값을 바꾸면 앱이 <b>다시 배포돼요.</b> 몇 분 동안 앱이 재시작될 수 있어요. 계속할까요?
+          </p>
+          <SecretChangeSummary
+            changed={Object.keys(secretsBody.secrets)}
+            removed={secretsBody.secretsRemove}
+          />
+          <div className="modal-actions">
+            <button type="button" className="btn btn-ghost" onClick={() => setConfirmRedeploy(false)}>
+              취소
+            </button>
+            <button type="button" className="btn btn-primary" onClick={() => void save()}>
+              <Rocket size={15} className="icon" />
+              다시 배포하고 저장
+            </button>
+          </div>
+        </Modal>
+      )}
     </>
   );
 }
 
+// 확인 모달 안의 변경 요약 — 어떤 비밀값이 바뀌는지 이름만 보여준다(값은 노출하지 않음).
+function SecretChangeSummary({ changed, removed }: { changed: string[]; removed: string[] }): JSX.Element {
+  return (
+    <ul className="muted" aria-label="바뀌는 비밀 설정값" style={{ margin: "4px 0 0", paddingLeft: 18, fontSize: 13 }}>
+      {changed.map((k) => (
+        <li key={`c-${k}`}>
+          <span className="mono">{k}</span> — 새 값으로 저장
+        </li>
+      ))}
+      {removed.map((k) => (
+        <li key={`r-${k}`}>
+          <span className="mono">{k}</span> — 삭제
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// 저장 후 재배포 결과 안내(D8). 서버 note 가 있으면 그대로 우선 표시, 없으면 기본 문구.
+//  - PENDING: 다시 배포 시작(성공 톤) → 배포 이력에서 진행 확인.
+//  - SKIPPED/NOT_DEPLOYED: 아직 첫 배포 전 → 첫 배포 때 적용(안내 톤).
+//  - SKIPPED/IMAGE_NOT_FOUND·START_FAILED: 저장은 됐지만 재배포 못 함 → '지금 배포' 유도(경고 톤).
+function RedeployNotice({
+  result,
+  onOpenDeployments,
+}: {
+  result: RedeployResult;
+  onOpenDeployments: () => void;
+}): JSX.Element {
+  if (result.status === "PENDING") {
+    return (
+      <div className="notice success" role="status">
+        <CheckCircle2 size={18} className="icon" />
+        <div>
+          <div>{result.note || REDEPLOY_PENDING_MESSAGE}</div>
+          <button type="button" className="btn btn-ghost mt3" onClick={onOpenDeployments}>
+            <History size={15} className="icon" />
+            배포 이력에서 진행 상황 보기
+          </button>
+        </div>
+      </div>
+    );
+  }
+  const message = result.note || REDEPLOY_SKIPPED_MESSAGE[result.reason];
+  if (result.reason === "NOT_DEPLOYED") {
+    return (
+      <div className="notice info" role="status">
+        <Info size={18} className="icon" />
+        <div>{message}</div>
+      </div>
+    );
+  }
+  return (
+    <div className="notice warn" role="status">
+      <AlertTriangle size={18} className="icon" />
+      <div>{message}</div>
+    </div>
+  );
+}
+
 // ── 비밀값(시크릿) 관리 패널 ──
-// 값은 응답으로 내려오지 않으므로(secretArns 는 KEY→ARN) 키만 표시하고, 값은 "다시 볼 수 없어요"로 안내한다.
+// 값은 응답으로 내려오지 않으므로(secretKeys 는 KEY 목록뿐) 키만 표시하고, 값은 "다시 볼 수 없어요"로 안내한다.
 // 기존 키: 새 값 입력 시 교체, 삭제 버튼으로 제거 표시. 새 비밀값: 이름+값 입력해 추가.
 function SecretsPanel({
   existingSecretKeys,
@@ -904,7 +1026,7 @@ function SecretsPanel({
       </h4>
       <p className="muted" style={{ marginTop: -4, marginBottom: 12, fontSize: 13 }}>
         비밀번호·API 키처럼 민감한 값이에요. 안전하게 따로 보관되며, <b>한 번 저장하면 값은 다시 볼 수 없어요.</b>{" "}
-        바꾸려면 새 값을 입력하세요.
+        바꾸려면 새 값을 입력하세요. 비밀 설정값을 추가·변경·삭제하면 저장할 때 앱이 <b>바로 다시 배포돼요.</b>
       </p>
 
       {existingSecretKeys.length === 0 && newSecrets.length === 0 && (

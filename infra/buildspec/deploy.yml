@@ -6,8 +6,12 @@
 #        컨텍스트로 cdk deploy `apphub-{stage}-app-{appId}-runtime` 실행.
 #  앱 파라미터 출처: DDB App 레코드(APP#{appId}/META) + ComputePreset/PermissionTemplate.
 #        (여기서 조회해 컨텍스트로 조립 → app 스택 모드 synth/deploy)
-#  드리프트 방지(DESIGN 3.5): 배포 전 desiredCount=min 기동(깨우기), isInitialDeploy는
-#        스택 존재 여부로 판정(최초=true → desiredCount 지정, 갱신=false → 미지정).
+#  드리프트 방지(DESIGN 3.5): isInitialDeploy는 스택 존재 여부로 판정(최초=true → desiredCount 지정,
+#        갱신=false → 미지정 = 현재 desiredCount 유지).
+#  잠자는 앱(runtimeState=SLEEPING) 배포(QA H2): 배포 전에 깨우지 않는다. 잠든 채로 새 버전을 반영하고,
+#        배포 성공 이벤트를 받은 deploy-notify 가 sleep_app(force) 으로 desiredCount=0 + 리스너 규칙
+#        forward→Waker TG 를 멱등 재적용한다(배포가 규칙을 앱 TG 로 되돌려도 503 고착 없음 — 다음 접속 시
+#        Waker 가 깨운다). 근거·대안 비교는 buildspec-contract.md §8.
 #  실패 시: FAILURE_CATEGORY=DEPLOY_FAILED (CloudFormation 자동 롤백 → 이전 버전 유지).
 #
 # 환경변수(프로젝트 주입): STAGE, APP_ID, AWS_ACCOUNT_ID, AWS_DEFAULT_REGION
@@ -53,10 +57,10 @@ phases:
       - echo "최초 배포 여부(IS_INITIAL)=${IS_INITIAL}"
       # 앱 레코드 + 프리셋/권한 템플릿 조회 → 컨텍스트 파라미터 조립(env 파일로).
       #  DDB get-item 결과는 AttributeValue 형태({"S":..},{"N":..},{"M":..},{"L":..},{"BOOL":..})다.
-      #  스칼라(S/N)만 읽던 이전 버전은 schedule/envVars/secretArns/permissionPolicy(전부 Map/List)를
+      #  스칼라(S/N)만 읽던 이전 버전은 schedule/envVars/secretKeys/permissionPolicy(전부 Map/List)를
       #  통째로 누락해 스케줄러 미생성·env/시크릿 미주입(런타임 조용한 손실)을 유발했다(QA F-1/F-2/M-4).
       #  → AttributeValue를 **재귀 언마샬**(unmarshall)하는 헬퍼 u()로 순수 JS 값으로 변환한 뒤,
-      #    app-params.ts loader가 기대하는 키(schedule/envVars/secretArns/permissionPolicyB64)에
+      #    app-params.ts loader가 기대하는 키(schedule/envVars/secretArn/secretKeysB64/permissionPolicyB64)에
       #    정확히 맞춰 base64 JSON으로 emit하고 cdk deploy에 조건부 -c 로 전달한다.
       - |
         node - <<'NODE' > /tmp/app-ctx.env
@@ -108,7 +112,7 @@ phases:
         const emit = (k, v) => process.stdout.write(`export CTX_${k}=${JSON.stringify(str(v))}\n`);
         for (const [k, v] of Object.entries(scalars)) emit(k, v);
         // JSON 컨텍스트(Map/List) — base64 JSON으로(셸 인용 안전, ctxJsonOpt가 base64 자동 판별).
-        //  app-params.ts loader 키와 1:1: schedule / envVars / secretArns / permissionPolicyB64.
+        //  app-params.ts loader 키와 1:1: schedule / envVars / secretArn / secretKeysB64 / permissionPolicyB64.
         const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64");
         const emitJson = (k, o) => process.stdout.write(`export CTX_${k}=${b64(o)}\n`);
         // schedule: sleepMode=schedule일 때만 유효({startTime,stopTime,days,timezone}). 없으면 미emit.
@@ -119,9 +123,12 @@ phases:
         if (app.envVars && typeof app.envVars === "object" && Object.keys(app.envVars).length > 0) {
           emitJson("envVarsB64", app.envVars);
         }
-        // secretArns: {name: SM ARN} 문자열맵(값 아님, ARN만). 있을 때만 emit.
-        if (app.secretArns && typeof app.secretArns === "object" && Object.keys(app.secretArns).length > 0) {
-          emitJson("secretArnsB64", app.secretArns);
+        // 시크릿(D8, 앱당 1개 JSON): secretArn(완전 ARN, 값 아님) + secretKeys(주입 대상 KEY 목록).
+        //  secretKeys 가 비면 둘 다 생략(시크릿 미주입). 각 KEY → ECS valueFrom `<arn>:KEY::`(app-runtime).
+        const secretKeys = Array.isArray(app.secretKeys) ? app.secretKeys.map(String) : [];
+        if (typeof app.secretArn === "string" && app.secretArn && secretKeys.length > 0) {
+          emit("secretArn", app.secretArn);
+          emitJson("secretKeysB64", secretKeys);
         }
         // permissionPolicy: IAM 정책 문서(Map). 태스크 역할 인라인 정책. 있을 때만 emit.
         if (perm.policyDocument && typeof perm.policyDocument === "object") {
@@ -152,7 +159,8 @@ phases:
           -c isInitialDeploy="${CTX_isInitialDeploy}" \
           ${CTX_scheduleB64:+-c schedule="${CTX_scheduleB64}"} \
           ${CTX_envVarsB64:+-c envVars="${CTX_envVarsB64}"} \
-          ${CTX_secretArnsB64:+-c secretArns="${CTX_secretArnsB64}"} \
+          ${CTX_secretArn:+-c secretArn="${CTX_secretArn}"} \
+          ${CTX_secretKeysB64:+-c secretKeysB64="${CTX_secretKeysB64}"} \
           ${CTX_permissionPolicyB64:+-c permissionPolicyB64="${CTX_permissionPolicyB64}"}
         DEPLOY_RC=$?
         set -e

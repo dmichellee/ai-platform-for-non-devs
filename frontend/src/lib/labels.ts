@@ -6,8 +6,10 @@ import type {
   AppStatus,
   ConnectionStatus,
   DeploymentStatus,
+  DeploymentTrigger,
   FailureCategory,
   MetricRange,
+  RedeploySkipReason,
   Provider,
   RuntimeState,
   Scheme,
@@ -83,6 +85,24 @@ export function statusHint(status: AppStatus): string {
 }
 
 // ── Deployment.status → 사용자 화면 단계 라벨 (가져오기→검사→빌드→배포→확인) ──
+// 배포 이력의 "어떻게 시작됐는지" 라벨.
+export const DEPLOY_TRIGGER_LABEL: Record<DeploymentTrigger, string> = {
+  auto: "자동",
+  manual: "수동",
+  rollback: "되돌리기",
+  "secret-change": "비밀 값 변경",
+};
+
+// 비밀 설정값 저장 후 재배포 결과 안내 — 서버 note 가 없을 때의 기본 문구.
+export const REDEPLOY_PENDING_MESSAGE = "다시 배포를 시작했어요. 몇 분 뒤 바뀐 비밀 설정값이 앱에 적용돼요.";
+export const REDEPLOY_SKIPPED_MESSAGE: Record<RedeploySkipReason, string> = {
+  NOT_DEPLOYED: "저장했어요. 아직 첫 배포 전이라, 바뀐 비밀 설정값은 첫 배포 때 적용돼요.",
+  IMAGE_NOT_FOUND:
+    "저장은 됐지만 지금 버전으로 바로 다시 배포하지 못했어요. 위의 '지금 배포'를 눌러 바뀐 비밀 설정값을 적용해주세요.",
+  START_FAILED:
+    "저장은 됐지만 다시 배포를 시작하지 못했어요. 위의 '지금 배포'를 눌러 바뀐 비밀 설정값을 적용해주세요.",
+};
+
 export const DEPLOY_STATUS_LABEL: Record<DeploymentStatus, string> = {
   PENDING: "대기 중",
   VALIDATING: "검사 중",
@@ -175,6 +195,8 @@ export function errorFallbackMessage(code?: string): string {
       return "대상을 찾을 수 없어요.";
     case "INVALID_STATE":
       return "지금 상태에서는 이 작업을 할 수 없어요.";
+    case "CONFLICT":
+      return "다른 곳에서 이 앱의 설정이 먼저 바뀌었어요. 새로고침한 뒤 다시 저장해 주세요.";
     case "UNAUTHENTICATED":
       return "로그인이 만료됐어요. 다시 로그인해주세요.";
     case "NETWORK_ERROR":

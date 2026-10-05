@@ -27,7 +27,8 @@ export type FailureCategory =
   | "DEPLOY_FAILED"
   | "INTERNAL_ERROR";
 
-export type DeploymentTrigger = "auto" | "manual" | "rollback";
+// secret-change: 비밀 설정값 저장 직후 서버가 시작한 재빌드 없는 재배포(D8).
+export type DeploymentTrigger = "auto" | "manual" | "rollback" | "secret-change";
 
 export type ConnectionStatus = "PENDING" | "AVAILABLE" | "ERROR";
 
@@ -56,7 +57,8 @@ export interface App {
   sleepMode: SleepMode;
   schedule?: Schedule;
   envVars: Record<string, string>;
-  secretArns: Record<string, string>;
+  // 비밀 설정값 KEY 목록(값·ARN 없음). 화면은 이 목록으로 비밀값 행을 그린다(D8).
+  secretKeys: string[];
   status: AppStatus;
   runtimeState: RuntimeState;
   // status=FAILED일 때만 채워짐. 재시도 성공 시 사라지므로 optional.
@@ -226,10 +228,26 @@ export interface CreateAppRequest {
   schedule?: Schedule;
   // 평문 설정값(비밀 아님). secrets 와 분리 전송(계약 ④).
   envVars?: Record<string, string>;
-  // 비밀 설정값 — Secrets Manager 에 저장. 응답 App.secretArns={KEY:arn} 로 키 목록만 확인 가능.
+  // 비밀 설정값 — 서버가 안전 보관. 응답 App.secretKeys 로 키 목록만 확인 가능.
   secrets?: Record<string, string>;
   cognitoProtect?: boolean;
 }
+
+/**
+ * PATCH /apps/{id} 응답의 재배포 결과(D8 — 시크릿 변경 시 즉시 재배포).
+ * 실제 시크릿 변경이 있는 PATCH 에서만 내려온다.
+ *  - PENDING: 재빌드 없이 지금 버전으로 다시 배포를 접수(배포 이력에 trigger="secret-change").
+ *  - SKIPPED/NOT_DEPLOYED: 아직 첫 배포 전 — 첫 배포 때 적용.
+ *  - SKIPPED/IMAGE_NOT_FOUND·START_FAILED: 저장은 성공했지만 재배포를 시작 못 함 — '지금 배포'로 적용.
+ * note: 서버가 주는 화면 노출용 한국어 안내. 있으면 그대로 우선 표시.
+ */
+export type RedeploySkipReason = "NOT_DEPLOYED" | "IMAGE_NOT_FOUND" | "START_FAILED";
+export type RedeployResult =
+  | { status: "PENDING"; deploymentId: string; note?: string }
+  | { status: "SKIPPED"; reason: RedeploySkipReason; note?: string };
+
+/** PATCH /apps/{id} 응답 data = 갱신된 App + (시크릿 변경 시) redeploy. */
+export type PatchAppResponse = App & { redeploy?: RedeployResult };
 
 export interface PatchAppRequest {
   autoDeployEnabled?: boolean;

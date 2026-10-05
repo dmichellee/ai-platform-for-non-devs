@@ -299,7 +299,7 @@ def seed_app(table, app_id: str, owner_id: str, status: str = "ACTIVE", **overri
         "autoDeployEnabled": True,
         "sleepMode": "on-demand",
         "envVars": {},
-        "secretArns": {},
+        # 시크릿(D8): 기본은 시크릿 없음(secretArn 부재, secretKeys 부재 = 빈 목록으로 간주).
         "status": status,
         "runtimeState": "RUNNING",
         "cognitoProtect": False,

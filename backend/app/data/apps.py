@@ -12,7 +12,7 @@ from typing import Any
 from boto3.dynamodb.conditions import Key
 
 from ..util import now_iso as _now_iso
-from .client import clean_item, strip_item, table
+from .client import clean_item, is_conditional_check_failed, strip_item, table
 from .keys import APP_META_SK, app_pk
 
 _APP_DROP = ("PK", "SK", "entityType")
@@ -173,3 +173,93 @@ def set_runtime_state(app_id: str, state: str) -> None:
 
 def delete_app_record(app_id: str) -> None:
     table().delete_item(Key={"PK": app_pk(app_id), "SK": APP_META_SK})
+
+
+# ── 시크릿 JSON 갱신 직렬화 (DESIGN.md D8 — 앱 레코드 버전 조건부 갱신) ─────────────
+#
+# 앱당 시크릿 1개(JSON)를 여러 경로(PATCH /apps, deploy-notify 정리)가 고친다. Secrets Manager 의
+# PutSecretValue 는 조건부 쓰기를 지원하지 않으므로, App 레코드의 `version` 으로 직렬화한다:
+#   1) claim : `version = :expected`(없으면 0 으로 간주) AND 잠금 없음(또는 만료) 조건으로
+#              version+1 + 짧은 임대 잠금(secretLockId/secretLockExpiresAt)을 건다.
+#   2) 시크릿 JSON 읽기·병합·쓰기(잠금 보유 중이라 다른 작성자는 1)에서 충돌로 거절됨 → lost update 없음).
+#   3) commit: 잠금 토큰 일치 조건으로 secretKeys/secretArn 반영 + 잠금 해제.
+# 실패 시 abort 로 잠금만 해제(최선). 임대 만료(기본 60초) 후에는 다른 작성자가 claim 가능 — Lambda
+# 비정상 종료로 잠금이 남아도 영구 고착되지 않는다. 잠금 필드는 API 응답에서 제거한다(handlers._view_app).
+
+SECRET_LOCK_TTL_SEC = 60
+
+
+class SecretVersionConflict(Exception):
+    """버전 불일치 또는 다른 작성자가 잠금 보유 — 호출부가 409(CONFLICT) 또는 스킵으로 변환."""
+
+
+def claim_secret_lock(app_id: str, expected_version: int, token: str, now_epoch: int) -> int:
+    """version 조건부로 시크릿 갱신 잠금을 건다. 성공 시 새 version 반환. 실패 시 SecretVersionConflict."""
+    if expected_version == 0:
+        version_cond = "(attribute_not_exists(#ver) OR #ver = :v)"
+    else:
+        version_cond = "#ver = :v"
+    try:
+        table().update_item(
+            Key={"PK": app_pk(app_id), "SK": APP_META_SK},
+            UpdateExpression="SET #ver = :v1, secretLockId = :tok, secretLockExpiresAt = :exp, updatedAt = :now",
+            ConditionExpression=(
+                "attribute_exists(PK) AND "
+                + version_cond
+                + " AND (attribute_not_exists(secretLockId) OR secretLockExpiresAt < :epoch)"
+            ),
+            ExpressionAttributeNames={"#ver": "version"},
+            ExpressionAttributeValues={
+                ":v": expected_version,
+                ":v1": expected_version + 1,
+                ":tok": token,
+                ":exp": now_epoch + SECRET_LOCK_TTL_SEC,
+                ":epoch": now_epoch,
+                ":now": _now_iso(),
+            },
+        )
+    except Exception as err:  # noqa: BLE001
+        if is_conditional_check_failed(err):
+            raise SecretVersionConflict(app_id) from err
+        raise
+    return expected_version + 1
+
+
+def commit_secret_lock(
+    app_id: str,
+    token: str,
+    secret_keys: list[str],
+    secret_arn: str | None,
+) -> dict[str, Any]:
+    """잠금 토큰 일치 조건으로 secretKeys(+secretArn) 반영 + 잠금 해제. 갱신된 App 반환."""
+    sets = ["secretKeys = :keys", "updatedAt = :now"]
+    values: dict[str, Any] = {":keys": list(secret_keys), ":tok": token, ":now": _now_iso()}
+    if secret_arn:
+        sets.append("secretArn = :arn")
+        values[":arn"] = secret_arn
+    try:
+        res = table().update_item(
+            Key={"PK": app_pk(app_id), "SK": APP_META_SK},
+            UpdateExpression="SET " + ", ".join(sets) + " REMOVE secretLockId, secretLockExpiresAt",
+            ConditionExpression="secretLockId = :tok",
+            ExpressionAttributeValues=values,
+            ReturnValues="ALL_NEW",
+        )
+    except Exception as err:  # noqa: BLE001
+        if is_conditional_check_failed(err):
+            raise SecretVersionConflict(app_id) from err
+        raise
+    return _to_app(res.get("Attributes"))  # type: ignore[return-value]
+
+
+def abort_secret_lock(app_id: str, token: str) -> None:
+    """잠금만 해제(최선, 멱등). 토큰이 다르면(만료 후 타인이 claim) 건드리지 않는다."""
+    try:
+        table().update_item(
+            Key={"PK": app_pk(app_id), "SK": APP_META_SK},
+            UpdateExpression="REMOVE secretLockId, secretLockExpiresAt",
+            ConditionExpression="secretLockId = :tok",
+            ExpressionAttributeValues={":tok": token},
+        )
+    except Exception:  # noqa: BLE001 - 해제 실패는 임대 만료로 자연 해소
+        pass

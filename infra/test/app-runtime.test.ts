@@ -20,6 +20,8 @@ import type { AppRuntimeParams } from "../lib/constructs/app-params";
  */
 
 const ENV = { account: "111122223333", region: "ap-northeast-2" };
+// D8: 앱당 시크릿 1개(apphub/{stage}/app/{appId}) — 백엔드 소유, 완전 ARN(6자 suffix 포함)으로 참조.
+const SECRET_ARN = "arn:aws:secretsmanager:ap-northeast-2:111122223333:secret:apphub/dev/app/testapp0-AbCdEf";
 
 function baseParams(overrides: Partial<AppRuntimeParams> = {}): AppRuntimeParams {
   return {
@@ -36,10 +38,8 @@ function baseParams(overrides: Partial<AppRuntimeParams> = {}): AppRuntimeParams
     imageTag: "abc123",
     rulePriority: 137,
     envVars: { FOO: "bar" },
-    secretArns: {
-      API_KEY:
-        "arn:aws:secretsmanager:ap-northeast-2:111122223333:secret:apphub-dev-testapp0-apikey-AbCdEf",
-    },
+    secretArn: SECRET_ARN,
+    secretKeys: ["API_KEY", "DB_PASSWORD"],
     sleepMode: "schedule",
     schedule: { startTime: "09:00", stopTime: "19:00", days: [1, 2, 3, 4, 5], timezone: "Asia/Seoul" },
     cognitoProtect: false,
@@ -99,25 +99,77 @@ describe("app-runtime — internal 앱(schedule + secrets)", () => {
     });
   });
 
-  describe("시크릿 — ECS Secrets(환경변수 아님, D8)", () => {
-    it("컨테이너 정의에 Secrets로 주입되고, Environment에는 시크릿 값이 없다", () => {
-      template.hasResourceProperties("AWS::ECS::TaskDefinition", {
-        ContainerDefinitions: Match.arrayWith([
-          Match.objectLike({
-            Secrets: Match.arrayWith([
-              Match.objectLike({ Name: "API_KEY", ValueFrom: Match.anyValue() }),
-            ]),
-          }),
-        ]),
-      });
+  describe("시크릿 — 앱당 1개 JSON, KEY별 ECS Secrets(환경변수 아님, D8)", () => {
+    type Container = {
+      Secrets?: Array<{ Name: string; ValueFrom: unknown }>;
+      Environment?: Array<{ Name: string; Value: unknown }>;
+    };
+    const container = (): Container => {
+      const tds = Object.values(template.findResources("AWS::ECS::TaskDefinition"));
+      expect(tds.length).toBe(1);
+      return (tds[0].Properties as { ContainerDefinitions: Container[] }).ContainerDefinitions[0];
+    };
+
+    it("각 KEY가 Secrets[].ValueFrom = `<시크릿 ARN>:KEY::` 로 주입된다", () => {
+      const c = container();
+      expect(c.Secrets).toEqual([
+        { Name: "API_KEY", ValueFrom: `${SECRET_ARN}:API_KEY::` },
+        { Name: "DB_PASSWORD", ValueFrom: `${SECRET_ARN}:DB_PASSWORD::` },
+      ]);
     });
 
-    it("Environment에는 평문 시크릿 값이 노출되지 않는다", () => {
-      const raw = JSON.stringify(template.toJSON());
-      // 시크릿 ARN은 ValueFrom(Secrets)에만. Environment에는 FOO=bar만.
-      expect(raw).toContain('"Name":"FOO"');
-      // API_KEY가 Environment의 Value로 박히지 않았는지(=Secrets로만) 확인.
-      expect(raw).not.toMatch(/"Name":"API_KEY","Value":/);
+    it("Environment에는 시크릿 KEY·ARN이 없다(평문 envVars만)", () => {
+      const env = container().Environment ?? [];
+      const names = env.map((e) => e.Name);
+      expect(names).toContain("FOO");
+      expect(names).not.toContain("API_KEY");
+      expect(names).not.toContain("DB_PASSWORD");
+      expect(JSON.stringify(env)).not.toContain("secretsmanager");
+    });
+
+    it("이 스택은 시크릿 리소스를 소유하지 않는다(백엔드 소유 — 참조만)", () => {
+      template.resourceCountIs("AWS::SecretsManager::Secret", 0);
+    });
+
+    it("실행 역할의 시크릿 권한은 이 앱 시크릿 1개(완전 ARN)에 대해서만 GetSecretValue 계열", () => {
+      const roles = template.findResources("AWS::IAM::Role", {
+        Properties: { RoleName: "apphub-dev-app-testapp0-exec" },
+      });
+      const [execId] = Object.keys(roles);
+      expect(execId).toBeDefined();
+      const smStatements: Array<{ Action: unknown; Resource: unknown }> = [];
+      for (const pol of Object.values(template.findResources("AWS::IAM::Policy"))) {
+        const props = pol.Properties as {
+          Roles?: Array<{ Ref?: string }>;
+          PolicyDocument: { Statement: Array<{ Action: unknown; Resource: unknown }> };
+        };
+        for (const st of props.PolicyDocument.Statement) {
+          const actions = Array.isArray(st.Action) ? st.Action : [st.Action];
+          if (actions.some((a) => String(a).startsWith("secretsmanager:"))) {
+            // 시크릿 권한은 실행 역할에만(태스크 역할 아님).
+            expect(props.Roles?.map((r) => r.Ref)).toEqual([execId]);
+            smStatements.push(st);
+          }
+        }
+      }
+      expect(smStatements.length).toBe(1);
+      const actions = smStatements[0].Action as string[];
+      expect(actions).toContain("secretsmanager:GetSecretValue");
+      // 쓰기/삭제/생성 권한 없음.
+      for (const a of actions) {
+        expect(["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]).toContain(a);
+      }
+      // 리소스 = 정확히 이 시크릿 1개(와일드카드 없음).
+      expect(smStatements[0].Resource).toEqual(SECRET_ARN);
+    });
+  });
+
+  describe("시크릿 없음 — secretArn 미지정", () => {
+    it("Secrets 미주입 + 실행 역할에 secretsmanager 권한 없음", () => {
+      const t = synth(baseParams({ secretArn: undefined, secretKeys: [] }));
+      const raw = JSON.stringify(t.toJSON());
+      expect(raw).not.toContain("secretsmanager:");
+      expect(raw).not.toContain('"Secrets"');
     });
   });
 

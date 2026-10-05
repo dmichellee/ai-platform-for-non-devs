@@ -320,6 +320,23 @@ describe("network 스택", () => {
       expect(raw).toContain("listener-rule/app"); // ModifyRule은 규칙 ARN 범위
       expect(raw).toContain("elasticloadbalancing:DescribeRules");
     });
+
+    it("[QA H3] ModifyRule 역할(복원/잠자기)의 역할명을 SSM으로 발행한다 — platform이 User Pool 한정 DescribeUserPoolClient를 부착", () => {
+      const fnRoleRef = (fnName: string): unknown => {
+        const fns = template.findResources("AWS::Lambda::Function", { Properties: { FunctionName: fnName } });
+        const [fn] = Object.values(fns);
+        const roleArn = (fn.Properties as { Role: { "Fn::GetAtt": [string, string] } }).Role;
+        return { Ref: roleArn["Fn::GetAtt"][0] };
+      };
+      template.hasResourceProperties("AWS::SSM::Parameter", {
+        Name: "/apphub/dev/network/wake-restore-role-name",
+        Value: fnRoleRef("apphub-dev-wake-restore"),
+      });
+      template.hasResourceProperties("AWS::SSM::Parameter", {
+        Name: "/apphub/dev/network/sleep-transition-role-name",
+        Value: fnRoleRef("apphub-dev-sleep-transition"),
+      });
+    });
   });
 
   describe("교차 스택 참조 — CloudFormation Export 미사용", () => {

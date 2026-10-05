@@ -168,7 +168,7 @@ def parse_create_app(raw: str | None) -> dict[str, Any]:
         "sleepMode": sleep_mode,
         "envVars": _string_map(body, "envVars"),
         # 시크릿(평문 값)은 계약상 envVars 와 분리된 별도 필드. 핸들러가 Secrets Manager 로
-        #  옮기고 App.secretArns 에 ARN 만 기록한다(값은 DDB/응답에 남기지 않음).
+        #  옮기고 App 에 secretArn/secretKeys 만 기록한다(값은 DDB/응답에 남기지 않음).
         "secrets": _parse_secrets(body),
         "cognitoProtect": _bool(body, "cognitoProtect", scheme == "internet-facing"),
     }
@@ -202,7 +202,7 @@ def parse_patch_app(raw: str | None) -> dict[str, Any]:
     시크릿은 프론트 계약(api-requests.md 항목 9)에 맞춰 부분 갱신 + 명시 삭제로 분리한다:
       - secrets: {KEY: value} — 보낸 KEY 만 upsert(기존 유지, 빠진 KEY 를 자동 삭제하지 않음).
       - secretsRemove: [KEY, ...] — 명시된 KEY 만 삭제.
-    둘 다 값이므로 update_app 에 직접 넣지 않는다 — 핸들러가 소비 후 secretArns 만 갱신한다.
+    둘 다 값이므로 update_app 에 직접 넣지 않는다 — 핸들러가 소비 후 secretArn/secretKeys 만 갱신한다.
     """
     body = parse_body(raw)
     out: dict[str, Any] = {}

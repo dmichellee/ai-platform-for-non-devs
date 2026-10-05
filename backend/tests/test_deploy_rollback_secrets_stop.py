@@ -2,7 +2,7 @@
 
 1) 수동 배포: StartPipelineExecution 실제 호출 + pipelineExecutionId 기록.
 2) 롤백: deploymentId 검증 + ECR 태그 실존 확인 + provisioner runtime StartBuild(IMAGE_TAG).
-3) 시크릿: secrets body → Secrets Manager(값 미노출) + App.secretArns(ARN만), 수정 시 재조정/삭제.
+3) 시크릿: tests/test_secrets_d8.py 로 이동(D8 앱당 1개 JSON).
 4) 관리자 강제 중지: admin 전용, ECS desiredCount=0 + 규칙 waker 전환 + SLEEPING(always-on 포함).
 """
 
@@ -23,7 +23,6 @@ from .conftest import (
     make_event,
     parse_result,
     seed_app,
-    seed_settings,
 )
 
 OWNER = "user-alice"
@@ -61,44 +60,6 @@ def _ecr(exists: bool) -> StubClient:
             ClientError({"Error": {"Code": "ImageNotFoundException"}}, "DescribeImages"),
         )
     integ_clients.set_client("ecr", stub)
-    return stub
-
-
-class SecretsStub:
-    """Secrets Manager stub — Name 기반 결정적 ARN, 호출 기록. put/desc/delete 지원."""
-
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, dict[str, Any]]] = []
-
-    def calls_for(self, method: str) -> list[dict[str, Any]]:
-        return [p for n, p in self.calls if n == method]
-
-    @staticmethod
-    def _arn(name: str) -> str:
-        # 이름에서 경로 구분자를 지운 결정적 ARN(테스트 식별용).
-        suffix = name.replace("/", "_")
-        return f"arn:aws:secretsmanager:ap-northeast-2:111122223333:secret:{suffix}-AbCdEf"
-
-    def create_secret(self, **kwargs: Any) -> dict[str, Any]:
-        self.calls.append(("create_secret", kwargs))
-        return {"ARN": self._arn(kwargs["Name"])}
-
-    def put_secret_value(self, **kwargs: Any) -> dict[str, Any]:
-        self.calls.append(("put_secret_value", kwargs))
-        return {}
-
-    def describe_secret(self, **kwargs: Any) -> dict[str, Any]:
-        self.calls.append(("describe_secret", kwargs))
-        return {"ARN": self._arn(str(kwargs.get("SecretId", "")))}
-
-    def delete_secret(self, **kwargs: Any) -> dict[str, Any]:
-        self.calls.append(("delete_secret", kwargs))
-        return {}
-
-
-def _secretsmanager() -> SecretsStub:
-    stub = SecretsStub()
-    integ_clients.set_client("secretsmanager", stub)
     return stub
 
 
@@ -258,201 +219,8 @@ def test_rollback_other_owner_forbidden(ddb_table, stub_clients) -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 작업 3 — 시크릿 (POST /apps + PATCH /apps/{id})
+# 작업 3 — 시크릿: D8(앱당 1개 JSON) 재구성으로 tests/test_secrets_d8.py 로 이동.
 # ══════════════════════════════════════════════════════════════════════════════
-
-
-def _create_body(**overrides: Any) -> dict[str, Any]:
-    body = {
-        "name": "My App",
-        "subdomain": "myapp",
-        "provider": "codecommit",
-        "repoUrl": "https://git/repo",
-        "presetId": "small",
-        "permissionTemplateId": "basic",
-        "scheme": "internal",
-        "sleepMode": "always-on",
-    }
-    body.update(overrides)
-    return body
-
-
-def _seed_catalog(table) -> None:
-    seed_settings(table, enabledProviders=["codecommit"])
-    from .conftest import seed_perm, seed_preset
-
-    seed_preset(table)
-    seed_perm(table)
-
-
-def test_create_app_stores_secrets_and_records_arns_only(ddb_table, stub_clients) -> None:
-    _seed_catalog(ddb_table)
-    sm = _secretsmanager()
-    res = handler(
-        make_event(
-            "POST", "/apps", user_id=OWNER, groups=["user"],
-            body=_create_body(
-                envVars={"PUBLIC_URL": "https://x"},
-                secrets={"DB_PASSWORD": "sup3r-secret", "API_KEY": "abc"},
-            ),
-        )
-    )
-    out = parse_result(res)
-    assert out["status"] == 201
-    app_id = out["data"]["appId"]
-    # 응답의 secretArns 는 {KEY: ARN} — 값 없음.
-    assert set(out["data"]["secretArns"].keys()) == {"DB_PASSWORD", "API_KEY"}
-    for arn in out["data"]["secretArns"].values():
-        assert arn.startswith("arn:aws:secretsmanager:")
-    # 평문 값이 DDB 에 없다(App 레코드에 secrets 필드 없음, secretArns 값에 평문 없음).
-    stored = get_app(app_id)
-    assert "secrets" not in stored
-    assert "sup3r-secret" not in str(stored)
-    assert set(stored["secretArns"].keys()) == {"DB_PASSWORD", "API_KEY"}
-    # Secrets Manager 에 각 KEY 저장(create_secret) — 이름 규약, SecretString 은 값.
-    creates = sm.calls_for("create_secret")
-    names = {c["Name"] for c in creates}
-    assert f"apphub/{STAGE}/app/{app_id}/DB_PASSWORD" in names
-    assert f"apphub/{STAGE}/app/{app_id}/API_KEY" in names
-
-
-def test_create_app_invalid_secret_key(ddb_table, stub_clients) -> None:
-    _seed_catalog(ddb_table)
-    _secretsmanager()
-    res = handler(
-        make_event(
-            "POST", "/apps", user_id=OWNER, groups=["user"],
-            body=_create_body(secrets={"1BAD": "x"}),
-        )
-    )
-    assert parse_result(res)["error"]["code"] == "VALIDATION_ERROR"
-
-
-def test_patch_app_upserts_only_sent_keys_keeps_untouched(ddb_table, stub_clients) -> None:
-    """프론트 계약 항목 9: secrets 는 부분 upsert. 보낸 KEY 만 갱신/추가, 안 보낸 기존 KEY 는 유지.
-
-    (구 "목표 상태 재조정"과 다름 — secrets 에서 빠졌다고 자동 삭제하지 않는다.)
-    """
-    existing_arn = "arn:aws:secretsmanager:ap-northeast-2:111122223333:secret:old-XyZ"
-    untouched_arn = "arn:aws:secretsmanager:ap-northeast-2:111122223333:secret:keep-Zzz"
-    seed_app(
-        ddb_table, "sec00001", OWNER, status="ACTIVE",
-        secretArns={"DB_PASSWORD": existing_arn, "UNTOUCHED": untouched_arn},
-    )
-    sm = _secretsmanager()
-    # DB_PASSWORD 갱신 + NEW_KEY 추가. UNTOUCHED 는 body 에 없음 → 그대로 유지(삭제 금지).
-    res = handler(
-        make_event(
-            "PATCH", "/apps/sec00001", user_id=OWNER, groups=["user"],
-            body={"secrets": {"DB_PASSWORD": "rotated", "NEW_KEY": "v"}},
-        )
-    )
-    out = parse_result(res)
-    assert out["status"] == 200
-    # UNTOUCHED 는 유지, 보낸 두 키는 upsert 됨.
-    assert set(out["data"]["secretArns"].keys()) == {"DB_PASSWORD", "NEW_KEY", "UNTOUCHED"}
-    assert out["data"]["secretArns"]["UNTOUCHED"] == untouched_arn
-    # 보낸 두 KEY 만 put_app_secret(create 시도 2회). UNTOUCHED 는 건드리지 않음.
-    assert len(sm.calls_for("create_secret")) == 2
-    # secretsRemove 가 없으므로 삭제 미호출.
-    assert sm.calls_for("delete_secret") == []
-
-
-def test_patch_app_secrets_remove_deletes_named_keys(ddb_table, stub_clients) -> None:
-    """secretsRemove: 명시된 KEY 만 삭제. secrets(upsert)와 함께 보낼 수 있다(항목 9)."""
-    old_arn = "arn:aws:secretsmanager:ap-northeast-2:111122223333:secret:gone-Aaa"
-    keep_arn = "arn:aws:secretsmanager:ap-northeast-2:111122223333:secret:keep-Bbb"
-    seed_app(
-        ddb_table, "sec00002", OWNER, status="ACTIVE",
-        secretArns={"OLD": old_arn, "KEEP": keep_arn},
-    )
-    sm = _secretsmanager()
-    # KEEP 값 교체(upsert) + OLD 삭제(secretsRemove).
-    res = handler(
-        make_event(
-            "PATCH", "/apps/sec00002", user_id=OWNER, groups=["user"],
-            body={"secrets": {"KEEP": "rotated"}, "secretsRemove": ["OLD"]},
-        )
-    )
-    out = parse_result(res)
-    assert out["status"] == 200
-    assert set(out["data"]["secretArns"].keys()) == {"KEEP"}
-    # OLD 는 기존 ARN 으로 삭제.
-    dels = sm.calls_for("delete_secret")
-    assert any(d["SecretId"] == old_arn for d in dels)
-    # KEEP 은 upsert(create 시도 1회).
-    assert len(sm.calls_for("create_secret")) == 1
-
-
-def test_patch_app_secrets_remove_only(ddb_table, stub_clients) -> None:
-    """secretsRemove 만 보내면(secrets 없이) 해당 KEY 만 삭제, 나머지 유지."""
-    old_arn = "arn:aws:secretsmanager:ap-northeast-2:111122223333:secret:gone-Aaa"
-    keep_arn = "arn:aws:secretsmanager:ap-northeast-2:111122223333:secret:keep-Bbb"
-    seed_app(
-        ddb_table, "sec00004", OWNER, status="ACTIVE",
-        secretArns={"OLD": old_arn, "KEEP": keep_arn},
-    )
-    sm = _secretsmanager()
-    res = handler(
-        make_event(
-            "PATCH", "/apps/sec00004", user_id=OWNER, groups=["user"],
-            body={"secretsRemove": ["OLD"]},
-        )
-    )
-    out = parse_result(res)
-    assert out["status"] == 200
-    assert set(out["data"]["secretArns"].keys()) == {"KEEP"}
-    assert sm.calls_for("create_secret") == []
-    assert any(d["SecretId"] == old_arn for d in sm.calls_for("delete_secret"))
-
-
-def test_put_app_secret_updates_existing_via_put_value() -> None:
-    """put_app_secret: 이미 존재하면 create → ResourceExists → put_secret_value + describe."""
-    from app.integrations.secrets import put_app_secret
-    from botocore.exceptions import ClientError
-
-    class _ExistingSecrets:
-        def __init__(self) -> None:
-            self.calls: list[str] = []
-
-        def create_secret(self, **kwargs: Any) -> dict[str, Any]:
-            self.calls.append("create_secret")
-            raise ClientError(
-                {"Error": {"Code": "ResourceExistsException"}}, "CreateSecret"
-            )
-
-        def put_secret_value(self, **kwargs: Any) -> dict[str, Any]:
-            self.calls.append("put_secret_value")
-            return {}
-
-        def describe_secret(self, **kwargs: Any) -> dict[str, Any]:
-            self.calls.append("describe_secret")
-            return {"ARN": "arn:aws:secretsmanager:...:secret:existing-Zzz"}
-
-    stub = _ExistingSecrets()
-    integ_clients.set_client("secretsmanager", stub)
-    arn = put_app_secret(STAGE, "app00099", "DB_PASSWORD", "new-value")
-    assert arn == "arn:aws:secretsmanager:...:secret:existing-Zzz"
-    assert stub.calls == ["create_secret", "put_secret_value", "describe_secret"]
-
-
-def test_patch_app_no_secrets_field_untouched(ddb_table, stub_clients) -> None:
-    seed_app(
-        ddb_table, "sec00003", OWNER, status="ACTIVE",
-        secretArns={"DB": "arn:aws:secretsmanager:...:secret:db-Ccc"},
-    )
-    sm = _secretsmanager()
-    res = handler(
-        make_event(
-            "PATCH", "/apps/sec00003", user_id=OWNER, groups=["user"],
-            body={"autoDeployEnabled": False},
-        )
-    )
-    out = parse_result(res)
-    assert out["status"] == 200
-    # secrets 필드 없으면 Secrets Manager 미호출, secretArns 불변.
-    assert sm.calls == []
-    assert out["data"]["secretArns"] == {"DB": "arn:aws:secretsmanager:...:secret:db-Ccc"}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -69,7 +69,7 @@ phases:
         NODE
       # runtime(롤백)은 app-runtime 파라미터 전체를 조립한다(deploy.yml과 동일 재귀 언마샬).
       #  DDB AttributeValue(S/N/BOOL/NULL/M/L/SS/NS)를 재귀 언마샬(u)해 app-params.ts loader 키
-      #  (schedule/envVars/secretArns/permissionPolicyB64)에 맞춰 base64 JSON으로 emit.
+      #  (schedule/envVars/secretArn/secretKeysB64/permissionPolicyB64)에 맞춰 base64 JSON으로 emit.
       #  IMAGE_TAG는 StartBuild env override로 온 커밋 SHA(재빌드 없이 그 이미지로 재배포).
       - |
         node - <<'NODE' > /tmp/app-ctx.env
@@ -125,8 +125,12 @@ phases:
         if (app.envVars && typeof app.envVars === "object" && Object.keys(app.envVars).length > 0) {
           emitJson("envVarsB64", app.envVars);
         }
-        if (app.secretArns && typeof app.secretArns === "object" && Object.keys(app.secretArns).length > 0) {
-          emitJson("secretArnsB64", app.secretArns);
+        // 시크릿(D8, 앱당 1개 JSON): secretArn(완전 ARN, 값 아님) + secretKeys(주입 대상 KEY 목록).
+        //  secretKeys 가 비면 둘 다 생략(시크릿 미주입). 각 KEY → ECS valueFrom `<arn>:KEY::`(app-runtime).
+        const secretKeys = Array.isArray(app.secretKeys) ? app.secretKeys.map(String) : [];
+        if (typeof app.secretArn === "string" && app.secretArn && secretKeys.length > 0) {
+          emit("secretArn", app.secretArn);
+          emitJson("secretKeysB64", secretKeys);
         }
         if (perm.policyDocument && typeof perm.policyDocument === "object") {
           emitJson("permissionPolicyB64", perm.policyDocument);
@@ -187,7 +191,8 @@ phases:
             -c isInitialDeploy="${CTX_isInitialDeploy}" \
             ${CTX_scheduleB64:+-c schedule="${CTX_scheduleB64}"} \
             ${CTX_envVarsB64:+-c envVars="${CTX_envVarsB64}"} \
-            ${CTX_secretArnsB64:+-c secretArns="${CTX_secretArnsB64}"} \
+            ${CTX_secretArn:+-c secretArn="${CTX_secretArn}"} \
+            ${CTX_secretKeysB64:+-c secretKeysB64="${CTX_secretKeysB64}"} \
             ${CTX_permissionPolicyB64:+-c permissionPolicyB64="${CTX_permissionPolicyB64}"}
         fi
 

@@ -70,8 +70,13 @@ export interface AppRuntimeParams {
   readonly permissionPolicy?: Record<string, unknown>;
   /** 평문 환경변수(비시크릿). */
   readonly envVars: Record<string, string>;
-  /** 시크릿 이름 → Secrets Manager ARN. ECS secrets 로 주입(환경변수 아님). */
-  readonly secretArns: Record<string, string>;
+  /**
+   * 앱 시크릿 1개의 완전 ARN(D8: `apphub/{stage}/app/{appId}`, JSON {KEY: value}).
+   * 시크릿 리소스는 백엔드(API Lambda)가 소유 — 이 스택은 참조만 한다. 시크릿이 없으면 미지정.
+   */
+  readonly secretArn?: string;
+  /** 컨테이너에 주입할 시크릿 KEY 목록. 각 KEY → ECS secrets valueFrom `<arn>:KEY::`(환경변수 아님). */
+  readonly secretKeys: string[];
   readonly sleepMode: AppSleepMode;
   readonly schedule?: AppScheduleParams;
   /** D16: 리스너 규칙에 authenticate-cognito 액션 부착 여부. */
@@ -150,12 +155,35 @@ export function loadRuntimeParams(app: App, stage: Stage, appId: string): AppRun
     rulePriority: ctxNumber(app, "rulePriority"),
     ...(permissionPolicy ? { permissionPolicy } : {}),
     envVars: ctxStringMap(app, "envVars"),
-    secretArns: ctxStringMap(app, "secretArns"),
+    ...secretParams(app),
     sleepMode,
     ...(schedule ? { schedule } : {}),
     cognitoProtect: ctxBool(app, "cognitoProtect", scheme === "internet-facing"),
     isInitialDeploy: ctxBool(app, "isInitialDeploy", true),
   };
+}
+
+/**
+ * 시크릿 컨텍스트(D8): `-c secretArn=<완전 ARN>` + `-c secretKeysB64=<base64(JSON list[str])>`.
+ * 둘 다 생략 = 시크릿 없음. 한쪽만 있으면 계약 위반으로 실패(빈 KEY 목록은 시크릿 없음으로 취급).
+ */
+export function secretParams(app: App): { secretArn?: string; secretKeys: string[] } {
+  const secretArn = ctxStringOpt(app, "secretArn");
+  const rawKeys = ctxJsonOpt<unknown>(app, "secretKeysB64");
+  if (rawKeys !== undefined && !Array.isArray(rawKeys)) {
+    throw new Error("앱 스택 컨텍스트 'secretKeysB64' 는 문자열 배열(JSON list)이어야 합니다.");
+  }
+  const secretKeys = Array.from(new Set(((rawKeys as unknown[] | undefined) ?? []).map((k) => String(k))));
+  for (const k of secretKeys) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) {
+      throw new Error(`앱 스택 컨텍스트 'secretKeysB64' 의 KEY 형식이 잘못되었습니다: ${k}`);
+    }
+  }
+  if (secretKeys.length > 0 && !secretArn) {
+    throw new Error("앱 스택 컨텍스트 'secretKeysB64' 가 있으면 'secretArn' 도 필요합니다.");
+  }
+  if (secretKeys.length === 0) return { secretKeys: [] };
+  return { secretArn, secretKeys };
 }
 
 /** 컨텍스트에서 app-pipeline 파라미터를 조립한다. */

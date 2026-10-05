@@ -377,6 +377,10 @@ export class NetworkStack extends Stack {
       "wake-restore-fn-arn": wakeRestoreFunction.functionArn,
       "sleep-transition-fn-arn": sleepTransitionFunction.functionArn,
       "sleep-transition-fn-name": sleepTransitionFunction.functionName,
+      // QA H3: platform 스택이 이 역할들에 cognito-idp:DescribeUserPoolClient(User Pool 한정)를 부착한다
+      //  (ModifyRule + authenticate-cognito). User Pool은 platform 소유·network 선배포라 역할명으로 넘긴다.
+      "wake-restore-role-name": wakeRestoreFunction.role!.roleName,
+      "sleep-transition-role-name": sleepTransitionFunction.role!.roleName,
       "waker-tg-arn": wakerTargetGroup.targetGroupArn,
     });
 

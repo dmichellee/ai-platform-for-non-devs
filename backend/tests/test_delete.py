@@ -96,15 +96,18 @@ def test_cleanup_deletes_secrets_decrements_alb_releases_subdomain_removes_app(
         status="DELETING",
         subdomain="c1-app",
         albArn=ALB_ARN,
-        secretArns={"DB": "arn:aws:secretsmanager:...:secret/db-AbC"},
+        secretArn="arn:aws:secretsmanager:...:secret:apphub/test/app/appc1abc-AbC",
+        secretKeys=["DB"],
     )
     reserve_subdomain("c1-app", "appc1abc")
 
     out = delete.handle({"step": "cleanup", "appId": "appc1abc"})
     assert out["cleaned"] is True
-    # 시크릿 삭제(ARN 만) 호출.
-    sm_call = p2_clients["secretsmanager"].calls_for("delete_secret")[0]
-    assert sm_call["SecretId"] == "arn:aws:secretsmanager:...:secret/db-AbC"
+    # 앱당 시크릿 1개(D8)를 ARN 으로 즉시 삭제.
+    sm_calls = p2_clients["secretsmanager"].calls_for("delete_secret")
+    assert len(sm_calls) == 1
+    sm_call = sm_calls[0]
+    assert sm_call["SecretId"] == "arn:aws:secretsmanager:...:secret:apphub/test/app/appc1abc-AbC"
     assert sm_call["ForceDeleteWithoutRecovery"] is True
     # ALB ruleCount 감소.
     items = [i for i in list_alb_registry() if i.get("albArn") == ALB_ARN]
@@ -121,12 +124,21 @@ def test_cleanup_missing_app_is_noop(ddb_table, p2_clients, del_env) -> None:
     assert p2_clients["secretsmanager"].calls_for("delete_secret") == []
 
 
-def test_cleanup_without_secrets_or_alb(ddb_table, p2_clients, del_env) -> None:
-    seed_app(ddb_table, "appc2abc", "user-1", status="DELETING", subdomain="c2-app", secretArns={})
+def test_cleanup_without_secret_arn_deletes_by_name_idempotent(ddb_table, p2_clients, del_env) -> None:
+    """secretArn 이 없으면 이름 규약으로 ForceDelete(고아 정리). 없으면 ResourceNotFound → 멱등 통과."""
+    from botocore.exceptions import ClientError
+
+    seed_app(ddb_table, "appc2abc", "user-1", status="DELETING", subdomain="c2-app")
     reserve_subdomain("c2-app", "appc2abc")
+    p2_clients["secretsmanager"].set_raise(
+        "delete_secret",
+        ClientError({"Error": {"Code": "ResourceNotFoundException"}}, "DeleteSecret"),
+    )
     out = delete.handle({"step": "cleanup", "appId": "appc2abc"})
     assert out["cleaned"] is True
-    assert p2_clients["secretsmanager"].calls_for("delete_secret") == []
+    calls = p2_clients["secretsmanager"].calls_for("delete_secret")
+    assert [c["SecretId"] for c in calls] == ["apphub/test/app/appc2abc"]
+    assert calls[0]["ForceDeleteWithoutRecovery"] is True
     assert get_app("appc2abc") is None
 
 

@@ -59,7 +59,7 @@ function appRuntimeTemplate(): Template {
     imageTag: "abc123",
     rulePriority: 137,
     envVars: { FOO: "bar" },
-    secretArns: {},
+    secretKeys: [],
     sleepMode: "on-demand",
     cognitoProtect: false,
     isInitialDeploy: true,

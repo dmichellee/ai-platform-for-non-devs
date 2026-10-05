@@ -22,7 +22,7 @@ from ..integrations.cloudformation import (
     pipeline_stack_name,
     runtime_stack_name,
 )
-from ..integrations.secrets import delete_secrets
+from ..integrations.secrets import app_secret_name, delete_secret
 from . import stage
 from .failure import build_failure
 
@@ -62,14 +62,17 @@ def poll_pipeline(e: dict[str, Any]) -> dict[str, Any]:
 
 
 def cleanup(e: dict[str, Any]) -> dict[str, Any]:
-    """시크릿 삭제(ARN만) → ALB ruleCount 감소 → 서브도메인 예약 해제 → App 레코드 정리(멱등)."""
+    """시크릿 삭제 → ALB ruleCount 감소 → 서브도메인 예약 해제 → App 레코드 정리(멱등).
+
+    시크릿은 앱당 1개(D8). App.secretArn 이 있으면 그 ARN, 없으면 이름 규약
+    `apphub/{stage}/app/{appId}` 로 ForceDelete 한다(생성 도중 실패로 DDB 에 ARN 이 안 남은 고아까지
+    정리). 없는 시크릿은 ResourceNotFound → 멱등 통과.
+    """
     app_id = e["appId"]
     app = get_app(app_id)
     if not app:
         return {"step": "cleanup", "appId": app_id, "cleaned": True}
-    secret_arns = list((app.get("secretArns") or {}).values())
-    if secret_arns:
-        delete_secrets(secret_arns)
+    delete_secret(app.get("secretArn") or app_secret_name(stage(), app_id))
     alb_arn = app.get("albArn") or e.get("albArn")
     if alb_arn:
         decrement_alb_rule_count(alb_arn)

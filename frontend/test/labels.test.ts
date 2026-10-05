@@ -71,3 +71,15 @@ describe("에러 코드 폴백 안내", () => {
     expect(errorFallbackMessage("UNKNOWN_CODE")).toBeTruthy();
   });
 });
+
+describe("배포 trigger 라벨 (D8 secret-change 포함)", () => {
+  it("4개 trigger 모두 한국어 라벨이 있고 secret-change 는 '비밀 값 변경'", async () => {
+    const { DEPLOY_TRIGGER_LABEL } = await import("../src/lib/labels.js");
+    expect(DEPLOY_TRIGGER_LABEL).toEqual({
+      auto: "자동",
+      manual: "수동",
+      rollback: "되돌리기",
+      "secret-change": "비밀 값 변경",
+    });
+  });
+});

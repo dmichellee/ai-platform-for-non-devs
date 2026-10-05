@@ -17,6 +17,7 @@ import type {
   LogEvent,
   MetricRange,
   PatchAppRequest,
+  PatchAppResponse,
   PermissionTemplate,
   PlatformUser,
   Provider,
@@ -78,12 +79,8 @@ export class MockApiClient implements ApiClient {
       throw new ApiError("SUBDOMAIN_TAKEN", "이미 사용 중인 주소예요.", 409);
     }
     const nowIso = new Date().toISOString();
-    // 비밀 설정값(secrets)은 서버가 Secrets Manager 에 저장하고 App.secretArns 에 KEY→ARN 만 남긴다.
-    // 목: 각 KEY 에 대해 그럴듯한 ARN 을 만들어 준다(값 자체는 보관/노출하지 않음).
-    const secretArns: Record<string, string> = {};
-    for (const key of Object.keys(b.secrets ?? {})) {
-      secretArns[key] = `arn:mock:secret/${b.subdomain}/${key}`;
-    }
+    // 비밀 설정값(secrets)은 서버가 안전 보관하고 App.secretKeys 에 KEY 목록만 남긴다(값 미노출).
+    const secretKeys = Object.keys(b.secrets ?? {});
     const app: App = {
       appId: Math.random().toString(36).slice(2, 10),
       ownerId: fx.MOCK_USER_SUB,
@@ -102,7 +99,7 @@ export class MockApiClient implements ApiClient {
       sleepMode: b.sleepMode,
       ...(b.schedule ? { schedule: b.schedule } : {}),
       envVars: b.envVars ?? {},
-      secretArns,
+      secretKeys,
       status: "CREATING",
       runtimeState: "SLEEPING",
       cognitoProtect: b.cognitoProtect ?? b.scheme === "internet-facing",
@@ -118,28 +115,69 @@ export class MockApiClient implements ApiClient {
     }, 3000);
     return clone(app);
   }
-  async patchApp(appId: string, b: PatchAppRequest): Promise<App> {
+  async patchApp(appId: string, b: PatchAppRequest): Promise<PatchAppResponse> {
     await delay();
     const app = this.findApp(appId);
     if (app.status === "DELETING") {
       throw new ApiError("INVALID_STATE", "삭제 중인 앱은 수정할 수 없어요.", 409);
+    }
+    // D8: 시크릿 변경(추가·수정·삭제)이 있으면 저장 = 즉시 재배포(재빌드 없음).
+    const secretsChanged =
+      Object.keys(b.secrets ?? {}).length > 0 || (b.secretsRemove ?? []).length > 0;
+    const deps = this.deployments[appId] ?? [];
+    const IN_PROGRESS = ["PENDING", "VALIDATING", "BUILDING", "DEPLOYING"];
+    if (secretsChanged && deps.some((d) => IN_PROGRESS.includes(d.status))) {
+      throw new ApiError(
+        "INVALID_STATE",
+        "지금 배포가 진행 중이에요. 배포가 끝난 뒤 비밀 값을 다시 저장해 주세요.",
+        409,
+      );
     }
     if (b.autoDeployEnabled !== undefined) app.autoDeployEnabled = b.autoDeployEnabled;
     if (b.sleepMode !== undefined) app.sleepMode = b.sleepMode;
     if (b.schedule !== undefined) app.schedule = b.schedule;
     if (b.envVars !== undefined) app.envVars = b.envVars;
     if (b.cognitoProtect !== undefined) app.cognitoProtect = b.cognitoProtect;
-    // 비밀 설정값: 보낸 KEY 만 새 ARN 부여(부분 갱신), secretsRemove 는 해당 KEY 제거.
-    if (b.secrets) {
-      for (const key of Object.keys(b.secrets)) {
-        app.secretArns[key] = `arn:mock:secret/${app.subdomain}/${key}`;
-      }
+    // 비밀 설정값: 보낸 KEY 만 추가(부분 갱신), secretsRemove 는 해당 KEY 제거(삭제 우선).
+    const keys = new Set(app.secretKeys);
+    for (const key of Object.keys(b.secrets ?? {})) keys.add(key);
+    for (const key of b.secretsRemove ?? []) keys.delete(key);
+    app.secretKeys = [...keys];
+    const nowIso = new Date().toISOString();
+    app.updatedAt = nowIso;
+    if (!secretsChanged) return clone(app);
+
+    // 배포된 적이 있으면(성공 이력) 지금 버전으로 다시 배포를 접수, 아니면 첫 배포 때 적용(SKIPPED).
+    const current = deps.find((d) => d.status === "SUCCEEDED");
+    if (app.status !== "ACTIVE" || !current) {
+      return {
+        ...clone(app),
+        redeploy: {
+          status: "SKIPPED",
+          reason: "NOT_DEPLOYED",
+          note: "아직 배포된 적이 없어요. 첫 배포 때 새 비밀 값이 적용돼요.",
+        },
+      };
     }
-    if (b.secretsRemove) {
-      for (const key of b.secretsRemove) delete app.secretArns[key];
-    }
-    app.updatedAt = new Date().toISOString();
-    return clone(app);
+    const dep: Deployment = {
+      appId,
+      deploymentId: nowIso,
+      ...(current.commitSha ? { commitSha: current.commitSha } : {}),
+      commitMessage: "비밀 설정값 변경 적용",
+      trigger: "secret-change",
+      status: "PENDING",
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+    this.deployments[appId] = [dep, ...deps];
+    return {
+      ...clone(app),
+      redeploy: {
+        status: "PENDING",
+        deploymentId: dep.deploymentId,
+        note: "비밀 값을 저장했어요. 앱을 다시 배포하고 있어요(몇 분 걸려요).",
+      },
+    };
   }
   async deleteApp(appId: string): Promise<{ appId: string; status: "DELETING" }> {
     await delay();

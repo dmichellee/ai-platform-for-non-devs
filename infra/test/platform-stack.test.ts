@@ -342,6 +342,9 @@ describe("platform 스택", () => {
         "CodeCommitRepos", // API: ListRepositories/CreateRepository (리소스 레벨 미지원, IAM 시뮬레이터 검증)
         "AppMetricsRead", // API: GetMetricData/DescribeTargetGroups (리소스 레벨 미지원 read-only, 모니터링 탭)
         "AdminStopElbDescribe", // API: DescribeRules/DescribeListeners (리소스 레벨 미지원 read-only, 관리자 강제 중지)
+        "DeployNotifyEcsDescribeTaskDef", // deploy-notify: ecs:DescribeTaskDefinition (리소스 레벨 미지원 read-only, D8 지연 정리)
+        "DeployNotifyElbDescribe", // deploy-notify: ELB Describe (리소스 레벨 미지원 read-only, 잠든 앱 재정합)
+        "AppTaskDefRead", // API: ecs:DescribeTaskDefinition (리소스 레벨 미지원 read-only, 재배포 커밋 폴백)
       ]);
       let star = 0;
       let starWithCondition = 0;
@@ -529,7 +532,7 @@ describe("platform 스택", () => {
       });
     });
 
-    it("두 규칙 모두 deploy-notify Lambda를 EventBridge InvokePermission으로 호출한다", () => {
+    it("규칙 3개 모두 deploy-notify Lambda를 EventBridge InvokePermission으로 호출한다", () => {
       // 규칙 → Lambda invoke 권한(Principal events.amazonaws.com)이 deploy-notify 함수 대상으로 2건 이상.
       const perms = template.findResources("AWS::Lambda::Permission");
       const notifyInvokes = Object.values(perms).filter((p) => {
@@ -541,7 +544,7 @@ describe("platform 스택", () => {
           fnRef.includes("DeployNotifyFn")
         );
       });
-      expect(notifyInvokes.length).toBeGreaterThanOrEqual(2);
+      expect(notifyInvokes.length).toBeGreaterThanOrEqual(3);
     });
 
     it("IAM (1) DDB GetItem/PutItem/UpdateItem/Query가 apphub-dev-main 테이블 + index/*로 범위 한정된다", () => {
@@ -589,13 +592,79 @@ describe("platform 스택", () => {
       expect(isStar(st.Resource), "codebuild BatchGetBuilds는 범위 한정(* 아님)").toBe(false);
     });
 
-    it("deploy-notify IAM 3종 어디에도 Resource:'*'가 없다(전부 ARN 범위 한정)", () => {
-      // 회귀 가드: 세 statement 전부 리소스 레벨 지원 액션이라 * 예외가 없어야 한다.
-      for (const sid of ["DeployNotifyTableRw", "DeployNotifyPipelineRead", "DeployNotifyBuildRead"]) {
+    it("deploy-notify IAM(DescribeTaskDefinition 예외 제외) 어디에도 Resource:'*'가 없다(전부 ARN 범위 한정)", () => {
+      // 회귀 가드: 아래 statement 전부 리소스 레벨 지원 액션이라 * 예외가 없어야 한다.
+      for (const sid of [
+        "DeployNotifyTableRw",
+        "DeployNotifyPipelineRead",
+        "DeployNotifyBuildRead",
+        "DeployNotifySecretPrune",
+        "DeployNotifyEcsService",
+        "DeployNotifyNetworkSsmRead",
+        "DeployNotifyElbModifyRule",
+        "DeployNotifyCognitoDescribeClient",
+      ]) {
         for (const st of stmtsBySid(sid)) {
           expect(isStar(st.Resource), `${sid}에 Resource:"*" 금지`).toBe(false);
         }
       }
+    });
+
+    it("IAM (4) D8 지연 정리 — GetSecretValue/PutSecretValue가 앱 시크릿 path ARN(apphub/dev/app/*)으로만 부여된다", () => {
+      const stmts = stmtsBySid("DeployNotifySecretPrune");
+      expect(stmts.length).toBe(1);
+      expect(asArray(stmts[0].Action).sort()).toEqual(
+        ["secretsmanager:GetSecretValue", "secretsmanager:PutSecretValue"].sort(),
+      );
+      const resJson = JSON.stringify(stmts[0].Resource);
+      expect(resJson).toContain("secret:apphub/dev/app/*");
+      // 삭제·생성 권한은 deploy-notify에 없다(정리=Put만).
+      expect(asArray(stmts[0].Action)).not.toContain("secretsmanager:DeleteSecret");
+    });
+
+    it("IAM (5) ecs Describe/UpdateService는 공유 클러스터 앱 서비스 ARN, DescribeTaskDefinition만 * 예외(read-only 단독)", () => {
+      const svc = stmtsBySid("DeployNotifyEcsService");
+      expect(svc.length).toBe(1);
+      expect(asArray(svc[0].Action).sort()).toEqual(["ecs:DescribeServices", "ecs:UpdateService"]);
+      expect(JSON.stringify(svc[0].Resource)).toContain("service/apphub-dev-cluster/apphub-dev-app-*");
+      const td = stmtsBySid("DeployNotifyEcsDescribeTaskDef");
+      expect(td.length).toBe(1);
+      // * 예외 statement에는 다른 액션이 섞이지 않는다(우발적 확대 방지).
+      expect(asArray(td[0].Action)).toEqual(["ecs:DescribeTaskDefinition"]);
+      expect(isStar(td[0].Resource)).toBe(true);
+    });
+
+    it("IAM (6) 잠든 앱 재정합(sleep_app) — SSM network/*, ModifyRule listener-rule/app/*, cognito DescribeUserPoolClient(User Pool 한정)", () => {
+      const ssmSt = stmtsBySid("DeployNotifyNetworkSsmRead");
+      expect(ssmSt.length).toBe(1);
+      expect(JSON.stringify(ssmSt[0].Resource)).toContain("parameter/apphub/dev/network/*");
+      const mr = stmtsBySid("DeployNotifyElbModifyRule");
+      expect(mr.length).toBe(1);
+      expect(JSON.stringify(mr[0].Resource)).toContain("listener-rule/app/*");
+      const cg = stmtsBySid("DeployNotifyCognitoDescribeClient");
+      expect(cg.length).toBe(1);
+      expect(asArray(cg[0].Action)).toEqual(["cognito-idp:DescribeUserPoolClient"]);
+      const poolId = Object.keys(template.findResources("AWS::Cognito::UserPool"))[0];
+      expect(cg[0].Resource).toEqual({ "Fn::GetAtt": [poolId, "Arn"] });
+    });
+
+    it("env CLUSTER_NAME=apphub-dev-cluster 가 주입된다(sleep_app·시크릿 정리의 서비스 조회)", () => {
+      template.hasResourceProperties("AWS::Lambda::Function", {
+        FunctionName: "apphub-dev-deploy-notify",
+        Environment: { Variables: Match.objectLike({ CLUSTER_NAME: "apphub-dev-cluster" }) },
+      });
+    });
+
+    it("규칙 (3) build: provisioner CodeBuild Build State Change → deploy-notify (롤백·시크릿 재배포)", () => {
+      template.hasResourceProperties("AWS::Events::Rule", {
+        Name: "apphub-dev-deploy-notify-build",
+        EventPattern: {
+          source: ["aws.codebuild"],
+          "detail-type": ["CodeBuild Build State Change"],
+          detail: { "project-name": [Match.anyValue()] },
+        },
+        Targets: Match.arrayWith([Match.objectLike({ Arn: Match.anyValue() })]),
+      });
     });
 
     it("DeployNotifyFunctionArn Output이 발행된다", () => {
@@ -850,7 +919,7 @@ describe("platform 스택", () => {
     const isStar = (r: unknown): boolean =>
       r === "*" || (Array.isArray(r) && r.length === 1 && r[0] === "*");
 
-    it("secretsmanager CRUD(Create/Put/Describe/Delete)가 path 스타일 시크릿 ARN(apphub/{stage}/app/*)으로 부여된다", () => {
+    it("secretsmanager CRUD(Create/Put/Get/Describe/Delete)가 path 스타일 시크릿 ARN(apphub/{stage}/app/*)으로 부여된다", () => {
       const stmts = stmtsBySid("AppSecretsCrud");
       expect(stmts.length, "AppSecretsCrud statement가 존재해야 함").toBe(1);
       const st = stmts[0];
@@ -858,6 +927,7 @@ describe("platform 스택", () => {
         expect.arrayContaining([
           "secretsmanager:CreateSecret",
           "secretsmanager:PutSecretValue",
+          "secretsmanager:GetSecretValue", // D8: 앱당 JSON 1개 — KEY upsert 시 읽어서 병합
           "secretsmanager:DescribeSecret",
           "secretsmanager:DeleteSecret",
         ]),
@@ -901,6 +971,62 @@ describe("platform 스택", () => {
       // 기존 provisionerBuildArn 상수 재사용 — apphub-dev-provisioner 프로젝트.
       expect(resJson).toContain("project/apphub-dev-provisioner");
       expect(isStar(st.Resource), "StartBuild는 범위 한정(* 아님)").toBe(false);
+    });
+  });
+
+  describe("QA M1 / H3 — platform SSM 읽기 · cognito DescribeUserPoolClient", () => {
+    type Stmt = { Sid?: string; Action?: unknown; Resource?: unknown };
+    type Pol = { PolicyName?: unknown; Roles?: unknown; PolicyDocument?: { Statement?: Stmt[] } };
+    function stmtsBySid(sid: string): Stmt[] {
+      const out: Stmt[] = [];
+      for (const pol of Object.values(template.findResources("AWS::IAM::Policy"))) {
+        for (const st of (pol.Properties as Pol).PolicyDocument?.Statement ?? []) {
+          if (st.Sid === sid) out.push(st);
+        }
+      }
+      return out;
+    }
+    const asArray = (a: unknown): string[] =>
+      Array.isArray(a) ? (a as string[]) : typeof a === "string" ? [a] : [];
+    const userPoolLogicalId = (): string => Object.keys(template.findResources("AWS::Cognito::UserPool"))[0];
+
+    it("[M1] API 역할은 /apphub/dev/platform/provisioner-project-name 1개만 정확 ARN으로 읽는다(와일드카드 아님)", () => {
+      const stmts = stmtsBySid("ReadPlatformSsm");
+      expect(stmts.length).toBe(1);
+      expect(asArray(stmts[0].Action)).toEqual(["ssm:GetParameter"]);
+      const resJson = JSON.stringify(stmts[0].Resource);
+      expect(resJson).toContain("parameter/apphub/dev/platform/provisioner-project-name");
+      expect(resJson).not.toContain("platform/*");
+    });
+
+    it("[M1] 롤백·시크릿 재배포용 codebuild:StartBuild는 provisioner 프로젝트 한정으로 이미 부여된다", () => {
+      const stmts = stmtsBySid("StartProvisionerBuild");
+      expect(stmts.length).toBe(1);
+      expect(JSON.stringify(stmts[0].Resource)).toContain("project/apphub-dev-provisioner");
+    });
+
+    it("[H3] API 역할(관리자 강제 중지 ModifyRule)에 DescribeUserPoolClient가 플랫폼 User Pool ARN으로 한정 부여된다", () => {
+      const stmts = stmtsBySid("AdminStopCognitoDescribeClient");
+      expect(stmts.length).toBe(1);
+      expect(asArray(stmts[0].Action)).toEqual(["cognito-idp:DescribeUserPoolClient"]);
+      expect(stmts[0].Resource).toEqual({ "Fn::GetAtt": [userPoolLogicalId(), "Arn"] });
+    });
+
+    it("[H3] wake-restore/sleep-transition 역할(network 소유)에 DescribeUserPoolClient를 User Pool 한정으로 부착한다", () => {
+      const pols = Object.values(template.findResources("AWS::IAM::Policy")).filter(
+        (p) => (p.Properties as Pol).PolicyName === "apphub-dev-wake-cognito-describe",
+      );
+      expect(pols.length).toBe(1);
+      const props = pols[0].Properties as Pol;
+      const stmts = props.PolicyDocument?.Statement ?? [];
+      expect(stmts.length).toBe(1);
+      expect(asArray(stmts[0].Action)).toEqual(["cognito-idp:DescribeUserPoolClient"]);
+      expect(stmts[0].Resource).toEqual({ "Fn::GetAtt": [userPoolLogicalId(), "Arn"] });
+      // 역할 2개 — network SSM 역할명 파라미터(배포 시점 해석)로 참조.
+      expect(Array.isArray(props.Roles) && (props.Roles as unknown[]).length).toBe(2);
+      const params = JSON.stringify(template.toJSON().Parameters ?? {});
+      expect(params).toContain("/apphub/dev/network/wake-restore-role-name");
+      expect(params).toContain("/apphub/dev/network/sleep-transition-role-name");
     });
   });
 
