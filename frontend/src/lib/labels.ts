@@ -84,7 +84,7 @@ export function statusHint(status: AppStatus): string {
   }
 }
 
-// ── Deployment.status → 사용자 화면 단계 라벨 (가져오기→검사→빌드→배포→확인) ──
+// ── Deployment.status → 사용자 화면 단계 라벨 (가져오기→검사·빌드→배포→확인) ──
 // 배포 이력의 "어떻게 시작됐는지" 라벨.
 export const DEPLOY_TRIGGER_LABEL: Record<DeploymentTrigger, string> = {
   auto: "자동",
@@ -112,11 +112,13 @@ export const DEPLOY_STATUS_LABEL: Record<DeploymentStatus, string> = {
   FAILED: "실패",
 };
 
-// 배포 상세 진행 단계 (DESIGN 6장: 가져오기→검사→빌드→배포→확인)
+// 배포 상세 진행 단계 (가져오기→검사·빌드→배포→확인).
+// 파이프라인은 검사와 빌드를 한 스테이지(ValidateBuild)로 수행하고 백엔드도 BUILDING 을 따로
+// 기록하지 않으므로, 화면도 한 칸으로 합쳐 실제 진행과 일치시킨다. reaches 는 그 칸에 해당하는
+// Deployment.status 목록 — 화면은 인덱스 비교가 아니라 이 목록으로 현재 칸을 찾는다.
 export const DEPLOY_STEPS: { key: string; label: string; reaches: DeploymentStatus[] }[] = [
   { key: "fetch", label: "가져오기", reaches: ["PENDING"] },
-  { key: "validate", label: "검사", reaches: ["VALIDATING"] },
-  { key: "build", label: "빌드", reaches: ["BUILDING"] },
+  { key: "build", label: "검사·빌드", reaches: ["VALIDATING", "BUILDING"] },
   { key: "deploy", label: "배포", reaches: ["DEPLOYING"] },
   { key: "confirm", label: "확인", reaches: ["SUCCEEDED"] },
 ];

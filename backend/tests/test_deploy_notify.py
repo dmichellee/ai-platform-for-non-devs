@@ -345,8 +345,34 @@ def test_failure_deploy_stage_deploy_failed(ddb_table, p2_clients, notify_env) -
     assert _only(ddb_table)["failureCategory"] == "DEPLOY_FAILED"
 
 
+def test_failure_source_stage_source_unavailable(ddb_table, p2_clients, notify_env) -> None:
+    """(c) Source 실패(코드 가져오기 불가 — 연결 끊김·없는 브랜치·권한 회수 등) → SOURCE_UNAVAILABLE."""
+    _seed_manual_pending(ddb_table)
+    p2_clients["codepipeline"].set_response(
+        "list_action_executions",
+        {"actionExecutionDetails": [{"stageName": "Source", "status": "Failed"}]},
+    )
+    res = dn.handle_event(_pipeline_event("FAILED"))
+    assert res["failureCategory"] == "SOURCE_UNAVAILABLE"
+    assert _only(ddb_table)["failureCategory"] == "SOURCE_UNAVAILABLE"
+
+
+def test_first_deploy_source_failed_reason_points_to_connection(ddb_table, p2_clients, notify_env) -> None:
+    """첫 배포가 Source 에서 실패하면 App.failureReason 이 저장소 연결 확인 안내를 담는다."""
+    _seed_first_deploy_pending(ddb_table)
+    p2_clients["codepipeline"].set_response(
+        "list_action_executions",
+        {"actionExecutionDetails": [{"stageName": "Source", "status": "Failed"}]},
+    )
+    res = dn.handle_event(_pipeline_event("FAILED"))
+    assert res["failureCategory"] == "SOURCE_UNAVAILABLE"
+    app = get_app(APP)
+    assert app["status"] == "FAILED"
+    assert "저장소 연결 상태를 확인하세요" in app["failureReason"]
+
+
 def test_failure_unknown_internal(ddb_table, p2_clients, notify_env) -> None:
-    """(c) 실패 액션 조회 불가/미상 → INTERNAL_ERROR."""
+    """(d) 실패 액션 조회 불가/미상 → INTERNAL_ERROR."""
     _seed_manual_pending(ddb_table)
     # list_action_executions stub 기본 {} → actionExecutionDetails 없음.
     res = dn.handle_event(_pipeline_event("FAILED"))

@@ -1,5 +1,5 @@
 /**
- * 배포 상세 — 단계별 진행(가져오기→검사→빌드→배포→확인) + 실패 시 유형별 한국어 안내 + 로그.
+ * 배포 상세 — 단계별 진행(가져오기→검사·빌드→배포→확인) + 실패 시 유형별 한국어 안내 + 로그.
  * failureCategory → 안내 문구 매핑은 lib/labels.ts (apphub-conventions §4).
  */
 import { useEffect, useState } from "react";
@@ -18,14 +18,6 @@ import { useAuth } from "../../auth/AuthContext.js";
 import { sessionInitial } from "../../auth/tokens.js";
 import type { Deployment, LogEvent } from "../../lib/types.js";
 import { DEPLOY_STEPS, failureGuidance } from "../../lib/labels.js";
-
-const STATUS_ORDER: Deployment["status"][] = [
-  "PENDING",
-  "VALIDATING",
-  "BUILDING",
-  "DEPLOYING",
-  "SUCCEEDED",
-];
 
 export function DeploymentDetail({
   appId,
@@ -59,7 +51,9 @@ export function DeploymentDetail({
 
   const userInitial = sessionInitial(session);
   const failed = dep?.status === "FAILED";
-  const currentIdx = dep ? STATUS_ORDER.indexOf(dep.status) : -1;
+  // 현재 칸 = status 를 reaches 에 포함하는 단계. FAILED 는 어느 칸에도 없어 -1 → 아래에서
+  // 첫 칸을 실패로 표시한다(실패 레코드는 도달 단계를 따로 담지 않음).
+  const currentIdx = dep ? DEPLOY_STEPS.findIndex((s) => s.reaches.includes(dep.status)) : -1;
 
   return (
     <div className="wrap">

@@ -1,0 +1,40 @@
+/* Self-hosted webfonts — no network needed at presentation time.
+   Amazon Ember is subset to latin (Korean is Pretendard's job, and Ember has
+   no Hangul glyphs anyway). Pretendard ships as one variable file. */
+
+@font-face {
+  font-family: 'Amazon Ember Web';
+  src: url('../assets/fonts/AmazonEmber-Light.woff2') format('woff2');
+  font-weight: 300;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: 'Amazon Ember Web';
+  src: url('../assets/fonts/AmazonEmber-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: 'Amazon Ember Web';
+  src: url('../assets/fonts/AmazonEmber-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: 'Amazon Ember Web';
+  src: url('../assets/fonts/AmazonEmber-Bold.woff2') format('woff2');
+  font-weight: 600 700;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: 'Pretendard Local';
+  src: url('../assets/fonts/PretendardVariable.woff2') format('woff2-variations');
+  font-weight: 45 920;
+  font-style: normal;
+  font-display: block;
+}

@@ -19,8 +19,9 @@ describe("배포 상세 — 실패 유형 → 안내 문구", () => {
     renderWithProviders(<DeploymentDetail appId="99887766" deploymentId={dep.deploymentId} />);
 
     expect(await screen.findByText(FAILURE_GUIDANCE.BUILD_FAILED)).toBeInTheDocument();
-    // 단계 진행 표시 존재
-    expect(screen.getByText("빌드")).toBeInTheDocument();
+    // 단계 진행 표시 존재 — 검사와 빌드는 한 칸(파이프라인 ValidateBuild 스테이지와 일치)
+    expect(screen.getByText("검사·빌드")).toBeInTheDocument();
+    expect(screen.queryByText("빌드")).not.toBeInTheDocument();
   });
 
   it("성공 배포는 실패 안내를 보여주지 않는다", async () => {

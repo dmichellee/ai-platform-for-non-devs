@@ -134,12 +134,13 @@ def _source_revision(stage_value: str, app_id: str, execution_id: str) -> tuple[
 
 
 def _failure_category(stage_value: str, app_id: str, execution_id: str) -> str:
-    """실패 액션을 조회해 failureCategory 를 결정(계약 §failureCategory 3분기).
+    """실패 액션을 조회해 failureCategory 를 결정(계약 §failureCategory 4분기).
 
     list_action_executions 로 실패(Failed) 액션을 찾아:
       (a) ValidateBuild 실패 → 해당 CodeBuild build 의 exported env FAILURE_CATEGORY(batch_get_builds).
       (b) Deploy 실패 → DEPLOY_FAILED.
-      (c) 조회 실패/미상 → INTERNAL_ERROR(failureCategory 사전 정식 코드).
+      (c) Source 실패 → SOURCE_UNAVAILABLE(저장소 접근 불가·브랜치 없음·연결 끊김 등 코드 가져오기 실패 전부).
+      (d) 조회 실패/미상 → INTERNAL_ERROR(failureCategory 사전 정식 코드).
     """
     try:
         res = client("codepipeline").list_action_executions(
@@ -165,6 +166,10 @@ def _failure_category(stage_value: str, app_id: str, execution_id: str) -> str:
 
     if any(d.get("stageName") == "Deploy" for d in failed):
         return "DEPLOY_FAILED"
+
+    # Source 실패 — 코드를 가져오지 못한 경우. 안내 문구("저장소 연결 상태 확인")는 labels.ts 에 이미 있음.
+    if any(d.get("stageName") == "Source" for d in failed):
+        return "SOURCE_UNAVAILABLE"
 
     return "INTERNAL_ERROR"
 

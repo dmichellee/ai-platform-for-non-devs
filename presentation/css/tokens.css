@@ -1,0 +1,110 @@
+/* Amazon Quick demo deck — design tokens
+   Derived from the AWS_RIV pptx theme, inverted for a light stage. */
+
+:root {
+  /* Brand gradient — the 4-stop run used across Quick brand surfaces */
+  --g1: #FF4B14;
+  --g2: #D600BA;
+  --g3: #78008A;
+  --g4: #6842FF;
+  --brand-sweep: linear-gradient(103deg, var(--g1) 0%, var(--g2) 34%, var(--g3) 64%, var(--g4) 100%);
+  --brand-sweep-v: linear-gradient(178deg, var(--g1) 0%, var(--g2) 34%, var(--g3) 64%, var(--g4) 100%);
+
+  /* Accent scale — for steps, tags, data */
+  --a-magenta: #AA0071;
+  --a-orchid: #E333FF;
+  --a-violet: #942EFF;
+  --a-blue: #007DFF;
+  --a-teal: #00D5C7;
+
+  /* Ink — the pptx dark surfaces, reused as type colors */
+  --ink: #232E3D;
+  --body: #3A4757;
+  --muted: #6B7785;
+  --faint: #9AA4B0;
+
+  /* Deep navy — the one value not in the pptx light palette. Taken from the
+     original deck's dark surface (#232E3D) pushed bluer so it reads as the
+     cool anchor under the pink/purple sweep. */
+  --navy: #1B2340;
+  --navy-deep: #141A31;
+
+  /* Page ground — mesh gradient with three readable territories.
+     Navy owns the top band, magenta/pink the lower-left sweep, violet the
+     right edge. Zones are kept saturated and their overlaps tight, because a
+     wide soft bloom in the middle turns the whole field muddy grey-pink.
+     The slide covers the centre anyway — what has to read is the frame. */
+  --page:
+    /* warm bloom — small and offset, just enough to keep the field from going flat */
+    radial-gradient(30% 26% at 30% 40%, rgba(224, 242, 255, .55) 0%, rgba(224, 242, 255, 0) 100%),
+    /* navy — top band */
+    radial-gradient(64% 40% at 22% -10%, #141B38 0%, rgba(20, 27, 56, .72) 40%, rgba(20, 27, 56, 0) 76%),
+    radial-gradient(58% 34% at 74% -8%, #1E2550 0%, rgba(30, 37, 80, 0) 72%),
+    radial-gradient(38% 22% at 50% -2%, #10162F 0%, rgba(16, 22, 47, 0) 78%),
+    /* violet — right edge */
+    radial-gradient(42% 56% at 106% 40%, #7A32E8 0%, rgba(122, 50, 232, 0) 68%),
+    radial-gradient(36% 40% at 96% 82%, #A63CF0 0%, rgba(166, 60, 240, 0) 66%),
+    /* magenta → pink — bottom-left sweep */
+    radial-gradient(46% 42% at 4% 96%, #38BDF8 0%, rgba(56, 189, 248, 0) 68%),
+    radial-gradient(44% 38% at 40% 110%, #22A8F0 0%, rgba(34, 168, 240, 0) 66%),
+    radial-gradient(30% 34% at -8% 58%, #4FC3F7 0%, rgba(79, 195, 247, 0) 70%),
+    /* base */
+    linear-gradient(160deg, #161D3A 0%, #262C66 22%, #3E5BC8 48%, #2FA6E8 66%, #7B33DC 100%);
+
+  /* Ground */
+  --bg: #FFFFFF;
+  --surface: #FAFAFB;
+  --surface-2: #F4F5F7;
+  --hair: #E7E7E7;
+  --hair-soft: #F0F1F3;
+
+  /* Tinted washes — brand at low alpha, keeps white from going sterile */
+  --wash-warm: rgba(255, 75, 20, .07);
+  --wash-pink: rgba(214, 0, 186, .07);
+  --wash-violet: rgba(104, 66, 255, .08);
+
+  /* Type */
+  /* Latin resolves to the self-hosted Ember subset; Hangul falls through to
+     Pretendard, which has no latin coverage conflict because Ember wins first. */
+  --font-display: 'Amazon Ember Web', 'Amazon Ember Display', 'Pretendard Local', 'Apple SD Gothic Neo', sans-serif;
+  --font-body: 'Amazon Ember Web', 'Amazon Ember', 'Pretendard Local', 'Apple SD Gothic Neo', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* Headings unchanged; body sizes bumped one step because 18/15px was too
+     small to read from the back of a press-conference room. */
+  --t-hero: 76px;
+  --t-display: 54px;
+  --t-title: 40px;
+  --t-sub: 26px;
+  --t-lead: 23px;
+  --t-body: 20px;
+  --t-small: 17px;
+  --t-kicker: 13px;
+
+  /* Rhythm — 8px base */
+  --s1: 8px;
+  --s2: 16px;
+  --s3: 24px;
+  --s4: 32px;
+  --s5: 48px;
+  --s6: 64px;
+  --pad-x: 88px;
+  --pad-y: 68px;
+
+  --r-sm: 8px;
+  --r-md: 14px;
+  --r-lg: 22px;
+
+  --shadow-card: 0 1px 2px rgba(35, 46, 61, .04), 0 12px 32px -18px rgba(35, 46, 61, .18);
+  --shadow-lift: 0 2px 6px rgba(35, 46, 61, .06), 0 28px 60px -28px rgba(35, 46, 61, .28);
+
+  --ease: cubic-bezier(.22, .61, .36, 1);
+}
+
+/* Text set in the brand gradient. Used sparingly — one phrase per slide at most. */
+.sweep {
+  background: var(--brand-sweep);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}

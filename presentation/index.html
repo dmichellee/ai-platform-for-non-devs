@@ -1,0 +1,1255 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AppHub — 워크로드 설명</title>
+<link rel="stylesheet" href="css/fonts.css?v=1791210766">
+<link rel="stylesheet" href="css/tokens.css?v=1791210766">
+<link rel="stylesheet" href="css/deck.css?v=1791210766">
+</head>
+<body>
+
+<!-- Line icons (Lucide-style, 24px grid). Used via <svg class="ico"><use href="#i-..."/></svg> -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-grid" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></symbol>
+    <symbol id="i-code" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></symbol>
+    <symbol id="i-cloud" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 1 0-1.4-8.8A6 6 0 0 0 4.3 12 3.5 3.5 0 0 0 5.5 19z"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01"/></symbol>
+    <symbol id="i-rocket" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 16.5c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.8.7-2.1-.1-2.9a2.2 2.2 0 0 0-2.9-.1zM12 15l-3-3a22 22 0 0 1 2-3.9A12.9 12.9 0 0 1 22 2c0 2.7-.8 7.5-6 11a22.4 22.4 0 0 1-4 2zM9 12H4s.6-3 2-4c1.6-1.1 5 0 5 0M12 15v5s3-.6 4-2c1.1-1.6 0-5 0-5"/></symbol>
+    <symbol id="i-git" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="9" r="2.5"/><path d="M6 8.5v7M18 11.5c0 3-4 3.5-10 5"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="8" r="3.5"/><path d="M2 20a7 7 0 0 1 14 0M16 4.5a3.5 3.5 0 0 1 0 7M18 13.5a6.5 6.5 0 0 1 4 6.5"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3L21 2M16 7l3 3M19 4l2 2"/></symbol>
+    <symbol id="i-net" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="5" rx="1"/><rect x="2" y="17" width="6" height="5" rx="1"/><rect x="16" y="17" width="6" height="5" rx="1"/><path d="M12 7v5M5 17v-3h14v3"/></symbol>
+    <symbol id="i-db" viewBox="0 0 24 24" fill="none" stroke-width="2"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-5-6-5M12 19h8"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l10 5-10 5L2 7z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></symbol>
+    <symbol id="i-test" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.8 3h10.4a2 2 0 0 0 1.8-3l-5-9V3"/><path d="M7 15h10"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+    <symbol id="i-sparkle" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2z"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-repeat" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 1l4 4-4 4M3 11V9a4 4 0 0 1 4-4h14M7 23l-4-4 4-4M21 13v2a4 4 0 0 1-4 4H3"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></symbol>
+    <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#6B7785"/></marker>
+    <marker id="ahv" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#6842FF"/></marker>
+    <marker id="ahp" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#D600BA"/></marker>
+  </defs>
+</svg>
+
+<div id="thread"></div>
+<button id="menu-toggle" aria-label="슬라이드 목록 (M)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg></button>
+<nav id="sidebar" aria-label="슬라이드 목록">
+  <div class="sb-head"><b>AppHub 워크로드</b><button class="sb-close" aria-label="닫기">&times;</button></div>
+  <div class="sb-body"></div>
+  <div class="sb-foot"><kbd>←</kbd> <kbd>→</kbd> 이동 · <kbd>M</kbd> 목록 · <kbd>F</kbd> 전체화면 · 인쇄 시 PDF</div>
+</nav>
+<button class="nav-arrow prev" aria-label="이전"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+<button class="nav-arrow next" aria-label="다음"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg></button>
+<div id="counter"></div>
+<div id="lightbox" role="dialog" aria-modal="true" aria-label="이미지 크게 보기" hidden><button class="lb-close" type="button" aria-label="닫기 (Esc)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button><img alt=""><div class="lb-cap"><span class="t"></span><span><kbd>←</kbd> <kbd>→</kbd> 이동 · <kbd>Esc</kbd> 닫기</span></div></div>
+
+<main id="stage">
+
+<!-- ═══════════════════ 01 COVER ═══════════════════ -->
+<section class="slide cover" data-nav="표지" data-group="개요">
+  <div class="glow tr"></div><div class="glow bl"></div>
+  <div class="pad">
+    <div class="brandmark"><div class="m"><svg><use href="#i-grid"/></svg></div><b>AppHub</b><span class="tag ghost">Workload Overview</span></div>
+    <h1>비개발자를 위한<strong>사내 앱 배포 플랫폼</strong></h1>
+    <p class="lede">Kiro로 만든 앱을 웹 화면 하나에서<br>저장소 연결 → 배포 → 상태 확인까지 처리합니다.</p>
+    <div class="presenter"><b>이다은</b><span>Solutions Architect, AWS</span></div>
+  </div>
+  <div class="laptop"><div class="scr"><img src="assets/shots/02-dashboard.png" alt="AppHub 대시보드"></div><div class="base"></div></div>
+</section>
+
+<!-- ═══════════════════ 02 AT A GLANCE ═══════════════════ -->
+<section class="slide" data-nav="한눈에 보기" data-group="개요">
+  <div class="glow tr"></div>
+  <style>
+    .gl-flow { display:grid; grid-template-columns: 250px 34px 1fr 34px 290px; align-items:stretch; }
+    .gl-flow .chev { width:auto; }
+    .gl-flow .chev svg { width:22px; height:22px; }
+    .persona { display:flex; gap:12px; align-items:flex-start; padding:12px 14px; }
+    .persona .ico-box { width:44px; height:44px; }
+    .persona b { font-size:15px; }
+    .persona .d { font-size:12.5px; color:var(--muted); margin-top:3px; line-height:1.45; }
+    .hub { border-radius:18px; padding:14px 16px 16px; color:#fff; background: linear-gradient(135deg, #3B2BB8, #6842FF 55%, #2FA6E8); box-shadow: 0 18px 40px -18px rgba(70,60,220,.6); display:flex; flex-direction:column; gap:10px; }
+    .hub .hd { display:flex; align-items:center; gap:10px; }
+    .hub .hd .m { width:34px; height:34px; border-radius:9px; background:rgba(255,255,255,.18); display:grid; place-items:center; }
+    .hub .hd .m svg { width:19px; height:19px; stroke:#fff; }
+    .hub .hd b { color:#fff; font-size:18px; }
+    .hub .hd span { font-size:12px; opacity:.8; }
+    .hub .cap4 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .hub .c { background:rgba(255,255,255,.13); border:1px solid rgba(255,255,255,.22); border-radius:11px; padding:9px 10px; display:flex; gap:9px; align-items:center; }
+    .hub .c svg { width:22px; height:22px; stroke:#fff; flex:none; }
+    .hub .c b { color:#fff; font-size:13.5px; display:block; }
+    .hub .c i { font-style:normal; font-size:11.5px; opacity:.82; }
+    .result { display:flex; flex-direction:column; gap:10px; }
+    .urlbar { display:flex; align-items:center; gap:7px; background:#fff; border:1px solid var(--hair); border-radius:999px; padding:7px 12px; font:12px var(--font-mono); color:var(--ink); box-shadow:var(--shadow-card); }
+    .urlbar svg { width:14px; height:14px; stroke:#0B7A5C; }
+    .kpis { display:grid; grid-template-columns:repeat(6,1fr); gap:10px; }
+    .kpis .kpi { padding:11px 12px; display:flex; flex-direction:column; gap:2px; }
+    .kpis .kpi .v { font-size:28px; }
+    .kpis .kpi .l { font-size:12.5px; margin-top:0; font-weight:600; color:var(--ink); }
+    .kpis .kpi .d { font-size:10.5px; }
+  </style>
+  <div class="pad">
+    <div class="kicker">한눈에 보기</div>
+    <h2 class="s-title">코드 저장소만 연결하면 빌드·배포·접속 주소·운영까지 플랫폼이 처리합니다</h2>
+    <div class="body" style="gap:18px;justify-content:center">
+      <div class="gl-flow">
+        <div class="col" style="gap:10px">
+          <div class="cap" style="font:700 11px var(--font-display);letter-spacing:.06em;color:var(--g3)">누가</div>
+          <div class="card persona"><div class="ico-box"><svg class="ico"><use href="#i-user"/></svg></div><div><b>사용자 (비개발자)</b><div class="d">Kiro로 코드 작성 → push<br>웹에서 생성·배포·모니터링</div></div></div>
+          <div class="card persona"><div class="ico-box" style="background:rgba(47,166,232,.12)"><svg class="ico" style="stroke:#1F8FD0"><use href="#i-shield"/></svg></div><div><b>관리자</b><div class="d">크기 프리셋 · 권한 템플릿<br>사용자 · 플랫폼 설정</div></div></div>
+          <div class="row center" style="gap:6px;flex-wrap:wrap"><span class="tag ghost"><svg class="ico" style="width:13px;height:13px"><use href="#i-sliders"/></svg>질문 7개 마법사</span><span class="tag ghost">AWS 용어 없음</span></div>
+        </div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="hub">
+          <div class="hd"><div class="m"><svg><use href="#i-grid"/></svg></div><div><b>AppHub</b><div><span>플랫폼이 자동 처리</span></div></div></div>
+          <div class="cap4">
+            <div class="c"><svg><use href="#i-rocket"/></svg><div><b>자동 검사 · 빌드 · 배포</b><i>push 할 때마다</i></div></div>
+            <div class="c"><svg><use href="#i-lock"/></svg><div><b>HTTPS 주소 발급</b><i>{서브도메인}.apps.{회사도메인}</i></div></div>
+            <div class="c"><svg><use href="#i-moon"/></svg><div><b>잠자기 · 깨우기</b><i>미사용 시 0대, 첫 요청 시 기동</i></div></div>
+            <div class="c"><svg><use href="#i-alert"/></svg><div><b>친절한 실패 안내</b><i>유형별 한국어 + Kiro 요청 문구</i></div></div>
+          </div>
+          <div class="row center" style="gap:8px;font-size:11.5px;opacity:.9;flex-wrap:wrap">
+            <span style="color:#fff">앱 1개 =</span>
+            <span class="tag" style="background:rgba(255,255,255,.2)">pipeline 스택</span><span style="color:#fff">+</span><span class="tag" style="background:rgba(255,255,255,.2)">runtime 스택</span>
+            <span style="color:#fff;opacity:.85">(CloudFormation)</span>
+          </div>
+        </div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="result">
+          <div class="cap" style="font:700 11px var(--font-display);letter-spacing:.06em;color:var(--g3)">결과</div>
+          <div class="urlbar"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>https://chat-bot.apps.회사도메인</div>
+          <div class="shot" style="border-radius:10px"><img src="assets/shots/02-dashboard.png" alt="" style="height:128px;object-fit:cover;object-position:top"></div>
+          <div class="row" style="gap:4px;flex-wrap:nowrap;font-size:11px"><span style="font-size:11px;padding:3px 7px" class="tag ok">실행 중</span><span style="font-size:11px;padding:3px 7px" class="tag grey">잠자는 중</span><span style="font-size:11px;padding:3px 7px" class="tag vio">깨우는 중</span><span style="font-size:11px;padding:3px 7px" class="tag warn">만드는 중</span><span style="font-size:11px;padding:3px 7px" class="tag err">실패</span></div>
+        </div>
+      </div>
+      <div class="row" style="gap:12px;align-items:stretch">
+        <div class="kpi row center" style="gap:16px;flex:1">
+          <div><div class="v">7<small>단계</small></div><div class="l" style="font-weight:600;color:var(--ink)">앱 생성 마법사</div></div>
+          <div class="row center" style="gap:4px;flex-wrap:wrap;font-size:11.5px">
+            <span class="tag ghost">저장소</span>›<span class="tag ghost">이름·공개 범위</span>›<span class="tag ghost">크기</span>›<span class="tag ghost">앱 유형</span>›<span class="tag ghost">환경변수</span>›<span class="tag ghost">가동 방식</span>›<span class="tag ghost">설정 안내</span>
+          </div>
+        </div>
+        <div class="kpi row center" style="gap:16px;width:400px">
+          <div><div class="v">4<small>종</small></div><div class="l" style="font-weight:600;color:var(--ink)">CDK 스택</div></div>
+          <div class="col" style="gap:5px;font:600 11px var(--font-mono)">
+            <div class="row" style="gap:5px"><span class="tag vio">network</span><span class="tag vio">platform</span><span class="small muted" style="font-family:var(--font-body)">stage당 1회</span></div>
+            <div class="row" style="gap:5px"><span class="tag" style="background:#E0F2FE;color:#0B6AA8">pipeline</span><span class="tag" style="background:#E0F2FE;color:#0B6AA8">runtime</span><span class="small muted" style="font-family:var(--font-body)">앱마다</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="row center small muted" style="gap:8px;flex-wrap:wrap">
+        <svg class="ico" style="width:16px;height:16px;stroke:var(--muted)"><use href="#i-layers"/></svg>모노레포
+        <span class="tag ghost"><code>infra/</code> CDK</span><span class="tag ghost"><code>backend/</code> Python 3.13</span><span class="tag ghost"><code>frontend/</code> React</span><span class="tag ghost"><code>kiro-config/</code> 배포 표준</span><span class="tag ghost"><code>e2e/</code> 테스트</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 03 PRINCIPLES ═══════════════════ -->
+<section class="slide" data-nav="설계 원칙 4가지" data-group="개요">
+  <style>
+    .pr { display:flex; flex-direction:column; gap:10px; padding:16px; }
+    .pr .top { display:flex; align-items:center; gap:10px; }
+    .pr .top .ico-box { width:46px; height:46px; border-radius:13px; }
+    .pr .top .ico-box .ico { width:24px; height:24px; }
+    .pr .top .n { font:700 12px var(--font-mono); color:var(--faint); }
+    .pr h4 { font-size:17px; }
+    .pr .one { font-size:13px; color:var(--muted); line-height:1.45; min-height:38px; }
+    .mini { background:var(--surface); border:1px solid var(--hair-soft); border-radius:12px; padding:14px 12px; display:flex; flex-direction:column; justify-content:center; gap:10px; flex:1; }
+    .mini .lbl { font:700 10.5px var(--font-display); letter-spacing:.05em; color:var(--faint); text-transform:uppercase; }
+    .pair { display:grid; grid-template-columns: 1fr 14px 1.15fr; align-items:center; gap:4px; font-size:12px; }
+    .pair .u { background:#fff; border:1px solid var(--hair); border-radius:8px; padding:5px 7px; text-align:center; color:var(--ink); font-weight:600; }
+    .pair .a { background:#EEF2FF; border:1px solid #D6DCFB; border-radius:8px; padding:5px 4px; text-align:center; font:10.5px var(--font-mono); white-space:nowrap; color:#3B2BB8; }
+    .mini-arr { color:var(--g4); text-align:center; font-weight:700; }
+    .stk { display:grid; grid-template-columns: 1fr 1fr; gap:6px; }
+    .stk div { border-radius:7px; padding:6px 4px; text-align:center; font:600 11px var(--font-mono); }
+    .stk .shared { background:#E9E5FF; color:#3B2BB8; }
+    .stk .app { background:#E0F2FE; color:#0B6AA8; }
+    .vflow { display:flex; flex-direction:column; align-items:stretch; gap:4px; font-size:12px; }
+    .vflow .b { display:flex; align-items:center; gap:7px; background:#fff; border:1px solid var(--hair); border-radius:8px; padding:5px 8px; }
+    .vflow .b img { width:20px; height:20px; }
+    .vflow .b em { font-style:normal; margin-left:auto; font-size:10.5px; color:var(--muted); }
+    .vflow .dn { text-align:center; color:var(--g4); font-size:11px; line-height:1; }
+    .errc { background:#FFF4F6; border:1px solid #F6C7D2; border-radius:9px; padding:7px 9px; font-size:11.5px; color:#B4153A; display:flex; gap:6px; align-items:center; }
+    .errc svg { width:15px; height:15px; stroke:#B4153A; flex:none; }
+    .bubble { background:#fff; border:1px solid #D6DCFB; border-radius:12px 12px 12px 3px; padding:7px 10px; font-size:12px; color:var(--ink); }
+  </style>
+  <div class="pad">
+    <div class="kicker">설계 원칙</div>
+    <h2 class="s-title">4가지 원칙과 코드상 구현 위치</h2>
+    <div class="body vc g4" style="gap:14px">
+      <div class="card pr">
+        <div class="top"><div class="ico-box"><svg class="ico"><use href="#i-sliders"/></svg></div></div>
+        <h4>기술 옵션 최소화</h4>
+        <div class="one">AWS 용어 대신 쉬운 선택지. 선택지는 관리자 프리셋으로 제한</div>
+        <div class="mini">
+          <div class="lbl">화면 → 내부</div>
+          <div class="pair"><span class="u">크기: 보통 (예)</span><span class="mini-arr">→</span><span class="a">1vCPU·2GB</span></div>
+          <div class="pair"><span class="u">사내에서만</span><span class="mini-arr">→</span><span class="a">internal ALB</span></div>
+          <div class="pair"><span class="u">AI 기능 사용</span><span class="mini-arr">→</span><span class="a">IAM 정책</span></div>
+        </div>
+      </div>
+      <div class="card pr">
+        <div class="top"><div class="ico-box"><svg class="ico"><use href="#i-layers"/></svg></div></div>
+        <h4>모든 인프라는 코드로</h4>
+        <div class="one">플랫폼·사용자 앱 모두 CDK 단일 코드베이스, 배포는 멱등</div>
+        <div class="mini">
+          <div class="lbl">stage당 1회</div>
+          <div class="stk"><div class="shared">network</div><div class="shared">platform</div></div>
+          <div class="lbl">앱마다 × N</div>
+          <div class="stk"><div class="app">pipeline</div><div class="app">runtime</div></div>
+          <div class="row" style="gap:5px;flex-wrap:wrap"><span class="tag ghost">앱 삭제 시 관련 리소스 일괄 정리</span><span class="tag ghost">설치 명령은 여러 번 실행해도 안전</span></div>
+        </div>
+      </div>
+      <div class="card pr">
+        <div class="top"><div class="ico-box"><svg class="ico"><use href="#i-cloud"/></svg></div></div>
+        <h4>메인 서버 무부하</h4>
+        <div class="one">빌드·배포는 CodeBuild에서. API는 접수와 상태 조회만</div>
+        <div class="mini">
+          <div class="lbl">앱 생성 시</div>
+          <div class="vflow">
+            <div class="b"><img src="assets/aws/lambda.svg" alt="">API<em>접수 · 조회</em></div>
+            <div class="dn">▼</div>
+            <div class="b"><img src="assets/aws/sfn.svg" alt="">Step Functions<em>장기 작업</em></div>
+            <div class="dn">▼</div>
+            <div class="b"><img src="assets/aws/codebuild.svg" alt="">CodeBuild<em>cdk deploy</em></div>
+          </div>
+          <div class="row center" style="gap:6px"><img src="assets/aws/eventbridge.svg" width="18" alt=""><span class="small" style="line-height:1.4">배포 상태는 이벤트로 갱신<br><b>API 서버 폴링 없음</b></span></div>
+        </div>
+      </div>
+      <div class="card pr">
+        <div class="top"><div class="ico-box"><svg class="ico"><use href="#i-alert"/></svg></div></div>
+        <h4>친절한 실패</h4>
+        <div class="one">실패를 7가지 유형으로 분류해 한국어 안내로 표시</div>
+        <div class="mini">
+          <div class="errc"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><use href="#i-alert"/></svg><b style="color:#B4153A;font-family:var(--font-mono);font-size:11px">BUILD_FAILED</b></div>
+          <div class="dn" style="text-align:center;color:var(--g4);font-size:11px">▼</div>
+          <div class="bubble">로그를 복사해 Kiro에게 <b>"이 빌드 오류를 고쳐줘"</b></div>
+          <div class="row" style="gap:5px;flex-wrap:wrap"><span class="tag ghost">사용자: 쉬운 문장</span><span class="tag ghost">관리자: 상세 원인</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 04 USER JOURNEY ═══════════════════ -->
+<section class="slide" data-nav="사용자 여정" data-group="개요">
+  <div class="pad">
+    <div class="kicker">사용자 여정</div>
+    <h2 class="s-title">사용자는 6단계, 나머지는 플랫폼이 자동 처리</h2>
+    <div class="body vc" style="gap:18px">
+      <div class="flow">
+        <div class="step"><div class="h"><span class="num">1</span><b>Kiro 설정 설치</b></div><p>Mac/Windows zip 다운로드 → 프로젝트에 복사 → 커밋 검사 설치</p><div class="svc"><svg class="ico" style="width:16px;height:16px"><use href="#i-download"/></svg>steering + pre-commit</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">2</span><b>코드 작성·push</b></div><p>Kiro가 배포 표준(Dockerfile, 8080, /health)에 맞춰 작성</p><div class="svc"><svg class="ico" style="width:16px;height:16px"><use href="#i-git"/></svg>git push</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">3</span><b>저장소 연결</b></div><p>AWS 저장소 / GitHub(구현 필요) / GitLab(구현 필요) 중 관리자가 허용한 것</p><div class="svc"><img src="assets/aws/codecommit.svg" alt="">Code Repository</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">4</span><b>앱 만들기</b></div><p>7단계 마법사로 이름·주소·크기·유형·설정값·가동 방식 선택</p><div class="svc"><svg class="ico" style="width:16px;height:16px"><use href="#i-sliders"/></svg>POST /apps</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step hl"><div class="h"><span class="num">5</span><b>자동 배포</b></div><p>검사 → 빌드 → 배포 → 확인. 진행 단계가 화면에 표시</p><div class="svc"><img src="assets/aws/codepipeline.svg" alt="">플랫폼 자동</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">6</span><b>접속·운영</b></div><p>주소 접속, 로그·지표 확인, 재시작·되돌리기·삭제</p><div class="svc"><svg class="ico" style="width:16px;height:16px"><use href="#i-eye"/></svg>앱 상세 화면</div></div>
+      </div>
+      <div class="row" style="gap:16px">
+        <div class="card soft grow"><div class="cap">수정 반복 루프</div>
+          <div class="row center" style="gap:10px;font-size:14px;flex-wrap:wrap">
+            <span class="tag ghost">Kiro로 코드 수정</span>→<span class="tag ghost">git commit (pre-commit 검사)</span>→<span class="tag ghost">git push</span>→<span class="tag">자동 재배포 (자동 배포 켜짐 시)</span>→<span class="tag ghost">배포 이력에 기록</span>
+          </div></div>
+        <div class="card soft" style="width:380px"><div class="cap">실패 시 루프</div>
+          <div style="font-size:14px;line-height:1.55">화면의 안내 문구·로그를 복사 → Kiro에 붙여넣기 → 수정 후 push</div></div>
+      </div>
+      <div class="g3">
+        <div class="card" style="padding:12px 16px"><div class="row center" style="gap:10px"><div class="ico-box"><svg class="ico"><use href="#i-user"/></svg></div><div><b>사용자</b><div class="small muted">자기 앱만 조회·관리 (소유자 검사)</div></div></div></div>
+        <div class="card" style="padding:12px 16px"><div class="row center" style="gap:10px"><div class="ico-box"><svg class="ico"><use href="#i-shield"/></svg></div><div><b>관리자</b><div class="small muted">전체 앱 + CONFIG(프리셋·권한·설정)</div></div></div></div>
+        <div class="card" style="padding:12px 16px"><div class="row center" style="gap:10px"><div class="ico-box"><svg class="ico"><use href="#i-settings"/></svg></div><div><b>플랫폼</b><div class="small muted">스택 생성·빌드·배포·잠자기/깨우기</div></div></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ DIVIDER 1 ═══════════════════ -->
+<section class="slide divider" data-nav="01 · 사용자·관리자 화면" data-group="01 화면">
+  <div class="pad">
+    <div class="sn">SECTION 01</div>
+    <h2>사용자·관리자 화면</h2>
+    <p>실제 앱(미리보기 모드) 화면 캡처</p>
+    <div class="chips"><span>대시보드</span><span>앱 생성 마법사</span><span>앱 상세</span><span>실패 안내</span><span>저장소 연결 · Kiro 설정</span><span>관리자 콘솔</span></div>
+  </div>
+  <div class="sweep-line"></div>
+</section>
+
+<!-- ═══════════════════ 05 DASHBOARD ═══════════════════ -->
+<section class="slide" data-nav="대시보드" data-group="01 화면">
+  <div class="pad">
+    <div class="kicker">사용자 · 내 앱 대시보드</div>
+    <h2 class="s-title">내 앱의 상태를 카드 한 장씩으로 표시</h2>
+    <div class="body vc row zoomable" style="gap:26px">
+      <div style="width:760px;position:relative">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i><span>apphub · 내 앱</span></div><img src="assets/shots/02-dashboard.png" alt="대시보드"></div>
+        <div class="pin" style="left:196px;top:150px">1</div>
+        <div class="pin" style="left:6px;top:206px">2</div>
+        <div class="pin" style="left:546px;top:34px">3</div>
+        <div class="pin" style="left:648px;top:336px">4</div>
+      </div>
+      <div class="col grow" style="gap:14px">
+        <div class="row" style="gap:10px"><span class="num">1</span><div><b>상태 배지</b>
+          <div class="row mt8" style="gap:6px;flex-wrap:wrap"><span class="tag ok">실행 중</span><span class="tag grey">잠자는 중</span><span class="tag vio">깨우는 중</span><span class="tag warn">만드는 중</span><span class="tag err">실패</span></div>
+          <div class="small muted mt8">앱 상태(status)와 가동 상태(runtimeState)를 합쳐 하나로 표시</div></div></div>
+        <div class="row" style="gap:10px"><span class="num">2</span><div><b>접속 주소</b><div class="small muted"><code>{서브도메인}.apps.{회사도메인}</code> — 앱마다 고유</div></div></div>
+        <div class="row" style="gap:10px"><span class="num">3</span><div><b>앱 개수 한도</b><div class="small muted">"내 앱 5 / 5" — 관리자 설정 <code>userAppQuota</code> (기본 5)</div></div></div>
+        <div class="row" style="gap:10px"><span class="num">4</span><div><b>새 앱 만들기</b><div class="small muted">마법사 진입 (#/apps/new)</div></div></div>
+        <div class="card soft mt8"><div class="cap">카드 메타 정보</div><div class="small">최근 변경 · 크기(프리셋 표시명) · 저장소 종류</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 06 WIZARD SCREENS ═══════════════════ -->
+<section class="slide" data-nav="앱 생성 마법사 (화면)" data-group="01 화면">
+  <div class="pad">
+    <div class="kicker">사용자 · 앱 생성 마법사</div>
+    <h2 class="s-title">7단계 질문으로 앱 하나를 정의</h2>
+    <div class="body vc g3 zoomable" style="gap:16px 18px">
+      <div><div class="shot clip" style="--h:196px"><img src="assets/shots/w1.png" alt=""></div><div class="shot-cap"><span class="num">1</span><b>저장소</b> AWS 저장소 · 레포 · 브랜치</div></div>
+      <div><div class="shot clip" style="--h:196px"><img src="assets/shots/w2.png" alt=""></div><div class="shot-cap"><span class="num">2</span><b>이름·공개 범위</b> 주소 실시간 중복 확인</div></div>
+      <div><div class="shot clip" style="--h:196px"><img src="assets/shots/w3.png" alt=""></div><div class="shot-cap"><span class="num">3</span><b>서버 스펙</b> 관리자 프리셋 (작게/보통/크게)</div></div>
+      <div><div class="shot clip" style="--h:196px"><img src="assets/shots/w4.png" alt=""></div><div class="shot-cap"><span class="num">4</span><b>앱 유형</b> IAM 권한 템플릿</div></div>
+      <div><div class="shot clip" style="--h:196px"><img src="assets/shots/w5.png" alt=""></div><div class="shot-cap"><span class="num">5</span><b>환경변수</b> '비밀로 보관' 토글</div></div>
+      <div><div class="shot clip" style="--h:196px"><img src="assets/shots/w6.png" alt=""></div><div class="shot-cap"><span class="num">6</span><b>가동 방식</b> 시간표 편집 + 자동 배포 → <span class="num" style="width:20px;height:20px;font-size:11px">7</span> Kiro 사용 안내</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 07 WIZARD MAPPING ═══════════════════ -->
+<section class="slide" data-nav="마법사 질문 ↔ AWS 리소스" data-group="01 화면">
+  <div class="pad">
+    <div class="kicker">사용자 · 앱 생성 마법사</div>
+    <h2 class="s-title">화면의 질문은 내부적으로 이렇게 바뀝니다</h2>
+    <div class="body vc">
+      <table class="tbl" style="font-size:14.5px">
+        <thead><tr><th style="width:120px">단계</th><th style="width:300px">사용자에게 보이는 질문 / 선택지</th><th>플랫폼이 만드는 것</th><th style="width:150px">결정 주체</th></tr></thead>
+        <tbody>
+          <tr><td class="k"><span class="num">1</span> 저장소</td><td>어떤 코드 저장소를 배포할까요?</td><td>CodePipeline Source — CodeCommit 또는 CodeConnections(GitHub/GitLab), 브랜치</td><td>사용자 (허용 저장소는 관리자)</td></tr>
+          <tr><td class="k"><span class="num">2</span> 이름·공개 범위</td><td>앱 이름 · 접속 주소 · <b>사내에서만</b>(권장) / 인터넷</td><td>서브도메인 예약(DynamoDB 조건부 쓰기) · Route 53 레코드(private/public zone) · <b>internal / internet-facing ALB</b> 호스트 규칙</td><td>사용자 (인터넷 공개 허용은 관리자)</td></tr>
+          <tr><td class="k"><span class="num">3</span> 크기</td><td>작게 / 보통 / 크게</td><td>Fargate <b>CPU·메모리</b>, 최소/최대 태스크 수, 오토스케일 기준(CPU% 또는 요청 수)</td><td>관리자 프리셋</td></tr>
+          <tr><td class="k"><span class="num">4</span> 앱 유형</td><td>기본(권한 없음) / AI 기능 사용</td><td>ECS <b>Task Role 인라인 IAM 정책</b> (예: <code>bedrock:InvokeModel</code>). 기본은 정책 없음</td><td>관리자 권한 템플릿</td></tr>
+          <tr><td class="k"><span class="num">5</span> 환경변수</td><td>이름 · 값 · '비밀로 보관'</td><td>일반값 → 컨테이너 환경변수 / 비밀값 → <b>Secrets Manager</b> 저장 후 ECS <code>secrets</code>로 주입 (DB에는 ARN만)</td><td>사용자</td></tr>
+          <tr><td class="k"><span class="num">6</span> 가동 방식</td><td>쓸 때만 켜기(권장) / 항상 켜두기 / 시간표대로</td><td>유휴 알람(15분 무요청) · EventBridge Scheduler(start/stop) · 상시 가동</td><td>사용자</td></tr>
+          <tr><td class="k"><span class="num">6</span> 자동 배포</td><td>코드를 올릴 때마다 자동 배포 (토글)</td><td>Pipeline 소스 트리거 on/off (CodeCommit: EVENTS/NONE, Connections: <code>triggerOnPush</code>)</td><td>사용자</td></tr>
+          <tr><td class="k"><span class="num">7</span> 설정 안내</td><td>배포 표준 안내 · Kiro 설정 링크</td><td>— (생성 요청 접수 후 표시. 앱은 <code>CREATING</code>)</td><td>—</td></tr>
+        </tbody>
+      </table>
+      <div class="small muted mt12">네트워크(VPC)는 선택 단계 없이 플랫폼 VPC에 자동 배치 — <code>CreateWizard.tsx</code>, <code>handlers/apps.py</code>, <code>app-runtime.ts</code></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 08 APP DETAIL ═══════════════════ -->
+<section class="slide" data-nav="앱 상세 4개 탭" data-group="01 화면">
+  <div class="pad">
+    <div class="kicker">사용자 · 앱 상세</div>
+    <h2 class="s-title">앱 하나를 개요 · 배포 이력 · 모니터링 · 설정 탭으로 관리</h2>
+    <div class="body vc row" style="gap:20px">
+      <div class="g2 grow zoomable" style="gap:12px 14px;align-content:start">
+        <div><div class="shot clip" style="--h:206px"><img src="assets/shots/t-overview.png" alt=""></div><div class="shot-cap"><b>개요</b> 상태·주소·저장소·크기·공개 범위</div></div>
+        <div><div class="shot clip" style="--h:206px"><img src="assets/shots/t-deploy.png" alt=""></div><div class="shot-cap"><b>배포 이력</b> 자동/수동, 커밋 SHA, 실행 로그</div></div>
+        <div><div class="shot clip" style="--h:206px"><img src="assets/shots/t-monitor.png" alt=""></div><div class="shot-cap"><b>모니터링</b> 요청 수 · CPU · 메모리 (1h/6h/24h/7d)</div></div>
+        <div><div class="shot clip" style="--h:206px"><img src="assets/shots/t-settings.png" alt=""></div><div class="shot-cap"><b>설정</b> 환경변수·비밀값·가동 방식·자동 배포</div></div>
+      </div>
+      <div class="col" style="width:330px;gap:10px">
+        
+        <div class="card soft"><div class="cap">데이터 출처</div>
+          <ul class="bl sm">
+            <li>로그: CloudWatch Logs <code>/apphub/{stage}/app/{appId}</code></li>
+            <li>지표: <code>GetMetricData</code> 1회 — ALB RequestCountPerTarget, ECS CPU/Memory</li>
+            <li>잠자는 앱은 빈 시계열 반환</li>
+          </ul></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 09b APP ACTIONS ═══════════════════ -->
+<section class="slide" data-nav="앱 상세 · 액션" data-group="01 화면">
+  <div class="pad">
+    <div class="kicker">사용자 · 앱 상세 액션</div>
+    <h2 class="s-title">앱 관리 버튼 4개와 실제 동작</h2>
+    <div class="body vc zoomable" style="gap:16px">
+      <div class="g2" style="gap:16px">
+        <div><div class="shot" style="position:relative"><div class="bar"><i></i><i></i><i></i><span>앱 상세 · 상단</span></div><img src="assets/shots/a-head.png" alt="">
+          <div class="pin" style="left:419px;top:23px;width:20px;height:20px;font-size:11px">1</div><div class="pin" style="left:474px;top:23px;width:20px;height:20px;font-size:11px">2</div><div class="pin" style="left:524px;top:23px;width:20px;height:20px;font-size:11px">3</div></div>
+          <div class="shot-cap"><b>앱 상세</b> 상단 버튼 ①②③</div></div>
+        <div><div class="shot" style="position:relative"><div class="bar"><i></i><i></i><i></i><span>배포 상세 · 성공한 배포</span></div><img src="assets/shots/a-rollback.png" alt="">
+          <div class="pin" style="left:500px;top:48px">4</div></div>
+          <div class="shot-cap"><b>배포 상세</b> 성공 배포에만 ④ 표시</div></div>
+      </div>
+      <div class="row" style="gap:16px;align-items:flex-start">
+        <table class="tbl grow" style="font-size:12.6px">
+          <thead><tr><th style="width:104px">버튼</th><th style="width:220px">누르면 화면에서</th><th>내부에서 일어나는 일</th></tr></thead>
+          <tbody>
+            <tr><td class="k"><span class="num">1</span> 지금 배포</td><td>확인창 없이 바로 접수<br>배포 이력에 '대기 중' 추가</td><td>앱 전용 파이프라인을 처음부터 다시 실행 → 최신 코드 가져오기 · 검사 · <b>새 이미지 빌드</b> · 배포. 몇 분 걸리고 배포 기록(수동)이 남음</td></tr>
+            <tr><td class="k"><span class="num">2</span> 재시작</td><td>"앱을 다시 시작하고 있어요. 잠시 후(약 1분) 새로고침해 주세요."</td><td>코드·이미지는 그대로 두고 <b>실행 중인 서버만 새로 띄워 교체</b> (ECS forceNewDeployment). 빌드 없음, 배포 기록 없음. 잠자는 앱은 불가</td></tr>
+            <tr><td class="k"><span class="num">3</span> 삭제</td><td>앱 이름을 정확히 입력해야 '삭제할게요'가 눌림</td><td>앱이 '삭제 중'으로 바뀌고 <b>실행 환경 → 빌드 환경 순으로 AWS 리소스 삭제</b>. 이어서 비밀값 삭제, 접속 주소·로드밸런서 자리 반납, 앱 기록 삭제. 되돌릴 수 없음</td></tr>
+            <tr><td class="k"><span class="num">4</span> 되돌리기</td><td>"다시 빌드하지 않아 빠르게 적용돼요" 확인창</td><td>그 배포 때 만든 이미지(커밋 SHA)가 남아 있는지 확인 → <b>그 이미지로 실행 환경만 다시 배포</b>. 빌드를 건너뛰어 빠름. 이미지는 최근 5개만 보관</td></tr>
+          </tbody>
+        </table>
+        <div class="col" style="width:250px;gap:10px">
+          <div><div class="shot"><img src="assets/shots/a-delete-dlg.png" alt=""></div><div class="shot-cap"><span class="num">3</span><b>삭제</b> 확인창</div></div>
+          <div><div class="shot"><img src="assets/shots/a-rollback-dlg.png" alt=""></div><div class="shot-cap"><span class="num">4</span><b>되돌리기</b> 확인창</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 09 FAILURE UX ═══════════════════ -->
+<section class="slide" data-nav="친절한 실패 안내" data-group="01 화면">
+  <div class="pad">
+    <div class="kicker">사용자 · 실패 안내</div>
+    <h2 class="s-title">실패 원인을 7가지로 분류하고, Kiro에게 전달할 문장까지 안내</h2>
+    <div class="body vc zoomable" style="gap:16px">
+      <div class="g2" style="gap:18px;align-items:start">
+        <div><div class="shot"><div class="bar"><i></i><i></i><i></i><span>배포 진행 상황 · 빌드 실패</span></div><img src="assets/shots/08b-deploy-failed-crop.png" alt="배포 실패 상세"></div>
+          <div class="shot-cap"><span class="num">1</span><b>배포 실패</b> 안내 문구 + 로그 마지막 부분</div></div>
+        <div><div class="shot"><div class="bar"><i></i><i></i><i></i><span>앱 상세 · 앱 생성 실패</span></div><img src="assets/shots/t-failed-head.png" alt="실패한 앱"></div>
+          <div class="shot-cap"><span class="num">2</span><b>앱 생성 실패</b> 쉬운 문장 + 다음에 할 일</div></div>
+      </div>
+      <table class="tbl" style="font-size:14px">
+        <thead><tr><th style="width:230px">실패 유형</th><th style="width:250px">어디서 실패했나</th><th>화면 안내 (Kiro에게 할 말)</th></tr></thead>
+        <tbody>
+          <tr><td class="k mono" style="font-size:12.5px">DOCKERFILE_MISSING</td><td>정적 검사 — Dockerfile 없음</td><td>"이 앱을 배포 표준에 맞게 준비해줘" 요청 후 push</td></tr>
+          <tr><td class="k mono" style="font-size:12.5px">DOCKERFILE_INVALID</td><td>정적 검사 — 포트·금지 항목</td><td>"배포 표준(8080 포트, /health 응답)에 맞춰줘"</td></tr>
+          <tr><td class="k mono" style="font-size:12.5px">BUILD_FAILED</td><td>이미지 빌드</td><td>로그 마지막 부분을 복사해 "이 빌드 오류를 고쳐줘"</td></tr>
+          <tr><td class="k mono" style="font-size:12.5px">HEALTHCHECK_FAILED</td><td>시험 실행 — 60초 안에 응답 없음</td><td>"/health 경로에 200 응답을 추가해줘"</td></tr>
+          <tr><td class="k mono" style="font-size:12.5px">DEPLOY_FAILED</td><td>실행 환경 배포</td><td>새 버전 적용 실패 → 이전 버전으로 자동 되돌림</td></tr>
+          <tr><td class="k mono" style="font-size:12.5px">SOURCE_UNAVAILABLE</td><td>코드 저장소 접근</td><td>'저장소 연결' 메뉴에서 연결 상태 확인</td></tr>
+          <tr><td class="k mono" style="font-size:12.5px">INTERNAL_ERROR</td><td>그 외</td><td>플랫폼 내부 문제 — 관리자에게 문의</td></tr>
+        </tbody>
+      </table>
+      <div class="row center" style="gap:10px;font-size:13.5px">
+        <span class="tag ghost" style="font-size:12.5px"><svg class="ico" style="width:14px;height:14px"><use href="#i-user"/></svg>사용자</span><span>단계별 쉬운 문장 (<code>failureReason</code>)</span>
+        <span class="tag ghost" style="font-size:12.5px;margin-left:18px"><svg class="ico" style="width:14px;height:14px"><use href="#i-shield"/></svg>관리자만</span><span>상세 원인 (<code>failureDetail</code>) — ARN·비밀값 가림, 500자 제한</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 10 CONNECTIONS + KIRO ═══════════════════ -->
+<section class="slide" data-nav="저장소 연결 · Kiro 설정" data-group="01 화면">
+  <div class="pad">
+    <div class="kicker">사용자 · 저장소 연결 · Kiro 설정</div>
+    <h2 class="s-title">코드 저장소 연결과 Kiro 배포 표준 설치를 화면에서 안내</h2>
+    <div class="body vc g2 zoomable" style="gap:22px">
+      <div class="col" style="gap:12px">
+        <div class="shot clip" style="--h:300px"><div class="bar"><i></i><i></i><i></i><span>저장소 연결</span></div><img src="assets/shots/09-connections.png" alt=""></div>
+        <div class="card">
+          <h4><svg class="ico"><use href="#i-git"/></svg>저장소 연결</h4>
+          <ul class="bl mt8" style="gap:7px">
+            <li><b>AWS 저장소(CodeCommit)</b> — 바로 사용 가능, 화면에서 새 저장소 생성</li>
+            <li>저장소 이름은 <code>{소유자}-{이름}</code>으로 자동 부여, 내 저장소만 보임</li>
+            <li>GitHub · GitLab — 코드상 지원, 현재 설정에서 <span class="tag grey">비활성</span></li>
+          </ul>
+        </div>
+      </div>
+      <div class="col" style="gap:12px">
+        <div class="shot clip" style="--h:300px"><div class="bar"><i></i><i></i><i></i><span>Kiro 설정 다운로드</span></div><img src="assets/shots/10-kiro-setup.png" alt=""></div>
+        <div class="card">
+          <h4><svg class="ico"><use href="#i-download"/></svg>Kiro 설정 다운로드</h4>
+          <ul class="bl mt8" style="gap:7px">
+            <li>Mac · Windows용 zip 2종 — 웹에서 바로 다운로드</li>
+            <li>들어 있는 것: <b>배포 표준 지침</b>(steering) · <b>커밋 검사</b>(pre-commit) · 설치 스크립트</li>
+            <li>압축 풀기 → 프로젝트에 복사 → 설치 1회 → 이후 커밋마다 자동 검사</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 11 ADMIN ═══════════════════ -->
+<section class="slide" data-nav="관리자 콘솔" data-group="01 화면">
+  <div class="pad">
+    <div class="kicker">관리자 · 콘솔</div>
+    <h2 class="s-title">관리자는 사용자가 고를 수 있는 선택지 자체를 정의</h2>
+    <div class="body vc zoomable" style="gap:18px">
+      <style>
+        .adm-tabs { display:flex; flex-direction:column; gap:7px; }
+        .adm-tabs .t { display:grid; grid-template-columns: 30px 108px 1fr; align-items:center; gap:8px; background:#fff; border:1px solid var(--hair); border-radius:10px; padding:8px 12px; font-size:13.5px; line-height:1.4; }
+        .adm-tabs .t .ico { width:19px; height:19px; }
+        .adm-tabs .t b { font-size:14px; }
+        .pair2 { display:grid; grid-template-columns: 1fr 28px 1fr; align-items:center; }
+      </style>
+      <div class="row" style="gap:20px;align-items:flex-start">
+        <div style="width:560px"><div class="shot clip" style="--h:262px"><div class="bar"><i></i><i></i><i></i><span>AppHub Admin · 전체 현황</span></div><img src="assets/shots/ad-overview.png" alt=""></div>
+          <div class="shot-cap"><b>전체 현황</b> 모든 사용자의 앱을 한 화면에서</div></div>
+        <div class="adm-tabs grow">
+          <div class="t"><svg class="ico"><use href="#i-grid"/></svg><b>전체 현황</b><span>모든 사용자 앱 · 상태별 필터 · 강제 재우기 · 삭제</span></div>
+          <div class="t"><svg class="ico"><use href="#i-settings"/></svg><b>플랫폼 설정</b><span>허용 저장소 · 사용자당 앱 한도(기본 5) · 인터넷 공개 허용(기본 꺼짐)</span></div>
+          <div class="t"><svg class="ico"><use href="#i-sliders"/></svg><b>컴퓨팅 프리셋</b><span>이름 · CPU/메모리 · 최소/최대 대수 · 자동 확장 기준</span></div>
+          <div class="t"><svg class="ico"><use href="#i-key"/></svg><b>권한 템플릿</b><span>이름 + IAM 정책 — 사용자에게는 이름만 보임</span></div>
+          <div class="t"><svg class="ico"><use href="#i-users"/></svg><b>사용자</b><span>이메일 초대 · 관리자/사용자 권한 · 활성/비활성</span></div>
+          <div class="t"><svg class="ico"><use href="#i-net"/></svg><b>인프라 현황</b><span>로드밸런서별 공개 범위 · 연결된 앱 규칙 수</span></div>
+        </div>
+      </div>
+      <div>
+        <div class="row center" style="gap:8px;margin-bottom:8px"><span class="cap" style="font:700 11.5px var(--font-display);letter-spacing:.06em;color:var(--g3)">관리자가 정한 값 → 사용자 마법사의 선택지</span><span class="small muted">관리자 기능은 Cognito <code>admin</code> 그룹만 사용 가능</span></div>
+        <div class="g2" style="gap:20px">
+          <div class="pair2">
+            <div class="shot clip" style="--h:104px"><img src="assets/shots/ad-presets.png" alt=""></div><div class="chev" style="width:28px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+            <div class="shot clip" style="--h:104px"><img src="assets/shots/w3.png" alt=""></div>
+          </div>
+          <div class="pair2">
+            <div class="shot clip" style="--h:104px"><img src="assets/shots/ad-permissions.png" alt=""></div><div class="chev" style="width:28px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+            <div class="shot clip" style="--h:104px"><img src="assets/shots/w4.png" alt=""></div>
+          </div>
+          <div class="shot-cap" style="margin-top:-12px"><b>컴퓨팅 프리셋</b> → 마법사 3단계 '크기'</div>
+          <div class="shot-cap" style="margin-top:-12px"><b>권한 템플릿</b> → 마법사 4단계 '앱 유형'</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ DIVIDER 2 ═══════════════════ -->
+<section class="slide divider" data-nav="02 · 아키텍처" data-group="02 아키텍처">
+  <div class="pad">
+    <div class="sn">SECTION 02</div>
+    <h2>아키텍처</h2>
+    <p>컨트롤 플레인 · 파이프라인 계층 · 앱 호스팅 계층</p>
+    <div class="chips"><span>전체 구성도</span><span>CDK 스택 4종</span><span>네트워크·라우팅</span><span>API·데이터 모델</span></div>
+  </div>
+  <div class="sweep-line"></div>
+</section>
+
+<!-- ═══════════════════ 12 ARCHITECTURE ═══════════════════ -->
+<section class="slide" data-nav="전체 아키텍처" data-group="02 아키텍처">
+  <style>
+    .cv { position: relative; height: 486px; margin-top: 40px; }
+    .cv .node { position: absolute; width: 124px; margin-left: -62px; }
+    .cv .node img { width: 36px; height: 36px; }
+    .cv .node .pair { display: flex; gap: 4px; }
+    .cv .node .pair img { width: 32px; height: 32px; }
+    .cv .zone { position: absolute; left: 128px; right: 0; }
+    .cv svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+    .cv .actor { position: absolute; left: 0; width: 108px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 4px; }
+    .cv .actor .ico-box { width: 42px; height: 42px; }
+    .cv .actor b { font-size: 12.5px; }
+    .cv .actor span { font-size: 10.5px; color: var(--muted); line-height: 1.25; }
+    .cv .lbl { position: absolute; font-size: 10.5px; color: var(--g3); background: #fff; padding: 1px 7px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--g2) 30%, #fff); white-space: nowrap; transform: translate(-50%, -50%); font-weight: 600; }
+    .cv .lbl.g { color: var(--muted); border-color: var(--hair); font-weight: 500; }
+  </style>
+  <div class="pad" style="inset:44px 64px 30px">
+    <div class="kicker">아키텍처 · 전체 구성도</div>
+    <h2 class="s-title" style="font-size:27px;margin-top:8px">3개 계층 — 플랫폼은 1회 설치, 파이프라인·런타임은 앱마다 생성</h2>
+    <div class="cv">
+      <!-- zones -->
+      <div class="zone v" style="top:0;height:124px"><div class="zl">컨트롤 플레인 · apphub-{stage}-platform</div></div>
+      <div class="zone p" style="top:176px;height:118px"><div class="zl">파이프라인 계층 · 앱별 …-app-{appId}-pipeline</div></div>
+      <div class="zone o" style="top:346px;height:138px"><div class="zl">앱 호스팅 계층 · …-network (공유) + 앱별 …-app-{appId}-runtime</div></div>
+
+      <svg class="wires" viewBox="0 0 1152 486" preserveAspectRatio="none">
+        <g stroke="#6B7785" stroke-width="1.5" fill="none" marker-end="url(#ah)">
+          <!-- Z1 -->
+          <path d="M84 48 H 172"/>
+          <path d="M84 60 C 130 104, 250 104, 314 62"/>
+          <path d="M378 48 H 452"/>
+          <path d="M518 48 H 592"/>
+          <path d="M488 26 C 520 2, 880 2, 918 24"/>
+          <path d="M732 48 H 658"/>
+          <path d="M948 48 H 1012"/>
+          <!-- Z2 -->
+          <path d="M84 222 H 172"/>
+          <path d="M238 222 H 312"/>
+          <path d="M378 222 H 452"/>
+          <path d="M518 222 H 592"/>
+          <path d="M658 222 H 732"/>
+          <path d="M798 222 H 872"/>
+          <!-- Z3 -->
+          <path d="M84 392 H 172"/>
+          <path d="M238 392 H 312"/>
+          <path d="M378 392 H 452"/>
+          <path d="M592 392 H 518"/>
+          <path d="M798 392 H 872"/>
+          <path d="M1012 392 H 938"/>
+        </g>
+        <g stroke="#D600BA" stroke-width="1.6" fill="none" stroke-dasharray="5 4" marker-end="url(#ahp)">
+          <path d="M1045 100 V 176"/>
+          <path d="M905 268 V 346"/>
+          <path d="M345 200 V 150 H 765 V 102"/>
+        </g>
+        <g stroke="#6842FF" stroke-width="1.5" fill="none" stroke-dasharray="4 4" marker-end="url(#ahv)">
+          <path d="M345 438 C 345 480, 905 480, 905 438"/>
+        </g>
+      </svg>
+
+      <!-- actors -->
+      <div class="actor" style="top:20px"><div class="ico-box"><svg class="ico"><use href="#i-user"/></svg></div><b>비개발자</b><span>AppHub 웹 화면</span></div>
+      <div class="actor" style="top:194px"><div class="ico-box"><svg class="ico"><use href="#i-code"/></svg></div><b>Kiro</b><span>git push</span></div>
+      <div class="actor" style="top:364px"><div class="ico-box"><svg class="ico"><use href="#i-users"/></svg></div><b>앱 사용자</b><span>사내 / 인터넷</span></div>
+
+      <!-- Z1 nodes (icon center y=48) -->
+      <div class="node" style="left:205px;top:30px"><div class="pair"><img src="assets/aws/cloudfront.svg" alt=""><img src="assets/aws/s3.svg" alt=""></div><b>CloudFront + S3</b><span>React SPA</span></div>
+      <div class="node" style="left:345px;top:30px"><div class="pair"><img src="assets/aws/apigw.svg" alt=""><img src="assets/aws/cognito.svg" alt=""></div><b>API GW + Cognito</b><span>JWT authorizer</span></div>
+      <div class="node" style="left:485px;top:30px"><img src="assets/aws/lambda.svg" alt=""><b>Lambda · api</b><span>Python 3.13 / boto3</span></div>
+      <div class="node" style="left:625px;top:30px"><img src="assets/aws/dynamodb.svg" alt=""><b>DynamoDB</b><span>단일 테이블 + GSI 2</span></div>
+      <div class="node" style="left:765px;top:30px"><div class="pair"><img src="assets/aws/eventbridge.svg" alt=""><img src="assets/aws/lambda.svg" alt=""></div><b>deploy-notify</b><span>배포 상태 반영</span></div>
+      <div class="node" style="left:905px;top:30px"><img src="assets/aws/sfn.svg" alt=""><b>Step Functions</b><span>provision / delete</span></div>
+      <div class="node" style="left:1045px;top:30px"><img src="assets/aws/codebuild.svg" alt=""><b>provisioner</b><span>CodeBuild · cdk deploy</span></div>
+
+      <!-- Z2 nodes (icon center y=222) -->
+      <div class="node" style="left:205px;top:204px"><img src="assets/aws/codecommit.svg" alt=""><b>코드 저장소</b><span>CodeCommit / GitHub / GitLab</span></div>
+      <div class="node" style="left:345px;top:204px"><img src="assets/aws/codepipeline.svg" alt=""><b>CodePipeline</b><span>Source→Validate→Deploy</span></div>
+      <div class="node" style="left:485px;top:204px"><img src="assets/aws/codebuild.svg" alt=""><b>validate-build</b><span>검사·빌드·스모크</span></div>
+      <div class="node" style="left:625px;top:204px"><img src="assets/aws/ecr.svg" alt=""><b>ECR</b><span>태그 = 커밋 SHA</span></div>
+      <div class="node" style="left:765px;top:204px"><img src="assets/aws/codebuild.svg" alt=""><b>deploy</b><span>CodeBuild · cdk deploy</span></div>
+      <div class="node" style="left:905px;top:204px"><img src="assets/aws/cfn.svg" alt=""><b>CloudFormation</b><span>runtime 스택</span></div>
+
+      <!-- Z3 nodes (icon center y=392) -->
+      <div class="node" style="left:205px;top:374px"><img src="assets/aws/route53.svg" alt=""><b>Route 53</b><span>public / private zone</span></div>
+      <div class="node" style="left:345px;top:374px"><div class="pair"><img src="assets/aws/elb.svg" alt=""><img src="assets/aws/acm.svg" alt=""></div><b>공유 ALB × 2</b><span>internet / internal · *.apps</span></div>
+      <div class="node" style="left:485px;top:374px"><div class="pair"><img src="assets/aws/ecs.svg" alt=""><img src="assets/aws/fargate.svg" alt=""></div><b>ECS Fargate</b><span>공유 클러스터 · :8080</span></div>
+      <div class="node" style="left:625px;top:374px"><img src="assets/aws/secrets.svg" alt=""><b>Secrets Manager</b><span>ECS secrets 주입</span></div>
+      <div class="node" style="left:765px;top:374px"><img src="assets/aws/cloudwatch.svg" alt=""><b>CloudWatch</b><span>유휴 알람 · 로그</span></div>
+      <div class="node" style="left:905px;top:374px"><img src="assets/aws/lambda.svg" alt=""><b>waker · sleep · restore</b><span>잠자기 / 깨우기</span></div>
+      <div class="node" style="left:1045px;top:374px"><img src="assets/aws/eventbridge.svg" alt=""><b>EB Scheduler</b><span>시간표 start/stop</span></div>
+
+      <!-- link labels -->
+      <div class="lbl g" style="left:128px;top:104px">REST 호출</div>
+      <div class="lbl" style="left:1045px;top:152px">① pipeline 스택 생성</div>
+      <div class="lbl" style="left:556px;top:150px">파이프라인 상태 이벤트</div>
+      <div class="lbl" style="left:905px;top:320px">② runtime 스택 생성·갱신</div>
+      <div class="lbl" style="left:625px;top:473px;color:var(--g4)">잠자는 앱: ALB 규칙 → waker 타깃 그룹</div>
+    </div>
+    <div class="row center small muted" style="gap:22px;margin-top:22px;padding-left:128px">
+      <span class="row center" style="gap:6px"><svg width="34" height="8"><path d="M0 4h28" stroke="#6B7785" stroke-width="1.5" marker-end="url(#ah)"/></svg>요청 · 데이터 흐름</span>
+      <span class="row center" style="gap:6px"><svg width="34" height="8"><path d="M0 4h28" stroke="#D600BA" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#ahp)"/></svg>스택 생성 · 이벤트</span>
+      <span class="row center" style="gap:6px"><svg width="34" height="8"><path d="M0 4h28" stroke="#6842FF" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#ahv)"/></svg>잠자는 앱 라우팅</span>
+      <span>Lambda 7개: api · provision-task · delete-task · deploy-notify · waker · sleep-transition · wake-restore</span>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 13 CDK STACKS ═══════════════════ -->
+<section class="slide" data-nav="CDK 스택 4종" data-group="02 아키텍처">
+  <div class="pad">
+    <div class="kicker">아키텍처 · Infrastructure as Code</div>
+    <h2 class="s-title">CDK 스택 4종 — 공유 2개는 관리자가 1회, 앱별 2개는 플랫폼이 생성</h2>
+    <div class="body vc" style="gap:14px">
+      <div class="g4" style="gap:14px">
+        <div class="card hl" style="display:flex;flex-direction:column;gap:8px">
+          <div class="row center" style="gap:8px"><img src="assets/aws/elb.svg" width="30" alt=""><div><b style="font-size:15px">network</b><div class="mono small muted">apphub-{stage}-network</div></div></div>
+          <ul class="bl sm"><li>VPC 10.20.0.0/16 · 2 AZ · NAT 1</li><li>공유 ALB 2 (internet / internal)</li><li>공유 ECS 클러스터</li><li>와일드카드 ACM · Route 53 zone 2</li><li>SG 3 · Waker 계열 Lambda 3</li></ul>
+          <div class="mt8"><span class="tag ghost">관리자 · deploy.sh</span> <span class="tag ghost">stage당 1개</span></div>
+        </div>
+        <div class="card hl" style="display:flex;flex-direction:column;gap:8px">
+          <div class="row center" style="gap:8px"><img src="assets/aws/apigw.svg" width="30" alt=""><div><b style="font-size:15px">platform</b><div class="mono small muted">apphub-{stage}-platform</div></div></div>
+          <ul class="bl sm"><li>Cognito (admin 초대 전용)</li><li>DynamoDB · API GW + Lambda</li><li>Step Functions 2 · task Lambda 2</li><li>SPA(CloudFront+S3) · 자산 버킷</li><li>provisioner CodeBuild · deploy-notify</li></ul>
+          <div class="mt8"><span class="tag ghost">관리자 · deploy.sh</span> <span class="tag ghost">stage당 1개</span></div>
+        </div>
+        <div class="card" style="display:flex;flex-direction:column;gap:8px">
+          <div class="row center" style="gap:8px"><img src="assets/aws/codepipeline.svg" width="30" alt=""><div><b style="font-size:15px">app pipeline</b><div class="mono small muted">…-app-{appId}-pipeline</div></div></div>
+          <ul class="bl sm"><li>ECR (push 시 스캔, 최근 5개 유지)</li><li>CodeBuild validate-build (privileged)</li><li>CodeBuild deploy</li><li>CodePipeline 3단계</li><li>아티팩트 버킷 (30일 만료)</li></ul>
+          <div class="mt8"><span class="tag">provisioner</span> <span class="tag ghost">앱마다</span></div>
+        </div>
+        <div class="card" style="display:flex;flex-direction:column;gap:8px">
+          <div class="row center" style="gap:8px"><img src="assets/aws/fargate.svg" width="30" alt=""><div><b style="font-size:15px">app runtime</b><div class="mono small muted">…-app-{appId}-runtime</div></div></div>
+          <ul class="bl sm"><li>ECS 서비스·태스크 (프리셋 크기)</li><li>Target Group :8080 /health</li><li>리스너 규칙 (host-header)</li><li>Route 53 A alias · Task Role</li><li>유휴 알람 · Scheduler (모드별)</li></ul>
+          <div class="mt8"><span class="tag">앱 파이프라인</span> <span class="tag ghost">앱마다</span></div>
+        </div>
+      </div>
+      <div class="g3" style="gap:14px">
+        <div class="card soft"><div class="cap">스택 간 값 전달</div><div class="small">CloudFormation export 대신 SSM 파라미터 <code>/apphub/{stage}/network/*</code>, <code>/platform/*</code></div></div>
+        <div class="card soft"><div class="cap">단일 진입점</div><div class="small"><code>bin/apphub.ts</code> — 기본은 플랫폼 모드, <code>-c appId</code> + <code>appStackKind</code>로 앱 스택 합성</div></div>
+        <div class="card soft"><div class="cap">명명 · 수명</div><div class="small">모든 리소스 <code>apphub-{stage}-*</code>, stage = dev | prod. 앱 삭제 = runtime → pipeline 순 삭제</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 14 NETWORK ═══════════════════ -->
+<section class="slide" data-nav="네트워크 · 라우팅" data-group="02 아키텍처">
+  <style>
+    .nbox { background:#fff; border:1px solid var(--hair); border-radius:12px; padding:10px 12px; box-shadow: var(--shadow-card); font-size:12.5px; line-height:1.45; }
+    .nbox .t { display:flex; align-items:center; gap:8px; font-weight:600; color:var(--ink); font-size:13.5px; margin-bottom:3px; }
+    .nbox .t img { width:26px; height:26px; }
+    .lane { display:grid; grid-template-columns: 130px 22px 1fr 22px 1.25fr; align-items:center; }
+  </style>
+  <div class="pad">
+    <div class="kicker">아키텍처 · 네트워크 · 라우팅</div>
+    <h2 class="s-title">공개 범위별 ALB 2개, 앱은 호스트 이름으로 구분</h2>
+    <div class="body vc" style="gap:14px">
+      <div class="row" style="gap:12px;align-items:center">
+        <div class="col" style="flex:1.9;gap:12px">
+          <div class="lane">
+            <div class="nbox"><div class="t"><svg class="ico"><use href="#i-users"/></svg>인터넷 사용자</div><span class="muted">"인터넷" 선택 앱</span></div>
+            <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+            <div class="nbox"><div class="t"><img src="assets/aws/route53.svg" alt="">Public hosted zone</div>기존 회사 도메인 zone에 A alias</div>
+            <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+            <div class="nbox"><div class="t"><img src="assets/aws/elb.svg" alt="">internet-facing ALB</div>public subnet · SG 443/80 ← <code>0.0.0.0/0</code><br><span class="tag warn" style="margin-top:3px">유일하게 허용된 전체 개방 SG</span></div>
+          </div>
+          <div class="lane">
+            <div class="nbox"><div class="t"><svg class="ico"><use href="#i-user"/></svg>사내 사용자</div><span class="muted">"사내에서만"(기본)</span></div>
+            <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+            <div class="nbox"><div class="t"><img src="assets/aws/route53.svg" alt="">Private hosted zone</div>같은 이름, VPC에 연결</div>
+            <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+            <div class="nbox"><div class="t"><img src="assets/aws/elb.svg" alt="">internal ALB</div>private subnet · SG 443/80 ← <code>--internal-cidrs</code><br><span class="muted">미지정 시 VPC CIDR</span></div>
+          </div>
+        </div>
+        <div class="chev" style="width:26px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="col" style="flex:1;gap:8px">
+          <div class="nbox"><div class="t"><img src="assets/aws/acm.svg" alt="">HTTPS :443 리스너</div>TLS RECOMMENDED · <code>*.{appsDomain}</code> ACM 1개 공유<br>기본 동작 404 "No app for this host" · :80 → 301 HTTPS</div>
+          <div class="nbox" style="border-color:color-mix(in srgb,var(--g4) 45%,var(--hair))"><div class="t"><svg class="ico"><use href="#i-net"/></svg>호스트 규칙 (앱마다 1개)</div><code>{sub}.{appsDomain}</code> → [선택] authenticate-cognito → forward</div>
+          <div class="nbox"><div class="t"><img src="assets/aws/fargate.svg" alt="">Target Group → Fargate</div>IP 타깃 :8080 · <code>/health</code> 200 · 15s 간격<br>태스크 SG: 8080 ← ALB SG 참조만</div>
+        </div>
+      </div>
+      <div class="g4" style="gap:12px">
+        <div class="card soft" style="padding:10px 14px"><div class="cap">VPC</div><div class="small">10.20.0.0/16 · 2 AZ · public/private /24 · NAT 1개(비용)</div></div>
+        <div class="card soft" style="padding:10px 14px"><div class="cap">스트리밍</div><div class="small">ALB idle timeout 300초 — SSE 응답 지원 (<code>sample-streaming</code>로 검증)</div></div>
+        <div class="card soft" style="padding:10px 14px"><div class="cap">앱 인증 (선택)</div><div class="small"><code>cognitoProtect</code> — 인터넷 공개 앱은 기본 켜짐. 잠자는 중에도 인증 동작 유지</div></div>
+        <div class="card soft" style="padding:10px 14px"><div class="cap">규칙 우선순위</div><div class="small">DynamoDB 원자 카운터로 전역 발급, ALB별 <code>ruleCount</code> 관리</div></div>
+      </div>
+      <div class="small muted" style="font-size:12px;line-height:1.5">
+        <b style="color:var(--muted)">앱 인증 계정</b> — 현재는 편의상 AppHub 로그인과 <b style="color:var(--muted)">동일한 Cognito 사용자 풀</b>을 사용합니다. 관리자가 초대한 계정이면 누구나 앱에 로그인할 수 있고, 앱별로 계정을 따로 관리하려면 앱 소스에서 별도 인증을 구현해야 합니다.<br>
+        <b style="color:var(--muted)">사내 접속 대역</b>은 설치 시 <code>--internal-cidrs "10.0.0.0/8,…"</code>로 지정 (미지정 시 VPC 대역만)
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 15 CONTROL PLANE + DATA ═══════════════════ -->
+<section class="slide" data-nav="API · 데이터 모델" data-group="02 아키텍처">
+  <div class="pad">
+    <div class="kicker">아키텍처 · 컨트롤 플레인</div>
+    <h2 class="s-title">Lambda 하나가 38개 API 경로 처리, 데이터는 DynamoDB 단일 테이블</h2>
+    <div class="body vc row" style="gap:22px">
+      <div class="col" style="width:470px;gap:12px">
+        <div class="card">
+          <div class="cap">요청 처리 경로</div>
+          <div class="row center" style="gap:6px;font-size:12.5px;flex-wrap:wrap">
+            <span class="tag ghost">SPA</span>→<span class="tag ghost">API GW <code>/{proxy+}</code> ANY</span>→<span class="tag ghost">Cognito authorizer</span>→<span class="tag ghost">Lambda <code>handler.py</code></span>→<span class="tag ghost">router</span>
+          </div>
+          <ul class="bl sm mt12">
+            <li>OPTIONS preflight는 인증 전에 응답, CORS는 CloudFront origin만 허용</li>
+            <li>모든 예외 → <code>{error:{code,message}}</code> 형식</li>
+            <li>소유자 검사: 남의 앱은 403, 없는 앱은 404</li>
+          </ul>
+        </div>
+        <div class="g2" style="gap:12px">
+          <div class="card"><div class="cap">사용자 경로 21</div><div class="small mono" style="line-height:1.6;font-size:11.5px">/apps · /apps/:id<br>/deploy · /rollback · /restart<br>/deployments · /logs · /metrics<br>/presets · /permission-templates<br>/subdomains/check · /providers<br>/connections(/:id/repos)</div></div>
+          <div class="card"><div class="cap">관리자 경로 17</div><div class="small mono" style="line-height:1.6;font-size:11.5px">/admin/settings<br>/admin/presets<br>/admin/permission-templates<br>/admin/users<br>/admin/apps (/:id/stop)<br>/admin/alb-registry</div></div>
+        </div>
+      </div>
+      <div class="grow">
+        <div class="row center" style="gap:10px;margin-bottom:6px"><img src="assets/aws/dynamodb.svg" width="28" alt=""><b>apphub-{stage}-main</b><span class="tag ghost">PK / SK</span><span class="tag ghost">On-demand · PITR · TTL</span></div>
+        <table class="tbl" style="font-size:12.5px">
+          <thead><tr><th>엔터티</th><th>PK</th><th>SK</th></tr></thead>
+          <tbody>
+            <tr><td class="k">App</td><td class="mono">APP#{appId}</td><td class="mono">META</td></tr>
+            <tr><td class="k">Deployment</td><td class="mono">APP#{appId}</td><td class="mono">DEPLOY#{ts} <span class="muted">(TTL 90일)</span></td></tr>
+            <tr><td class="k">저장소 연결</td><td class="mono">USER#{userId}</td><td class="mono">CONN#{connId}</td></tr>
+            <tr><td class="k">CodeCommit 레포</td><td class="mono">USER#{userId}</td><td class="mono">CCREPO#{name}</td></tr>
+            <tr><td class="k">서브도메인 예약</td><td class="mono">SUBDOMAIN#{sub}</td><td class="mono">RESERVATION</td></tr>
+            <tr><td class="k">프리셋 · 권한 · 설정</td><td class="mono">CONFIG</td><td class="mono">PRESET# · PERM# · SETTINGS</td></tr>
+            <tr><td class="k">ALB · 규칙 카운터</td><td class="mono">CONFIG</td><td class="mono">ALB#{arn} · RULEPRIORITYSEQ</td></tr>
+          </tbody>
+        </table>
+        <div class="g2 mt12" style="gap:10px">
+          <div class="card soft" style="padding:10px 12px"><div class="cap">GSI1 · ownerId + SK</div><div class="small">내 앱 목록, 앱 한도 검사</div></div>
+          <div class="card soft" style="padding:10px 12px"><div class="cap">GSI2 · status + SK</div><div class="small">관리자 전체 현황 (상태별)</div></div>
+        </div>
+        <div class="small muted mt8">서브도메인 중복 방지: 스캔 대신 <code>attribute_not_exists(PK)</code> 조건부 쓰기 (경합 안전)</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ DIVIDER 3 ═══════════════════ -->
+<section class="slide divider" data-nav="03 · 동작 흐름" data-group="03 동작 흐름">
+  <div class="pad">
+    <div class="sn">SECTION 03</div>
+    <h2>동작 흐름</h2>
+    <p>앱 생성 · 배포 파이프라인 · 상태 모델 · 잠자기/깨우기</p>
+    <div class="chips"><span>프로비저닝 시퀀스</span><span>Step Functions</span><span>CodePipeline 3단계</span><span>State Machine</span><span>Scale-to-zero</span></div>
+  </div>
+  <div class="sweep-line"></div>
+</section>
+
+<!-- ═══════════════════ 16 PROVISION SEQUENCE ═══════════════════ -->
+<section class="slide" data-nav="앱 생성 시퀀스" data-group="03 동작 흐름">
+  <style>
+    .seq .step { padding: 11px 12px 10px; }
+    .seq .step p { font-size: 12.2px; }
+    .ribbon { display:flex; height: 26px; border-radius: 6px; overflow: hidden; font: 600 12px var(--font-mono); }
+    .ribbon div { display:flex; align-items:center; justify-content:center; color:#fff; }
+  </style>
+  <div class="pad">
+    <div class="kicker">동작 흐름 · 앱 생성 (프로비저닝)</div>
+    <h2 class="s-title">"앱 만들기" 클릭부터 접속 가능까지 10단계</h2>
+    <div class="body vc seq" style="gap:10px">
+      <div class="flow">
+        <div class="step"><div class="h"><span class="num">1</span><b>생성 요청</b></div><p>POST /apps → 검증 체인(서브도메인·허용 저장소·프리셋·연결 상태·한도) → 서브도메인 예약, 비밀값 저장</p><div class="svc"><img src="assets/aws/lambda.svg" alt="">api Lambda</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">2</span><b>State Machine 시작</b></div><p>ProvisionApp 실행. 실행 이름 = appId → 중복 실행 방지</p><div class="svc"><img src="assets/aws/sfn.svg" alt="">Step Functions</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">3</span><b>AllocateSlot</b></div><p>공개 범위로 ALB 선택, 규칙 우선순위 원자 증가, ruleCount +1 (재실행 시 기존 값 재사용)</p><div class="svc"><img src="assets/aws/dynamodb.svg" alt="">DynamoDB</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">4</span><b>DeployPipeline</b></div><p>provisioner 빌드 시작: <code>cdk deploy …-pipeline</code> (ECR · CodeBuild 2 · CodePipeline)</p><div class="svc"><img src="assets/aws/codebuild.svg" alt="">CodeBuild</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">5</span><b>PollBuild</b></div><p>30초 간격 확인. 실패 → FinalizeFailure → <code>FAILED</code></p><div class="svc"><img src="assets/aws/sfn.svg" alt="">Wait / Choice</div></div>
+      </div>
+      <div class="flow">
+        <div class="step"><div class="h"><span class="num">6</span><b>파이프라인 첫 실행</b></div><p>파이프라인 생성 시 AWS가 자동 실행. <b>FirstDeploy는 의도적 no-op</b> (이력 중복 방지)</p><div class="svc"><img src="assets/aws/codepipeline.svg" alt="">CodePipeline</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">7</span><b>검사 · 빌드</b></div><p>정적 검사 → docker build → /health 스모크 → ECR push (태그 = 커밋 SHA)</p><div class="svc"><img src="assets/aws/ecr.svg" alt="">validate-build · ECR</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">8</span><b>런타임 배포</b></div><p><code>cdk deploy …-runtime</code>: ECS 서비스 · TG · 리스너 규칙 · DNS · 알람/스케줄</p><div class="svc"><img src="assets/aws/cfn.svg" alt="">CloudFormation</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step hl"><div class="h"><span class="num">9</span><b>상태 반영</b></div><p>파이프라인 이벤트 → 배포 이력 갱신. 성공 시 <code>CREATING→ACTIVE</code>, RUNNING</p><div class="svc"><img src="assets/aws/eventbridge.svg" alt="">deploy-notify</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">10</span><b>접속</b></div><p><code>https://{sub}.apps.{도메인}</code> 대시보드에 "실행 중"</p><div class="svc"><img src="assets/aws/route53.svg" alt="">Route 53 · ALB</div></div>
+      </div>
+      <div class="row center" style="gap:12px;margin-top:4px">
+        <span class="small muted" style="width:96px">App.status</span>
+        <div class="ribbon grow"><div style="flex:8.2;background:#E5A23A">CREATING · 만드는 중 (1 ~ 8)</div><div style="flex:1.8;background:#18A27A">ACTIVE (9 ~)</div></div>
+      </div>
+      <div class="row center" style="gap:12px">
+        <span class="small muted" style="width:96px">실행 주체</span>
+        <div class="ribbon grow" style="font-family:var(--font-body)"><div style="flex:2;background:#6842FF">API · State Machine</div><div style="flex:3;background:#942EFF">provisioner (플랫폼 권한)</div><div style="flex:3;background:#D600BA">앱 전용 파이프라인 (앱 권한)</div><div style="flex:2;background:#AA0071">이벤트 기반</div></div>
+      </div>
+      <div class="card soft row center" style="padding:9px 14px;gap:10px;margin-top:4px;font-size:13px">
+        <svg class="ico" style="width:18px;height:18px"><use href="#i-info"/></svg>
+        <span><b>CodeBuild는 두 종류</b> — <img src="assets/aws/codebuild.svg" width="16" style="vertical-align:-3px" alt=""> provisioner는 <b>Step Functions</b>가 직접 실행(4단계), <img src="assets/aws/codebuild.svg" width="16" style="vertical-align:-3px" alt=""> 앱 전용 validate-build · deploy는 <b>CodePipeline</b>이 실행(7·8단계)</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 17 STEP FUNCTIONS ═══════════════════ -->
+<section class="slide" data-nav="Step Functions State Machine" data-group="03 동작 흐름">
+  <style>
+    .sm-row { display:flex; align-items:center; gap:0; flex-wrap:nowrap; }
+    .sm-row .s { background:#fff; border:1.5px solid #8C7BFF; color:#3B1FB0; border-radius:8px; padding:7px 10px; font: 600 12px var(--font-mono); white-space:nowrap; position:relative; }
+    .sm-row .s.ch { border-color:#E5A23A; color:#8A5200; background:#FFF9EF; border-radius:18px; }
+    .sm-row .s.ok { border-color:#18A27A; color:#0B7A5C; background:#F1FBF7; }
+    .sm-row .s.err { border-color:#E0496A; color:#B4153A; background:#FFF4F6; }
+    .sm-row .s.nop { border-style:dashed; color:var(--muted); border-color:#A3ABB8; }
+    .sm-row .a { width:22px; height:2px; background:#8E97A5; position:relative; flex:none; }
+    .sm-row .a::after { content:''; position:absolute; right:-1px; top:-4px; border:5px solid transparent; border-left:7px solid #8E97A5; border-right:0; }
+    .sm-row .s .loop { position:absolute; left:50%; top:-22px; transform:translateX(-50%); font: 600 10.5px var(--font-body); color:#8A5200; background:#FFF2DE; border-radius:999px; padding:1px 8px; white-space:nowrap; }
+    .catch { margin-top:12px; display:flex; align-items:center; gap:10px; font-size:12.5px; }
+    .catch .line { flex:none; width:40px; height:0; border-top:2px dashed #E0496A; }
+  </style>
+  <div class="pad">
+    <div class="kicker">동작 흐름 · Step Functions</div>
+    <h2 class="s-title">생성·삭제는 State Machine 2개로 — 각 단계는 멱등, 실패는 한 곳에서 처리</h2>
+    <div class="body vc" style="gap:16px">
+      <div class="card">
+        <div class="row center" style="gap:10px;margin-bottom:24px"><img src="assets/aws/sfn.svg" width="26" alt=""><b>apphub-{stage}-provision-app</b><span class="tag ghost">실행 이름 = appId</span><span class="tag ghost">timeout 1h</span></div>
+        <div class="sm-row">
+          <div class="s">AllocateSlot</div><div class="a"></div>
+          <div class="s">DeployPipeline</div><div class="a"></div>
+          <div class="s">PollBuild<span class="loop">↺ WaitBuild 30s</span></div><div class="a"></div>
+          <div class="s ch">BuildDone?</div><div class="a"></div>
+          <div class="s nop">FirstDeploy (no-op)</div><div class="a"></div>
+          <div class="s">FinalizeSuccess</div><div class="a"></div>
+          <div class="s ok">ProvisionDone</div>
+        </div>
+        <div class="catch"><span class="tag err">Catch States.ALL</span><div class="line"></div><span class="mono" style="font-size:12px">ProvisionFinalizeFailure → ProvisionFailed</span><span class="muted">— CREATING→FAILED, failureReason / failureDetail 기록</span></div>
+        <div class="small muted mt8">FinalizeSuccess 후에도 앱은 CREATING 유지 → 첫 파이프라인 성공 이벤트에서 ACTIVE 전환</div>
+      </div>
+      <div class="card">
+        <div class="row center" style="gap:10px;margin-bottom:24px"><img src="assets/aws/sfn.svg" width="26" alt=""><b>apphub-{stage}-delete-app</b><span class="tag ghost">실행 이름 = del-{appId}</span><span class="tag ghost">ACTIVE / FAILED → DELETING</span></div>
+        <div class="sm-row">
+          <div class="s">DeleteRuntime</div><div class="a"></div>
+          <div class="s">PollRuntime<span class="loop">↺ Wait 20s</span></div><div class="a"></div>
+          <div class="s">DeletePipeline</div><div class="a"></div>
+          <div class="s">PollPipeline<span class="loop">↺ Wait 20s</span></div><div class="a"></div>
+          <div class="s">Cleanup</div><div class="a"></div>
+          <div class="s">FinalizeSuccess</div><div class="a"></div>
+          <div class="s ok">DeleteDone</div>
+        </div>
+        <div class="catch"><span class="tag err">Catch States.ALL</span><div class="line"></div><span class="mono" style="font-size:12px">DeleteFinalizeFailure → DeleteFailed</span><span class="muted">— DELETING→FAILED (다시 삭제 가능)</span></div>
+        <div class="row mt12" style="gap:8px;flex-wrap:wrap"><span class="small muted">Cleanup:</span><span class="tag ghost">비밀값 강제 삭제</span><span class="tag ghost">ALB ruleCount −1</span><span class="tag ghost">서브도메인 해제</span><span class="tag ghost">App 레코드 삭제</span></div>
+      </div>
+      <div class="small muted">두 State Machine 모두 task Lambda 하나가 <code>step</code> 필드로 분기 (<code>orchestration/provision.py</code>, <code>delete.py</code>)</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 18 PIPELINE ═══════════════════ -->
+<section class="slide" data-nav="배포 파이프라인" data-group="03 동작 흐름">
+  <div class="pad">
+    <div class="kicker">동작 흐름 · 앱별 CodePipeline</div>
+    <h2 class="s-title">Source → ValidateBuild → Deploy, 실패 지점이 곧 실패 유형</h2>
+    <div class="body vc" style="gap:14px">
+      <div class="flow" style="align-items:stretch">
+        <div class="step" style="flex:.8"><div class="h"><img src="assets/aws/codecommit.svg" width="26" alt=""><b>Source</b></div>
+          <ul class="bl sm"><li>CodeCommit 또는 CodeConnections</li><li>자동 배포 켜짐: push 트리거</li><li>꺼짐: "지금 배포" 버튼으로만</li></ul>
+          <div class="svc">이력 상태 → <span class="tag grey">대기 중</span></div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step hl" style="flex:1.6"><div class="h"><img src="assets/aws/codebuild.svg" width="26" alt=""><b>ValidateBuild</b><span class="tag ghost">validate-build.yml · privileged</span></div>
+          <table class="tbl" style="font-size:12.3px">
+            <tr><td class="k"><span class="num">1</span> 정적 검사</td><td>플랫폼 검증기(S3에서 받음): Dockerfile 존재·EXPOSE 8080·금지 항목</td><td class="mono" style="font-size:11px">DOCKERFILE_MISSING<br>DOCKERFILE_INVALID</td></tr>
+            <tr><td class="k"><span class="num">2</span> 빌드</td><td><code>docker build</code></td><td class="mono" style="font-size:11px">BUILD_FAILED</td></tr>
+            <tr><td class="k"><span class="num">3</span> 스모크</td><td><code>docker run</code> → <code>curl /health</code> 2초×30회(60초), 200 기대</td><td class="mono" style="font-size:11px">HEALTHCHECK_FAILED</td></tr>
+            <tr><td class="k"><span class="num">4</span> 푸시</td><td>ECR push, 태그 = 커밋 SHA → <code>image-tag.json</code></td><td></td></tr>
+          </table>
+          <div class="svc">이력 상태 → <span class="tag vio">검사 중</span></div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step" style="flex:1.1"><div class="h"><img src="assets/aws/cfn.svg" width="26" alt=""><b>Deploy</b><span class="tag ghost">deploy.yml</span></div>
+          <ul class="bl sm"><li>DynamoDB에서 앱·프리셋·권한 템플릿 읽기</li><li>스택 존재 여부로 첫 배포 판단 → desiredCount는 첫 배포에만 지정 (잠자기 상태 보존)</li><li><code>cdk deploy …-runtime</code>, 실패 시 CloudFormation 롤백</li><li class="mono" style="font-size:11px">DEPLOY_FAILED</li></ul>
+          <div class="svc">이력 상태 → <span class="tag vio">배포 중</span> → <span class="tag ok">완료</span></div></div>
+      </div>
+      <div class="g3" style="gap:14px">
+        <div class="card soft"><div class="cap">신뢰 경계</div><div class="small">검증기와 CDK 소스는 플랫폼 자산 버킷에서 받음 — 사용자 저장소의 코드로 대체 불가</div></div>
+        <div class="card soft"><div class="cap">권한 범위</div><div class="small">validate-build: 자기 ECR만 push · deploy: 자기 <code>-runtime</code> 스택만 CloudFormation</div></div>
+        <div class="card soft"><div class="cap">되돌리기</div><div class="small">성공 배포의 SHA 이미지 존재 확인 → provisioner로 runtime 스택만 재배포 (재빌드 없음)</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 19 STATE MODELS ═══════════════════ -->
+<section class="slide" data-nav="상태 모델" data-group="03 동작 흐름">
+  <div class="pad">
+    <div class="kicker">동작 흐름 · 상태 모델</div>
+    <h2 class="s-title">앱 상태 · 가동 상태 · 배포 상태 — 3개 상태를 분리해 관리</h2>
+    <div class="body vc" style="gap:14px">
+      <div class="row" style="gap:16px">
+        <div class="card" style="flex:1.25">
+          <div class="cap">App.status — 조건부 업데이트로만 전이</div>
+          <svg viewBox="0 0 560 210" width="100%" height="210" font-family="ui-monospace, Menlo, monospace" font-size="12">
+            <g font-weight="700">
+              <rect x="10" y="30" width="110" height="44" rx="10" fill="#FFF9EF" stroke="#E5A23A" stroke-width="1.5"/><text x="65" y="50" text-anchor="middle" fill="#A26200">CREATING</text><text x="65" y="66" text-anchor="middle" fill="#A26200" font-size="10.5" font-family="Pretendard Local" font-weight="500">만드는 중</text>
+              <rect x="220" y="30" width="110" height="44" rx="10" fill="#F1FBF7" stroke="#18A27A" stroke-width="1.5"/><text x="275" y="50" text-anchor="middle" fill="#0B7A5C">ACTIVE</text><text x="275" y="66" text-anchor="middle" fill="#0B7A5C" font-size="10.5" font-family="Pretendard Local" font-weight="500">준비됨</text>
+              <rect x="430" y="30" width="110" height="44" rx="10" fill="#F6F7F9" stroke="#A3ABB8" stroke-width="1.5"/><text x="485" y="50" text-anchor="middle" fill="#4A5461">DELETING</text><text x="485" y="66" text-anchor="middle" fill="#4A5461" font-size="10.5" font-family="Pretendard Local" font-weight="500">삭제 중</text>
+              <rect x="220" y="150" width="110" height="44" rx="10" fill="#FFF4F6" stroke="#E0496A" stroke-width="1.5"/><text x="275" y="170" text-anchor="middle" fill="#B4153A">FAILED</text><text x="275" y="186" text-anchor="middle" fill="#B4153A" font-size="10.5" font-family="Pretendard Local" font-weight="500">실패</text>
+            </g>
+            <g stroke="#6B7785" stroke-width="1.4" fill="none" marker-end="url(#ah)">
+              <path d="M120 52 H 216"/><path d="M330 52 H 426"/>
+              <path d="M90 74 C 110 140, 170 172, 216 172"/>
+              <path d="M330 162 C 400 150, 450 110, 470 78"/>
+              <path d="M500 74 C 500 150, 420 188, 334 184"/>
+            </g>
+            <g font-family="Pretendard Local" font-size="11" fill="#3A4757">
+              <text x="168" y="44" text-anchor="middle">첫 배포 성공</text>
+              <text x="378" y="44" text-anchor="middle">삭제 요청</text>
+              <text x="62" y="148">프로비저닝·</text><text x="62" y="162">첫 배포 실패</text>
+              <text x="372" y="118">삭제 요청</text>
+              <text x="430" y="206">삭제 실패</text>
+            </g>
+          </svg>
+          <div class="small muted">CREATING 중 삭제 불가 · DELETING 중 재요청은 같은 응답(멱등)</div>
+        </div>
+        <div class="card" style="flex:1">
+          <div class="cap">runtimeState — ACTIVE 앱의 가동 상태</div>
+          <svg viewBox="0 0 440 210" width="100%" height="210" font-family="ui-monospace, Menlo, monospace" font-size="12">
+            <g font-weight="700">
+              <rect x="160" y="10" width="120" height="44" rx="10" fill="#F1FBF7" stroke="#18A27A" stroke-width="1.5"/><text x="220" y="30" text-anchor="middle" fill="#0B7A5C">RUNNING</text><text x="220" y="46" text-anchor="middle" fill="#0B7A5C" font-size="10.5" font-family="Pretendard Local" font-weight="500">실행 중</text>
+              <rect x="20" y="150" width="120" height="44" rx="10" fill="#F6F7F9" stroke="#A3ABB8" stroke-width="1.5"/><text x="80" y="170" text-anchor="middle" fill="#4A5461">SLEEPING</text><text x="80" y="186" text-anchor="middle" fill="#4A5461" font-size="10.5" font-family="Pretendard Local" font-weight="500">잠자는 중</text>
+              <rect x="300" y="150" width="120" height="44" rx="10" fill="#F5F2FF" stroke="#6842FF" stroke-width="1.5"/><text x="360" y="170" text-anchor="middle" fill="#4B25D6">WAKING</text><text x="360" y="186" text-anchor="middle" fill="#4B25D6" font-size="10.5" font-family="Pretendard Local" font-weight="500">깨우는 중</text>
+            </g>
+            <g stroke="#6B7785" stroke-width="1.4" fill="none" marker-end="url(#ah)">
+              <path d="M170 54 L 96 146"/><path d="M144 172 H 296"/><path d="M344 146 L 270 58"/>
+            </g>
+            <g font-family="Pretendard Local" font-size="11" fill="#3A4757">
+              <text x="20" y="88">유휴 15분 · 시간표 종료</text><text x="20" y="102">· 관리자 재우기</text>
+              <text x="220" y="166" text-anchor="middle">첫 요청 · 시간표 시작</text>
+              <text x="318" y="88">태스크 RUNNING</text><text x="318" y="102">이벤트 (restore)</text>
+            </g>
+          </svg>
+          <div class="small muted">sleep · waker · restore Lambda가 각각 담당</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="cap">Deployment.status — 파이프라인 이벤트로 전진만 (역행 없음)</div>
+        <div class="row center mt8" style="gap:8px;flex-wrap:wrap">
+          <div class="st grey">PENDING<small>대기 중</small></div><span class="muted">→ Source</span>
+          <div class="st run">VALIDATING<small>검사 중</small></div><span class="muted">→ ValidateBuild</span>
+          <div class="st run">DEPLOYING<small>배포 중</small></div><span class="muted">→ Deploy</span>
+          <div class="st ok">SUCCEEDED<small>완료</small></div>
+          <span class="muted" style="margin-left:10px">또는</span>
+          <div class="st err">FAILED<small>실패 + failureCategory</small></div>
+          <span class="small muted" style="margin-left:auto;max-width:260px">CANCELED·STOPPED → FAILED, SUPERSEDED는 무시. 이력 TTL 90일</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 20 SLEEP / WAKE ═══════════════════ -->
+<section class="slide" data-nav="잠자기 · 깨우기" data-group="03 동작 흐름">
+  <style>
+    .lanehead { width: 92px; flex: none; display:flex; flex-direction:column; justify-content:center; gap:4px; }
+    .lanehead b { font-size: 15px; }
+    .sw .step { padding: 10px 11px; gap: 4px; }
+    .sw .step p { font-size: 12px; }
+  </style>
+  <div class="pad">
+    <div class="kicker">동작 흐름 · Scale-to-zero</div>
+    <h2 class="s-title">쓰지 않으면 태스크 0개, 첫 요청이 들어오면 자동 기동</h2>
+    <div class="body vc sw zoomable" style="gap:12px">
+      <div class="row" style="gap:10px">
+        <div class="lanehead"><svg class="ico" style="width:26px;height:26px"><use href="#i-moon"/></svg><b>잠들기</b></div>
+        <div class="flow grow">
+          <div class="step"><div class="h"><img src="assets/aws/cloudwatch.svg" width="22" alt=""><b>트리거</b></div><p>유휴 알람: 타깃당 요청 &lt; 1, 5분 × 3회 (15분)<br>또는 시간표 종료 · 관리자 재우기</p></div>
+          <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+          <div class="step"><div class="h"><img src="assets/aws/eventbridge.svg" width="22" alt=""><b>EventBridge</b></div><p>알람 이름 접두어 <code>apphub-{stage}-app-</code> 매칭 (공유 규칙 1개)</p></div>
+          <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+          <div class="step hl"><div class="h"><img src="assets/aws/lambda.svg" width="22" alt=""><b>sleep-transition</b></div><p>① desiredCount → 0<br>② 리스너 규칙 forward 대상 → <b>waker TG</b><br>③ runtimeState = SLEEPING</p></div>
+        </div>
+      </div>
+      <div class="row" style="gap:10px">
+        <div class="lanehead"><svg class="ico" style="width:26px;height:26px"><use href="#i-sun"/></svg><b>깨우기</b></div>
+        <div class="flow grow">
+          <div class="step"><div class="h"><svg class="ico" style="width:20px;height:20px"><use href="#i-user"/></svg><b>첫 요청</b></div><p><code>{sub}.apps…</code> 접속 → 규칙이 waker TG로 전달</p></div>
+          <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+          <div class="step hl"><div class="h"><img src="assets/aws/lambda.svg" width="22" alt=""><b>waker</b></div><p>Host → 서브도메인 → appId → desiredCount = min(≥1) · WAKING<br>항상 <b>200 대기 페이지</b> (5초 자동 새로고침)</p></div>
+          <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+          <div class="step"><div class="h"><img src="assets/aws/ecs.svg" width="22" alt=""><b>태스크 RUNNING</b></div><p>ECS Task State Change 이벤트 (<code>group</code>에서 appId 추출)</p></div>
+          <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+          <div class="step hl"><div class="h"><img src="assets/aws/lambda.svg" width="22" alt=""><b>wake-restore</b></div><p>forward 대상 → 앱 TG 복귀<br>runtimeState = RUNNING</p></div>
+        </div>
+      </div>
+      <div class="row" style="gap:16px">
+        <div class="shot" style="width:380px"><div class="bar"><i></i><i></i><i></i><span>{sub}.apps.회사도메인 · waker 응답</span></div><img src="assets/shots/30-waker-page.png" alt="대기 페이지" style="height:150px;object-fit:cover"></div>
+        <div class="g2 grow" style="gap:10px">
+          <div class="card soft" style="padding:10px 12px"><div class="cap">인증 유지</div><div class="small">forward의 TargetGroupArn만 교체 — authenticate-cognito 동작은 그대로</div></div>
+          <div class="card soft" style="padding:10px 12px"><div class="cap">멱등</div><div class="small">현재 값이 목표와 같으면 UpdateService·ModifyRule 호출 생략</div></div>
+          <div class="card soft" style="padding:10px 12px"><div class="cap">배포와 충돌 방지</div><div class="small">desiredCount는 첫 배포에만 지정 → 재배포가 잠자기 상태를 덮지 않음</div></div>
+          <div class="card soft" style="padding:10px 12px"><div class="cap">시간표 시작</div><div class="small">Scheduler → <code>ecs:updateService</code>만 호출, 규칙 복귀는 restore가 처리</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 21 SLEEP MODES ═══════════════════ -->
+<section class="slide" data-nav="가동 방식 3종" data-group="03 동작 흐름">
+  <div class="pad">
+    <div class="kicker">동작 흐름 · 가동 방식 (sleepMode)</div>
+    <h2 class="s-title">가동 방식에 따라 runtime 스택에 생성되는 리소스가 달라짐</h2>
+    <div class="body vc zoomable" style="gap:16px">
+      <table class="tbl" style="font-size:14px">
+        <thead><tr><th style="width:190px"></th><th class="c">쓸 때만 켜기 <span class="tag" style="margin-left:4px">권장</span><div class="mono" style="font-weight:400;text-transform:none">on-demand</div></th><th class="c">항상 켜두기<div class="mono" style="font-weight:400;text-transform:none">always-on</div></th><th class="c">시간표대로<div class="mono" style="font-weight:400;text-transform:none">schedule</div></th></tr></thead>
+        <tbody>
+          <tr><td class="k">화면 설명</td><td>쓰지 않을 땐 잠들고, 접속하면 자동으로 깨어남</td><td>언제 접속해도 바로 열림</td><td>정해둔 시간대에만 켜짐 (예: 평일 09:00–19:00)</td></tr>
+          <tr><td class="k">유휴 알람 (15분)</td><td class="c yes">생성</td><td class="c no">없음</td><td class="c yes">생성</td></tr>
+          <tr><td class="k">EventBridge Scheduler</td><td class="c no">없음</td><td class="c no">없음</td><td class="c yes">start + stop (요일·시각·Asia/Seoul)</td></tr>
+          <tr><td class="k">첫 접속 지연</td><td class="c">잠든 상태면 30초 ~ 1분</td><td class="c">없음</td><td class="c">시간 외 접속 시 30초 ~ 1분</td></tr>
+          <tr><td class="k">유휴 시간 비용</td><td class="c">태스크 0개</td><td class="c">min 태스크 상시</td><td class="c">시간 외 태스크 0개</td></tr>
+          <tr><td class="k">관리자 재우기</td><td class="c yes">가능</td><td class="c yes">가능 (force)</td><td class="c yes">가능</td></tr>
+        </tbody>
+      </table>
+      <div class="row" style="gap:16px">
+        <div class="shot fix" style="--h:190px;width:520px"><div class="bar"><i></i><i></i><i></i><span>마법사 6단계 · 가동 방식</span></div><img src="assets/shots/w6.png" alt="" style="object-position:center 22%"></div>
+        <div class="card soft grow"><div class="cap">구현 위치</div>
+          <ul class="bl sm">
+            <li><code>infra/lib/constructs/app-runtime.ts</code> — 알람 · Scheduler 조건부 생성</li>
+            <li>Scheduler stop은 sleep Lambda 호출 (규칙 전환까지 수행)</li>
+            <li>요일 변환: 화면 0–6 → cron 1–7</li>
+            <li><code>ScheduleEditor.tsx</code> — 요일 1개 이상 · 시각 형식 검증</li>
+          </ul></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ DIVIDER 4 ═══════════════════ -->
+<section class="slide divider" data-nav="04 · 품질 · 보안 · 운영" data-group="04 품질·보안·운영">
+  <div class="pad">
+    <div class="sn">SECTION 04</div>
+    <h2>품질 · 보안 · 운영</h2>
+    <p>Kiro 연동 검사 · 보안 설계 · 설치/제거 · 테스트</p>
+    <div class="chips"><span>3단계 배포 표준 검사</span><span>보안 통제</span><span>deploy.sh / destroy.sh</span><span>테스트 피라미드</span><span>현재 범위</span></div>
+  </div>
+  <div class="sweep-line"></div>
+</section>
+
+<!-- ═══════════════════ 22 KIRO 3-LAYER ═══════════════════ -->
+<section class="slide" data-nav="Kiro 연동 · 3단계 검사" data-group="04 품질·보안·운영">
+  <div class="pad">
+    <div class="kicker">품질 · 배포 표준</div>
+    <h2 class="s-title">같은 배포 표준을 작성 · 커밋 · 빌드 시점에 세 번 검사</h2>
+    <div class="body vc" style="gap:14px">
+      <div class="flow">
+        <div class="step"><div class="h"><span class="num">1</span><b>작성 시 · Kiro steering</b></div><p><code>.kiro/steering/deployment-standard.md</code> (inclusion: always) — Kiro가 코드를 만들 때 항상 따르는 규칙</p><div class="svc">"배포 표준에 맞춰줘" 한 마디로 점검·수정</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">2</span><b>커밋 시 · pre-commit hook</b></div><p>POSIX sh + grep. 실패 항목을 모두 모아 한국어로 출력하고 커밋 중단</p><div class="svc">install-hooks.sh / .ps1 (멱등, 기존 훅 백업)</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step hl"><div class="h"><span class="num">3</span><b>빌드 시 · 플랫폼 검증</b></div><p><code>validator/dockerfile.py</code> + 실제 컨테이너 스모크 테스트. 최종 판정</p><div class="svc"><img src="assets/aws/codebuild.svg" alt="">validate-build 단계</div></div>
+      </div>
+      <table class="tbl" style="font-size:13.3px">
+        <thead><tr><th>검사 항목</th><th class="c">① steering</th><th class="c">② pre-commit</th><th class="c">③ 플랫폼</th><th>위반 시</th></tr></thead>
+        <tbody>
+          <tr><td class="k">저장소 루트에 Dockerfile</td><td class="c yes">✓</td><td class="c yes">✓</td><td class="c yes">✓ C1</td><td class="mono" style="font-size:12px">DOCKERFILE_MISSING</td></tr>
+          <tr><td class="k">EXPOSE 8080만 (8080/tcp 허용)</td><td class="c yes">✓</td><td class="c yes">✓</td><td class="c yes">✓ C2</td><td class="mono" style="font-size:12px">DOCKERFILE_INVALID</td></tr>
+          <tr><td class="k">금지: --privileged · docker.sock · host network · --cap-add · host bind mount</td><td class="c yes">✓</td><td class="c yes">✓</td><td class="c yes">✓</td><td class="mono" style="font-size:12px">DOCKERFILE_INVALID</td></tr>
+          <tr><td class="k">GET /health → 200 (기동 후 60초 이내)</td><td class="c yes">✓</td><td class="c no">—</td><td class="c yes">✓ 스모크</td><td class="mono" style="font-size:12px">HEALTHCHECK_FAILED</td></tr>
+          <tr><td class="k">non-root USER</td><td class="c yes">✓</td><td class="c no">—</td><td class="c wn">경고</td><td class="muted">차단하지 않음</td></tr>
+          <tr><td class="k">비밀키 커밋 차단 (<code>AKIA…</code>, PEM private key)</td><td class="c yes">✓</td><td class="c yes">✓</td><td class="c no">—</td><td class="muted">커밋 중단</td></tr>
+          <tr><td class="k">무상태 · stdout 로그 · 비밀값은 환경변수</td><td class="c yes">✓</td><td class="c no">—</td><td class="c no">—</td><td class="muted">가이드</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 23 SECURITY ═══════════════════ -->
+<section class="slide" data-nav="보안 설계" data-group="04 품질·보안·운영">
+  <div class="pad">
+    <div class="kicker">보안 · 통제 항목</div>
+    <h2 class="s-title">네트워크 · IAM · 비밀값 · 인증 — 기본값이 가장 좁은 권한</h2>
+    <div class="body vc g3" style="gap:14px">
+      <div class="card"><h4><svg class="ico"><use href="#i-net"/></svg>네트워크</h4>
+        <ul class="bl sm mt8"><li>설정 로드 시 <code>0.0.0.0/0</code>·<code>::/0</code> 거부 (<code>assertNoOpenCidr</code>)</li><li>예외는 internet-facing ALB SG 1개뿐</li><li>리스너 <code>open:false</code> — 자동 개방 규칙 없음</li><li>태스크 SG는 ALB SG 참조로만 8080 허용</li></ul></div>
+      <div class="card"><h4><svg class="ico"><use href="#i-shield"/></svg>IAM 범위</h4>
+        <ul class="bl sm mt8"><li>리소스 이름 접두어로 제한 <code>apphub-{stage}-app-*</code></li><li><code>Resource:"*"</code>는 리소스 수준 권한 미지원 액션만 (주석 명시)</li><li>앱 deploy 빌드: 자기 runtime 스택만</li><li>provisioner EC2 SG 생성: 배포 리전 조건</li></ul></div>
+      <div class="card"><h4><svg class="ico"><use href="#i-key"/></svg>앱 권한</h4>
+        <ul class="bl sm mt8"><li>Task Role = 관리자 권한 템플릿의 인라인 정책</li><li>기본 템플릿은 빈 Statement → AWS 권한 없음</li><li>사용자에겐 템플릿 이름만, 정책 본문 비노출</li></ul></div>
+      <div class="card"><h4><svg class="ico"><use href="#i-lock"/></svg>비밀값</h4>
+        <ul class="bl sm mt8"><li>Secrets Manager <code>apphub/{stage}/app/{appId}/{KEY}</code></li><li>DynamoDB·로그·CFN 파라미터엔 ARN만</li><li>ECS <code>secrets</code>로 주입, 실행 역할은 해당 ARN만 읽기</li><li>앱 삭제 시 강제 삭제</li></ul></div>
+      <div class="card"><h4><svg class="ico"><use href="#i-user"/></svg>인증 · 인가</h4>
+        <ul class="bl sm mt8"><li>Cognito: 자가 가입 off(초대 전용), 비밀번호 12자+ 복합</li><li>API: JWT authorizer, admin/user 그룹</li><li>앱: ALB authenticate-cognito (인터넷 공개 앱 기본 on)</li></ul></div>
+      <div class="card"><h4><svg class="ico"><use href="#i-db"/></svg>저장소 · 전송</h4>
+        <ul class="bl sm mt8"><li>S3 퍼블릭 액세스 전면 차단 · SSE · SSL 강제</li><li>CloudFront → S3는 OAC</li><li>DynamoDB PITR, prod는 RETAIN</li><li>CORS는 허용 origin만 반사 (<code>*</code> 없음)</li></ul></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 24 INSTALL ═══════════════════ -->
+<section class="slide" data-nav="설치 · 제거 (deploy.sh)" data-group="04 품질·보안·운영">
+  <div class="pad">
+    <div class="kicker">운영 · 설치 / 제거</div>
+    <h2 class="s-title">명령 1개로 설치, 몇 번을 다시 실행해도 결과가 같음</h2>
+    <div class="body vc" style="gap:14px">
+      <div class="card soft" style="padding:10px 16px"><code style="font-size:13px;background:none;border:0">./scripts/deploy.sh --stage dev|prod --domain apps.example.com [--hosted-zone-id] [--region] [--admin-email] [--internal-cidrs "10.0.0.0/16,…"] [--skip-spa]</code></div>
+      <div class="flow">
+        <div class="step"><div class="h"><span class="num">1</span><b>사전 점검</b></div><p>aws · node 22+ · pnpm · docker · rsync · zip, 자격 증명, hosted zone 자동 조회</p><div class="svc">실패 시 변경 없이 종료</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">2</span><b>bootstrap</b></div><p><code>cdk bootstrap</code> + Lambda 자산 7개 동기화</p><div class="svc">CDKToolkit 있으면 생략</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">3</span><b>스택 배포</b></div><p><code>network</code> · <code>platform</code> 배포, 검증기·CDK 소스·Kiro 번들 업로드</p><div class="svc">변경 없으면 no-op · 고정 S3 키</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">4</span><b>초기 데이터</b></div><p>기본 권한 템플릿 시드, 첫 관리자 계정 생성</p><div class="svc">없을 때만 생성 (관리자 수정 보존)</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">5</span><b>SPA 배포</b></div><p>빌드 → <code>config.json</code> 생성 → S3 sync → CloudFront 무효화</p><div class="svc">sync --delete · /* invalidation</div></div>
+      </div>
+      <div class="row" style="gap:16px">
+        <div class="card grow"><div class="cap">destroy.sh — 의존 역순 삭제</div>
+          <div class="row center mt8" style="gap:8px;flex-wrap:wrap;font-size:13px">
+            <span class="tag ghost">확인 (prod는 이름 입력)</span>→<span class="tag ghost">모든 app-*-runtime</span>→<span class="tag ghost">모든 app-*-pipeline</span>→<span class="tag ghost">platform</span>→<span class="tag ghost">network</span>
+          </div>
+          <div class="small muted mt8">cdk destroy 실패 시 cloudformation delete-stack 폴백 · prod RETAIN 리소스는 수동 정리 안내</div></div>
+        <div class="card" style="width:400px"><div class="cap">멱등성 검증 (e2e/idempotency-test.sh)</div>
+          <ul class="bl sm"><li>(A) deploy.sh 2회 연속 → 두 번째는 변경 없음</li><li>(B) destroy → 재설치 정상 동작</li></ul></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 25 TESTS ═══════════════════ -->
+<section class="slide" data-nav="테스트 전략" data-group="04 품질·보안·운영">
+  <div class="pad">
+    <div class="kicker">품질 · 테스트</div>
+    <h2 class="s-title">계층별 단위 테스트 657개 + 실제 AWS E2E 5개 시나리오</h2>
+    <div class="body vc row" style="gap:22px">
+      <div class="col" style="width:440px;gap:14px">
+        <div class="card"><div class="cap">자동화 테스트 수 (test 함수 기준)</div>
+          <div class="bars mt8">
+            <div class="bar-row"><span>backend</span><div class="track"><div class="fill" style="width:100%"></div></div><span class="val">324</span></div>
+            <div class="bar-row"><span>frontend</span><div class="track"><div class="fill" style="width:55%"></div></div><span class="val">179</span></div>
+            <div class="bar-row"><span>infra (CDK)</span><div class="track"><div class="fill" style="width:47.5%"></div></div><span class="val">154</span></div>
+            <div class="bar-row"><span>Playwright</span><div class="track"><div class="fill" style="width:2.8%"></div></div><span class="val">9</span></div>
+          </div>
+          <div class="small muted mt12">pytest · vitest + Testing Library · CDK assertions · Playwright</div></div>
+        <div class="card"><div class="cap">라이브 E2E (run-e2e.sh · dev 계정 · 약 30분)</div>
+          <ul class="bl sm"><li>배포 성공 + 스트리밍 + 삭제</li><li>실패 픽스처 4종 → 기대 failureCategory</li><li>push 자동 배포</li><li>시간표 + 요청 시 깨우기</li><li>웹 UI 사용자·관리자 여정</li></ul></div>
+      </div>
+      <div class="grow">
+        <div class="cap" style="font:700 11px var(--font-display);letter-spacing:.06em;color:var(--g3);margin-bottom:6px">E2E 샘플 앱 픽스처 (e2e/fixtures)</div>
+        <table class="tbl" style="font-size:13px">
+          <thead><tr><th>픽스처</th><th>결함</th><th>기대 결과</th></tr></thead>
+          <tbody>
+            <tr><td class="k mono" style="font-size:12px">sample-ok</td><td>없음</td><td><span class="tag ok">SUCCEEDED</span></td></tr>
+            <tr><td class="k mono" style="font-size:12px">sample-streaming</td><td>없음 — SSE <code>/stream</code> ALB 버퍼링 여부 확인</td><td><span class="tag ok">SUCCEEDED</span></td></tr>
+            <tr><td class="k mono" style="font-size:12px">sample-no-dockerfile</td><td>Dockerfile 없음</td><td><span class="tag err">DOCKERFILE_MISSING</span></td></tr>
+            <tr><td class="k mono" style="font-size:12px">sample-wrong-port</td><td>EXPOSE 3000</td><td><span class="tag err">DOCKERFILE_INVALID</span></td></tr>
+            <tr><td class="k mono" style="font-size:12px">sample-build-error</td><td>존재하지 않는 의존성</td><td><span class="tag err">BUILD_FAILED</span></td></tr>
+            <tr><td class="k mono" style="font-size:12px">sample-no-health</td><td><code>/health</code> 404</td><td><span class="tag err">HEALTHCHECK_FAILED</span></td></tr>
+          </tbody>
+        </table>
+        <div class="g2 mt12" style="gap:10px">
+          <div class="card soft" style="padding:10px 12px"><div class="cap">backend 상위</div><div class="small">apps 31 · deploy_notify 30 · cc_repos 28 · rollback/secrets/stop 22 · provision 21</div></div>
+          <div class="card soft" style="padding:10px 12px"><div class="cap">infra 상위</div><div class="small">platform-stack 57 · app-runtime 31 · network-stack 28 · app-pipeline 16</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 26 SCOPE / LIMITS ═══════════════════ -->
+<section class="slide" data-nav="현재 범위 · 제약" data-group="04 품질·보안·운영">
+  <div class="pad">
+    <div class="kicker">현재 범위 · 확인된 제약</div>
+    <h2 class="s-title">코드 기준 현재 구현 범위와 남은 작업</h2>
+    <div class="body vc" style="gap:12px;max-width:980px">
+      <div class="col" style="gap:12px">
+        <div class="card"><h4><svg class="ico"><use href="#i-net"/></svg>네트워크 확장</h4>
+          <ul class="bl mt8">
+            <li>VPC는 플랫폼 VPC 1개 고정 — VPC 선택 기능은 제거됨 (<code>provision.py</code>)</li>
+            <li>ALB는 공개 범위별 1개씩. <code>ruleCount ≥ 90</code>이면 <code>needsScaleOut</code> 신호만 반환, <b>ALB 증설은 미구현</b></li>
+          </ul></div>
+        <div class="card"><h4><svg class="ico"><use href="#i-git"/></svg>저장소 연결</h4>
+          <ul class="bl mt8">
+            <li>GitHub · GitLab 연결은 <b>보안상의 이유로 아직 미구현</b> — 화면에는 "준비 중"으로 안내. 필요 시 외부 OAuth 승인 흐름을 포함해 구현 필요</li>
+          </ul></div>
+      </div>
+      <div class="col" style="gap:12px">
+        <div class="card"><h4><svg class="ico"><use href="#i-info"/></svg>상태·분류 정의와 구현 차이</h4>
+          <ul class="bl mt8">
+            <li><code>BUILDING</code> 배포 상태는 정의돼 있지만 백엔드가 기록하지 않음 — 화면은 '검사·빌드' 한 칸으로 표시해 실제와 맞춤</li>
+                      </ul></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 27 SUMMARY ═══════════════════ -->
+<section class="slide cover" data-nav="요약" data-group="마무리">
+  <div class="glow tr"></div><div class="glow bl"></div>
+  <div class="pad" style="justify-content:center">
+    <div class="kicker">요약</div>
+    <h2 class="s-title" style="font-size:40px;margin-top:16px">AppHub = <span class="sweep">질문 7개</span>로 앱 하나의 AWS 인프라를 정의</h2>
+    <div class="g4 mt20" style="gap:16px;margin-top:40px">
+      <div class="card"><div class="ico-box"><svg class="ico"><use href="#i-sliders"/></svg></div><h4 class="mt12">사용자</h4><p>AWS 용어 없는 마법사, 상태 배지, 한국어 실패 안내</p></div>
+      <div class="card"><div class="ico-box"><svg class="ico"><use href="#i-layers"/></svg></div><h4 class="mt12">인프라</h4><p>CDK 스택 4종, 앱 1개 = 스택 2개, 멱등 설치·삭제</p></div>
+      <div class="card"><div class="ico-box"><svg class="ico"><use href="#i-repeat"/></svg></div><h4 class="mt12">자동화</h4><p>Step Functions + CodePipeline, 이벤트 기반 상태 반영, scale-to-zero</p></div>
+      <div class="card"><div class="ico-box"><svg class="ico"><use href="#i-shield"/></svg></div><h4 class="mt12">통제</h4><p>관리자 프리셋·권한 템플릿, 3단계 배포 표준 검사, 최소 권한</p></div>
+    </div>
+    <div class="small muted" style="margin-top:36px">화면 캡처: <code>frontend</code> 미리보기(mock) 모드 · 수치: 저장소 코드 기준</div>
+  </div>
+</section>
+
+</main>
+
+<script src="js/deck.js?v=1791210766"></script>
+</body>
+</html>
