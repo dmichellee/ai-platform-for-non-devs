@@ -144,9 +144,13 @@ def transition_status(app_id: str, next_status: str, allowed_from: list[str]) ->
     """상태 전이(상태 기계 준수). 허용 전이만 조건부로 수행.
 
     status: CREATING→ACTIVE|FAILED, ACTIVE→DELETING, FAILED→DELETING, DELETING→FAILED
+    →ACTIVE 전이는 runtimeStateUpdatedAt 도 기록한다 — 잠자기 유예(ACTIVE 후 15분, QA W-3)의 기준 시각.
     """
     now = _now_iso()
     values: dict[str, Any] = {":next": next_status, ":now": now}
+    update = "SET #s = :next, updatedAt = :now"
+    if next_status == "ACTIVE":
+        update += ", runtimeStateUpdatedAt = :now"
     for idx, source in enumerate(allowed_from):
         values[f":from{idx}"] = source
     condition = (
@@ -156,7 +160,7 @@ def transition_status(app_id: str, next_status: str, allowed_from: list[str]) ->
     )
     table().update_item(
         Key={"PK": app_pk(app_id), "SK": APP_META_SK},
-        UpdateExpression="SET #s = :next, updatedAt = :now",
+        UpdateExpression=update,
         ExpressionAttributeNames={"#s": "status"},
         ExpressionAttributeValues=values,
         ConditionExpression=condition,
@@ -202,11 +206,14 @@ def clear_failure(app_id: str) -> None:
 
 
 def set_runtime_state(app_id: str, state: str) -> None:
-    """runtimeState 갱신(RUNNING|WAKING|SLEEPING). status=ACTIVE에서만 의미 있음(호출부 보장)."""
+    """runtimeState 갱신(RUNNING|WAKING|SLEEPING). status=ACTIVE에서만 의미 있음(호출부 보장).
+
+    runtimeStateUpdatedAt = 전이 시각 — 잠자기 유예(RUNNING/WAKING 후 15분, QA W-3)의 기준.
+    """
     now = _now_iso()
     table().update_item(
         Key={"PK": app_pk(app_id), "SK": APP_META_SK},
-        UpdateExpression="SET runtimeState = :r, updatedAt = :now",
+        UpdateExpression="SET runtimeState = :r, runtimeStateUpdatedAt = :now, updatedAt = :now",
         ExpressionAttributeValues={":r": state, ":now": now},
         ConditionExpression="attribute_exists(PK)",
     )

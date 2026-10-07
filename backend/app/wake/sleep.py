@@ -13,6 +13,11 @@ ALARM 인 앱만 일반 경로와 같은 sleep_app 으로 재운다.
 스케줄 창 보호(2026-10-08, QA W-1 — DESIGN 3.5 "[재중지] 스케줄 밖 시간대에 한해"): 유휴 알람은
 treatMissingData=BREACHING 이라 잠든 밤 동안 ALARM 에 고착된다. 그래서 sleepMode=schedule 앱이 지금
 가동 시간대 안이면 유휴 경로(알람·스윕)는 재우지 않는다(reason "in-schedule-window").
+ACTIVE 후 유예(2026-10-08, QA W-3 — DESIGN 3.5 "유휴 15분"): 유휴 알람은 CREATING 중(트래픽이 들어올 수
+없는 구간)에 데이터 부재로 ALARM 이 되므로, ALARM 이 곧 "ACTIVE 후 15분 유휴"를 뜻하지 않는다(실측: ACTIVE
+39초 뒤 스윕이 재움). 그래서 앱이 ACTIVE/RUNNING(또는 WAKING)이 된 시각부터 15분이 지나지 않았으면 유휴 경로
+(알람·스윕)는 재우지 않는다(reason "grace-after-active"). 기준 시각 = App.runtimeStateUpdatedAt
+(set_runtime_state·→ACTIVE 전이가 기록), 필드가 없는 기존 앱은 updatedAt 폴백. force·schedule_stop 은 무시.
 트리거 구분(event 형식):
   - `{"sweep": true}`                      → 스윕(창 안 schedule 앱 제외)
   - `detail.alarmName` / `alarmData`        → 유휴 알람(창 판정 적용)
@@ -24,7 +29,7 @@ treatMissingData=BREACHING 이라 잠든 밤 동안 ALARM 에 고착된다. 그�
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from ..data.apps import get_app, list_all_apps, set_runtime_state
@@ -55,13 +60,42 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+# 유휴 알람 판정 창(5분×3)과 같은 길이 — ACTIVE/RUNNING 직후 이 시간 동안은 유휴로 보지 않는다(QA W-3).
+GRACE_AFTER_ACTIVE = timedelta(minutes=15)
+
+
+def _parse_iso(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def in_grace_after_active(app: dict[str, Any], now: datetime) -> bool:
+    """ACTIVE/RUNNING(WAKING) 이 된 지 15분 미만이면 True — 유휴 경로는 재우지 않는다(QA W-3).
+
+    기준: runtimeStateUpdatedAt(없으면 updatedAt — 필드 도입 전 앱). SLEEPING 앱은 유예 없음(재수면 멱등 보정).
+    기준 시각을 읽을 수 없으면 유예 없음(기존 동작).
+    """
+    if app.get("runtimeState") == "SLEEPING":
+        return False
+    since = _parse_iso(app.get("runtimeStateUpdatedAt")) or _parse_iso(app.get("updatedAt"))
+    if since is None:
+        return False
+    return now - since < GRACE_AFTER_ACTIVE
+
+
 def sleep_app(app_id: str, force: bool = False, schedule_stop: bool = False) -> dict[str, Any]:
     """앱을 잠재운다(멱등). ECS 정지 + 규칙 to=waker + SLEEPING.
 
     force=False(유휴/스케줄 트리거): always-on 앱은 잠들지 않는다(스킵).
       유휴 트리거(schedule_stop=False)는 sleepMode=schedule 앱이 가동 시간대 안이면 스킵(QA W-1).
-    schedule_stop=True(스케줄 종료 시각 StopSchedule): 창 판정 없이 재운다(always-on 은 여전히 스킵).
-    force=True(관리자 강제 중지·배포 후 재수면, DESIGN 3.5): sleepMode·창과 무관하게 재운다.
+      유휴 트리거는 ACTIVE/RUNNING 후 15분 미만이면 스킵(QA W-3, reason "grace-after-active").
+    schedule_stop=True(스케줄 종료 시각 StopSchedule): 창·유예 판정 없이 재운다(always-on 은 여전히 스킵).
+    force=True(관리자 강제 중지·배포 후 재수면, DESIGN 3.5): sleepMode·창·유예와 무관하게 재운다.
       (관리자가 명시적으로 멈추는 것이므로 always-on 도 대상.)
     """
     st = stage()
@@ -72,8 +106,12 @@ def sleep_app(app_id: str, force: bool = False, schedule_stop: bool = False) -> 
         return {"appId": app_id, "reason": f"status-{app.get('status')}"}
     if not force and app.get("sleepMode") == "always-on":
         return {"appId": app_id, "reason": "always-on"}
-    if not force and not schedule_stop and is_within_schedule_window(app, _now()):
-        return {"appId": app_id, "reason": "in-schedule-window"}
+    if not force and not schedule_stop:
+        now = _now()
+        if is_within_schedule_window(app, now):
+            return {"appId": app_id, "reason": "in-schedule-window"}
+        if in_grace_after_active(app, now):
+            return {"appId": app_id, "reason": "grace-after-active"}
     stop = ensure_stopped(st, app_id)
     app_tg_arn = find_app_target_group_arn(st, app_id)
     # App.albIndex 기준 ALB(D20) — listener·waker TG 는 `/network/alb/{slug}/{n}/*`.
@@ -130,7 +168,8 @@ def _alarm_states(names: list[str]) -> dict[str, str]:
 def sweep(stage_value: str) -> dict[str, Any]:
     """유휴 알람이 ALARM 에 고착된 RUNNING 앱을 재운다(QA N5). 판정은 일반 경로와 동일(sleep_app).
 
-    가동 시간대 안의 schedule 앱은 후보에서 제외(QA W-1) — 알람 조회 대상에도 넣지 않는다.
+    가동 시간대 안의 schedule 앱(QA W-1)과 ACTIVE/RUNNING 후 15분 미만 앱(QA W-3)은 후보에서 제외 —
+    알람 조회 대상에도 넣지 않는다.
     """
     now = _now()
     candidates = [
@@ -139,6 +178,7 @@ def sweep(stage_value: str) -> dict[str, Any]:
         if app.get("sleepMode") != "always-on"
         and app.get("runtimeState") == "RUNNING"
         and not is_within_schedule_window(app, now)
+        and not in_grace_after_active(app, now)
     ]
     by_alarm = {idle_alarm_name(stage_value, app["appId"]): app["appId"] for app in candidates}
     states = _alarm_states(list(by_alarm)) if by_alarm else {}
