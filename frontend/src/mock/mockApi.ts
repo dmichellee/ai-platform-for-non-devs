@@ -16,6 +16,7 @@ import type {
   ComputePreset,
   CreateAppRequest,
   Deployment,
+  DeploymentLogs,
   LogEvent,
   MetricRange,
   PatchAppRequest,
@@ -32,6 +33,19 @@ import * as fx from "./fixtures.js";
 
 const delay = (ms = 220): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+
+/** 목 페이지네이션 — nextToken 은 다음 페이지 시작 오프셋. 마지막 페이지면 nextToken 없음. */
+function paginate(
+  all: LogEvent[],
+  limit: number,
+  token: string | undefined,
+): { events: LogEvent[]; nextToken?: string } {
+  const size = Math.min(Math.max(limit, 1), 1000);
+  const start = token ? Number(token) || 0 : 0;
+  const events = all.slice(start, start + size);
+  const next = start + size;
+  return next < all.length ? { events, nextToken: String(next) } : { events };
+}
 
 // 목 모드에서 현재 세션을 읽는다 — AuthContext 와 동일한 localStorage 키.
 // 서버가 하듯 저장소 이름 접두어({ownerPrefix}-)를 계산하기 위해 email/sub 가 필요하다.
@@ -142,6 +156,9 @@ export class MockApiClient implements ApiClient {
     if (b.cognitoProtect === true && !app.cognitoProtect && frontendMode() === "private") {
       throw new ApiError("COGNITO_PROTECT_UNAVAILABLE", "사내 전용 설치에서는 로그인 보호를 켤 수 없어요.", 400);
     }
+    // M4: 자동 배포 토글이 실제로 바뀌면 서버가 배포 설정을 다시 적용(수 분)한다 → autoDeploy 안내.
+    const autoDeployChanged =
+      b.autoDeployEnabled !== undefined && b.autoDeployEnabled !== app.autoDeployEnabled;
     if (b.autoDeployEnabled !== undefined) app.autoDeployEnabled = b.autoDeployEnabled;
     if (b.sleepMode !== undefined) app.sleepMode = b.sleepMode;
     if (b.schedule !== undefined) app.schedule = b.schedule;
@@ -154,13 +171,24 @@ export class MockApiClient implements ApiClient {
     app.secretKeys = [...keys];
     const nowIso = new Date().toISOString();
     app.updatedAt = nowIso;
-    if (!secretsChanged) return clone(app);
+    // 계약: ACTIVE·CREATING 은 APPLYING, 준비 안 된 앱(FAILED)은 SKIPPED/NOT_READY(저장은 됨).
+    const autoDeploy: PatchAppResponse["autoDeploy"] = autoDeployChanged
+      ? app.status === "FAILED"
+        ? {
+            status: "SKIPPED",
+            reason: "NOT_READY",
+            note: "앱이 아직 준비되지 않아 자동 배포 설정을 바로 적용하지 못했어요. 저장은 됐어요. 앱이 준비되면 같은 설정으로 다시 저장해 주세요.",
+          }
+        : { status: "APPLYING", note: "자동 배포 설정을 적용하는 중이에요. 몇 분 뒤 반영돼요." }
+      : undefined;
+    if (!secretsChanged) return autoDeploy ? { ...clone(app), autoDeploy } : clone(app);
 
     // 배포된 적이 있으면(성공 이력) 지금 버전으로 다시 배포를 접수, 아니면 첫 배포 때 적용(SKIPPED).
     const current = deps.find((d) => d.status === "SUCCEEDED");
     if (app.status !== "ACTIVE" || !current) {
       return {
         ...clone(app),
+        ...(autoDeploy ? { autoDeploy } : {}),
         redeploy: {
           status: "SKIPPED",
           reason: "NOT_DEPLOYED",
@@ -181,6 +209,7 @@ export class MockApiClient implements ApiClient {
     this.deployments[appId] = [dep, ...deps];
     return {
       ...clone(app),
+      ...(autoDeploy ? { autoDeploy } : {}),
       redeploy: {
         status: "PENDING",
         deploymentId: dep.deploymentId,
@@ -266,12 +295,46 @@ export class MockApiClient implements ApiClient {
     };
   }
 
+  // 계약(QA M6): 최신부터, 기본 최근 1시간, limit 1~1000(기본 100), nextToken 으로 더 오래된 페이지.
+  // 목 nextToken = 다음 페이지 시작 오프셋 문자열. 로그가 없으면 events:[](오류 아님).
   async getLogs(
     appId: string,
-    _opts?: { limit?: number; nextToken?: string; startTime?: number },
+    opts?: { limit?: number; nextToken?: string; startTime?: number },
   ): Promise<{ events: LogEvent[]; nextToken?: string }> {
     await delay(180);
-    return { events: clone(fx.mockLogs[appId] ?? []) };
+    this.findApp(appId);
+    const since = opts?.startTime ?? Date.now() - 60 * 60 * 1000;
+    const all = [...(fx.mockLogs[appId] ?? [])]
+      .filter((e) => e.timestamp >= since)
+      .sort((a, b) => b.timestamp - a.timestamp);
+    return paginate(all, opts?.limit ?? 100, opts?.nextToken);
+  }
+
+  // GET /apps/{id}/deployments/{deploymentId}/logs (QA M6 신설) — 배포 1건의 검사·빌드·배포 단계 로그.
+  // 레코드 없음 404. 로그가 아직 없으면 events:[](200). 최신부터(시간 내림차순) 준다.
+  async getDeploymentLogs(
+    appId: string,
+    deploymentId: string,
+    opts?: { limit?: number; nextToken?: string },
+  ): Promise<DeploymentLogs> {
+    await delay(180);
+    this.findApp(appId);
+    const dep = (this.deployments[appId] ?? []).find((d) => d.deploymentId === deploymentId);
+    if (!dep) throw new ApiError("NOT_FOUND", "배포 기록을 찾을 수 없어요.", 404);
+    const fixture = fx.mockDeploymentLogs[appId];
+    // 진행 단계로 출처를 정한다: 배포 단계면 배포 로그, 그 외(대기·검사·빌드·실패)는 검사·빌드 로그.
+    const source: DeploymentLogs["source"] =
+      dep.status === "DEPLOYING" || dep.status === "SUCCEEDED" ? "deploy" : "validate-build";
+    // 아직 빌드 단계 전(PENDING)이면 stage 없음(계약).
+    const stage: DeploymentLogs["stage"] =
+      dep.status === "PENDING" ? undefined : source === "deploy" ? "DEPLOYING" : "VALIDATING";
+    // 계약: 최신이 [0](시간 내림차순).
+    const events =
+      dep.status === "PENDING"
+        ? []
+        : clone(fixture ?? []).sort((a, b) => b.timestamp - a.timestamp);
+    const page = paginate(events, opts?.limit ?? 200, opts?.nextToken);
+    return stage ? { ...page, source, stage } : { ...page, source };
   }
 
   // 모니터링 지표(목) — 계약 shape 그대로. RUNNING 앱은 그럴듯한 시계열,

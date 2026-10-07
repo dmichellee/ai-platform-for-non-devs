@@ -59,12 +59,15 @@ import type {
   MetricRange,
   PatchAppRequest,
   PatchAppResponse,
+  AutoDeployResult,
   RedeployResult,
   RestartResult,
   Schedule,
   SleepMode,
 } from "../../lib/types.js";
 import {
+  AUTO_DEPLOY_APPLYING_TITLE,
+  AUTO_DEPLOY_SKIPPED_FALLBACK,
   DEPLOY_STATUS_LABEL,
   DEPLOY_TRIGGER_LABEL,
   FIRST_DEPLOY_ACTION_DISABLED_HINT,
@@ -81,6 +84,20 @@ import {
   SLEEP_MODE_LABEL,
   statusHint,
 } from "../../lib/labels.js";
+import {
+  isAppTransitional,
+  isDeploymentInProgress,
+  markDeleting,
+  pollInterval,
+} from "../../lib/liveStatus.js";
+import {
+  isRateLimited,
+  LOG_POLL_BACKOFF_MS,
+  LOG_POLL_MS,
+  logKey,
+  logText,
+  mergeNewestFirst,
+} from "../../lib/logs.js";
 
 type Tab = "overview" | "deployments" | "monitoring" | "settings";
 
@@ -96,6 +113,20 @@ function isTab(v: string | null): v is Tab {
   return v !== null && (TAB_ORDER as string[]).includes(v);
 }
 
+// M4: 자동 배포 토글 "적용 중" 표시 유지 시간 — 서버 반영(배포 설정 재적용)이 보통 몇 분이라 10분 뒤 자동 해제.
+const AUTO_DEPLOY_APPLYING_TTL_MS = 10 * 60 * 1000;
+const autoDeployApplyingUntil = new Map<string, number>();
+
+function isAutoDeployApplying(appId: string): boolean {
+  const until = autoDeployApplyingUntil.get(appId);
+  return until !== undefined && until > Date.now();
+}
+
+function setAutoDeployApplyingFor(appId: string, applying: boolean): void {
+  if (applying) autoDeployApplyingUntil.set(appId, Date.now() + AUTO_DEPLOY_APPLYING_TTL_MS);
+  else autoDeployApplyingUntil.delete(appId);
+}
+
 export function AppDetail({ appId }: { appId: string }): JSX.Element {
   const nav = useNavigate();
   const route = useRoute();
@@ -106,16 +137,30 @@ export function AppDetail({ appId }: { appId: string }): JSX.Element {
   // 탭 전환 = 같은 경로에 ?tab= 쿼리만 바꿔 이동(뒤로가기로 탭 이동 취소 가능, 새로고침에도 유지).
   const setTab = (t: Tab): void => navigate(`/apps/${appId}${t === "overview" ? "" : `?tab=${t}`}`);
 
-  const { data: app, loading, error, reload } = useQuery<App>((a) => a.getApp(appId), [appId]);
+  // N6: 앱 상태·배포 진행이 전이 중이면 5초, 아니면 30초마다 조용히 다시 불러온다(탭 숨김 시 중단).
+  // 두 조회의 결과를 합쳐 판정하므로 판정값을 state 로 들고 두 훅에 같은 주기를 준다.
+  const [fastPoll, setFastPoll] = useState(false);
+  const { data: app, loading, error, reload } = useQuery<App>((a) => a.getApp(appId), [appId], {
+    refetchInterval: pollInterval(fastPoll),
+  });
 
   // "첫 배포 완료(everDeployed)" 판정 — App 응답에는 이 정보가 없어 배포 목록으로 판정한다.
   // status=ACTIVE 로 전이했더라도 첫 배포(앱 빌드·기동)가 끝나기 전이면 runtimeState 는 아직
   // 기본값(SLEEPING)이라 "잠자는 중"으로 오해되고, "지금 배포/재시작/열기"도 눌러선 안 된다.
   // 이 조회는 상세 상단에서만 한다(카드 목록 등 다른 화면은 배포 목록을 모르므로 이 판정을 하지 않음).
-  const { data: deployments, reload: reloadDeployments } = useQuery<Deployment[]>(
+  // F7: 배포 이력 탭도 이 결과를 props 로 받아 쓴다(같은 목록을 두 곳에서 따로 폴링하지 않음).
+  const { data: deployments, loading: deploymentsLoading, reload: reloadDeployments } = useQuery<Deployment[]>(
     (a) => a.listDeployments(appId),
     [appId],
+    { refetchInterval: pollInterval(fastPoll) },
   );
+  const transitional =
+    (app ? isAppTransitional(app) : false) ||
+    (deployments ?? []).some((d) => isDeploymentInProgress(d.status));
+  useEffect(() => setFastPoll(transitional), [transitional]);
+
+  // M4: 자동 배포 토글 저장 후 "적용 중"(서버가 수 분에 걸쳐 반영) 표시. 화면을 오가도 잠시 유지.
+  const [autoDeployApplying, setAutoDeployApplying] = useState(() => isAutoDeployApplying(appId));
   // null = 아직 판정 보류(로딩/실패). true/false = 확정.
   const everDeployed: boolean | null = deployments
     ? deployments.some((d) => d.status === "SUCCEEDED")
@@ -133,7 +178,17 @@ export function AppDetail({ appId }: { appId: string }): JSX.Element {
       <BackLink label="내 앱으로" onClick={() => nav("/")} />
 
       {loading && <Skeleton height={90} count={3} />}
-      {error && <ErrorNotice error={error} />}
+      {error && error.httpStatus === 404 ? (
+        // 삭제가 끝나 앱이 사라졌거나(자동 갱신 중 404) 잘못된 주소.
+        <div className="panel" role="status">
+          <p className="muted">이 앱은 삭제됐거나 찾을 수 없어요.</p>
+          <button type="button" className="btn btn-ghost mt3" onClick={() => nav("/")}>
+            내 앱으로 돌아가기
+          </button>
+        </div>
+      ) : (
+        error && <ErrorNotice error={error} />
+      )}
 
       {app && (
         <>
@@ -200,8 +255,16 @@ export function AppDetail({ appId }: { appId: string }): JSX.Element {
             ))}
           </div>
 
-          {tab === "overview" && <OverviewTab app={app} firstDeployPending={firstDeployPending} />}
-          {tab === "deployments" && <DeploymentsTab appId={appId} />}
+          {tab === "overview" && (
+            <OverviewTab
+              app={app}
+              firstDeployPending={firstDeployPending}
+              autoDeployApplying={autoDeployApplying}
+            />
+          )}
+          {tab === "deployments" && (
+            <DeploymentsTab appId={appId} deps={deployments} loading={deploymentsLoading && !deployments} />
+          )}
           {tab === "monitoring" && <MonitoringTab app={app} />}
           {tab === "settings" && (
             <SettingsTab
@@ -212,6 +275,14 @@ export function AppDetail({ appId }: { appId: string }): JSX.Element {
                 reloadDeployments();
               }}
               onOpenDeployments={() => setTab("deployments")}
+              autoDeployApplying={autoDeployApplying}
+              onAutoDeployResult={(r) => {
+                // ALREADY_APPLYING = 이전 적용이 아직 진행 중 → 계속 "적용 중"으로 표시.
+                const applying =
+                  r.status === "APPLYING" || (r.status === "SKIPPED" && r.reason === "ALREADY_APPLYING");
+                setAutoDeployApplyingFor(appId, applying);
+                setAutoDeployApplying(applying);
+              }}
             />
           )}
         </>
@@ -361,6 +432,8 @@ function AppActions({
               onClick={async () => {
                 try {
                   await deleteMut.run();
+                  // N6: 대시보드 카드가 서버 목록 갱신을 기다리지 않고 바로 "삭제 중"으로 보이게.
+                  markDeleting(app.appId);
                   setConfirmDelete(false);
                   nav("/");
                 } catch {
@@ -379,7 +452,15 @@ function AppActions({
 
 // ── 개요 — 상태·접속·앱 정보 요약 ──
 // firstDeployPending: 상단과 동일한 "첫 배포 미완료" 판정. 상태 pill 과 접속 주소 링크를 상단과 일치시킨다.
-function OverviewTab({ app, firstDeployPending }: { app: App; firstDeployPending: boolean }): JSX.Element {
+function OverviewTab({
+  app,
+  firstDeployPending,
+  autoDeployApplying,
+}: {
+  app: App;
+  firstDeployPending: boolean;
+  autoDeployApplying: boolean;
+}): JSX.Element {
   const url = `https://${app.subdomain}.${appsDomainLabel()}`;
   // 첫 배포가 끝나 실제 앱이 뜬 경우에만 접속 주소를 링크로(그 전엔 열어도 실패).
   const linkable = app.status === "ACTIVE" && !firstDeployPending;
@@ -438,7 +519,9 @@ function OverviewTab({ app, firstDeployPending }: { app: App; firstDeployPending
       )}
       <div className="kv">
         <span className="k">자동 배포</span>
-        <span className="v">{app.autoDeployEnabled ? "켜짐 (코드 올리면 자동 배포)" : "꺼짐"}</span>
+        <span className="v">
+          {autoDeployApplying ? "적용 중…" : app.autoDeployEnabled ? "켜짐 (코드 올리면 자동 배포)" : "꺼짐"}
+        </span>
       </div>
       <div className="kv">
         <span className="k">만든 날</span>
@@ -457,12 +540,17 @@ function presetSizeLabel(presetId: string): string {
 }
 
 // ── 배포 이력 — 성공/실패 모든 배포 + 실행 로그 접이식 ──
-function DeploymentsTab({ appId }: { appId: string }): JSX.Element {
+// 목록은 상세 루트가 한 곳에서 폴링(전이 중 5초/안정 30초)해 내려준다 — 탭에서 다시 조회하지 않는다(F7).
+function DeploymentsTab({
+  appId,
+  deps,
+  loading,
+}: {
+  appId: string;
+  deps: Deployment[] | null;
+  loading: boolean;
+}): JSX.Element {
   const nav = useNavigate();
-  const { data: deps, loading } = useQuery<Deployment[]>(
-    (a) => a.listDeployments(appId),
-    [appId],
-  );
 
   return (
     <>
@@ -540,59 +628,151 @@ function RuntimeLogsSection({ appId }: { appId: string }): JSX.Element {
   );
 }
 
-// 로그 뷰어 (자동 새로고침) — getLogs 재사용. 열렸을 때만 폴링한다.
+// 로그 뷰어 (M6) — 서버가 최신부터(기본 최근 1시간) 내려준다. 화면도 최신이 위.
+// - 처음 한 번만 최근 1시간 첫 페이지를 받는다.
+// - 자동 새로고침(10초, F2)은 마지막으로 받은 최신 줄 시각+1 을 startTime 으로 보내 그 뒤에 생긴 줄만 받아
+//   위에 합친다(중복 제거). 서버가 429 를 주면 다음 갱신을 30초 뒤로 미루고 안내한다.
+// - "이전 로그 더 보기"는 nextToken 으로 더 오래된 페이지를 아래에 이어 붙인다.
+const RUNTIME_LOG_PAGE = 100;
+
 function RuntimeLogViewer({ appId }: { appId: string }): JSX.Element {
   const api = useApi();
-  const [events, setEvents] = useState<LogEvent[]>([]);
-  const [loading, setLoading] = useState(true);
   const [auto, setAuto] = useState(true);
-  const boxRef = useRef<HTMLDivElement>(null);
+  const head = useQuery<{ events: LogEvent[]; nextToken?: string }>(
+    (a) => a.getLogs(appId, { limit: RUNTIME_LOG_PAGE }),
+    [appId],
+  );
+  // 자동 새로고침으로 받은, 첫 페이지보다 새로운 줄(최신순).
+  const [fresh, setFresh] = useState<LogEvent[]>([]);
+  const [rateLimited, setRateLimited] = useState(false);
+  const [pollSeq, setPollSeq] = useState(0);
+  const [visible, setVisible] = useState(
+    () => typeof document === "undefined" || document.visibilityState !== "hidden",
+  );
+  // 더 보기로 불러온 과거 로그와, 그 다음 페이지 토큰(없으면 첫 페이지의 토큰을 쓴다).
+  const [older, setOlder] = useState<LogEvent[]>([]);
+  const [olderToken, setOlderToken] = useState<string | undefined | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [moreError, setMoreError] = useState(false);
+  const nextToken = olderToken === null ? head.data?.nextToken : olderToken;
+
+  const events = useMemo(
+    () => mergeNewestFirst(fresh, head.data?.events ?? [], older),
+    [fresh, head.data, older],
+  );
+  // 증분 조회 기준점 — 지금까지 받은 가장 최신 줄의 시각(없으면 undefined → 최근 1시간 전체).
+  const newestTs = events[0]?.timestamp;
+  const newestRef = useRef<number | undefined>(newestTs);
+  newestRef.current = newestTs;
 
   useEffect(() => {
-    let stop = false;
-    const load = async (): Promise<void> => {
-      try {
-        const res = await api.getLogs(appId, { limit: 100 });
-        if (!stop) setEvents(res.events);
-      } catch {
-        /* 로그 실패는 조용히 — 상단 앱 상태가 이미 안내 */
-      } finally {
-        if (!stop) setLoading(false);
-      }
-    };
-    void load();
-    const timer = auto ? window.setInterval(load, 5000) : undefined;
+    const onVis = (): void => setVisible(document.visibilityState !== "hidden");
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
+
+  const headReady = head.data !== null;
+  useEffect(() => {
+    if (!auto || !visible || !headReady) return;
+    let cancelled = false;
+    const timer = window.setTimeout(
+      () => {
+        const since = newestRef.current;
+        api
+          .getLogs(appId, {
+            limit: RUNTIME_LOG_PAGE,
+            ...(since !== undefined ? { startTime: since + 1 } : {}),
+          })
+          .then((res) => {
+            if (cancelled) return;
+            setRateLimited(false);
+            if (res.events.length > 0) setFresh((prev) => mergeNewestFirst(res.events, prev));
+          })
+          .catch((e: unknown) => {
+            if (cancelled) return;
+            // 429 → 다음 갱신을 늦춘다. 그 외 일시 오류는 조용히 넘기고 다음 주기에 다시 시도.
+            if (isRateLimited(e)) setRateLimited(true);
+          })
+          .finally(() => {
+            if (!cancelled) setPollSeq((n) => n + 1);
+          });
+      },
+      rateLimited ? LOG_POLL_BACKOFF_MS : LOG_POLL_MS,
+    );
     return () => {
-      stop = true;
-      if (timer) window.clearInterval(timer);
+      cancelled = true;
+      window.clearTimeout(timer);
     };
-  }, [api, appId, auto]);
+  }, [api, appId, auto, visible, headReady, rateLimited, pollSeq]);
 
-  useEffect(() => {
-    if (auto && boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight;
-  }, [events, auto]);
+  const loadMore = async (): Promise<void> => {
+    if (!nextToken) return;
+    setLoadingMore(true);
+    setMoreError(false);
+    try {
+      const res = await api.getLogs(appId, { limit: RUNTIME_LOG_PAGE, nextToken });
+      setOlder((prev) => [...prev, ...res.events]);
+      setOlderToken(res.nextToken);
+    } catch {
+      setMoreError(true);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   return (
     <>
-      <div className="row" style={{ justifyContent: "flex-end", marginBottom: 10 }}>
+      <div className="row log-toolbar">
+        <span className="muted" style={{ fontSize: 13 }}>
+          최근 1시간 기록 · 최신이 위에 있어요
+        </span>
         <label className="row" style={{ gap: 8, fontSize: 13 }}>
           <Toggle on={auto} onChange={setAuto} label="자동 새로고침" />
-          자동 새로고침 (5초)
+          자동 새로고침 (10초)
         </label>
       </div>
-      {loading ? (
+      {auto && rateLimited && (
+        <p className="muted" role="status" style={{ fontSize: 13 }}>
+          지금 로그를 찾는 요청이 많아요. 잠시 뒤 다시 불러올게요.
+        </p>
+      )}
+      {head.loading && !head.data ? (
         <Skeleton height={200} />
+      ) : head.error && !head.data ? (
+        <p className="muted" role="status">
+          로그를 불러오지 못했어요. 잠시 뒤 다시 확인해주세요.
+        </p>
       ) : events.length === 0 ? (
-        <p className="muted">표시할 로그가 아직 없어요.</p>
+        <p className="muted" role="status">
+          최근 1시간 동안 기록된 로그가 없어요.
+        </p>
       ) : (
-        <div className="log-viewer" ref={boxRef} role="log" aria-live="polite">
-          {events.map((e, i) => (
-            <div key={i} className="log-line">
-              <span className="ts">{new Date(e.timestamp).toLocaleTimeString("ko-KR")}</span>
-              {e.message}
-            </div>
-          ))}
-        </div>
+        <>
+          <div className="log-viewer" role="log" aria-live="polite">
+            {events.map((e) => (
+              <div key={logKey(e)} className="log-line">
+                <span className="ts">{new Date(e.timestamp).toLocaleTimeString("ko-KR")}</span>
+                {logText(e)}
+              </div>
+            ))}
+          </div>
+          {nextToken && (
+            <button
+              type="button"
+              className="btn btn-ghost mt3"
+              disabled={loadingMore}
+              onClick={() => void loadMore()}
+            >
+              <ChevronDown size={15} className="icon" />
+              {loadingMore ? "불러오는 중…" : "이전 로그 더 보기"}
+            </button>
+          )}
+          {moreError && (
+            <p className="muted mt3" role="status">
+              이전 로그를 불러오지 못했어요. 다시 눌러주세요.
+            </p>
+          )}
+        </>
       )}
     </>
   );
@@ -717,10 +897,14 @@ function SettingsTab({
   app,
   onSaved,
   onOpenDeployments,
+  autoDeployApplying,
+  onAutoDeployResult,
 }: {
   app: App;
   onSaved: () => void;
   onOpenDeployments: () => void;
+  autoDeployApplying: boolean;
+  onAutoDeployResult: (r: AutoDeployResult) => void;
 }): JSX.Element {
   const [autoDeploy, setAutoDeploy] = useState(app.autoDeployEnabled);
   const [sleepMode, setSleepMode] = useState<SleepMode>(app.sleepMode);
@@ -744,6 +928,8 @@ function SettingsTab({
   // D8: 비밀값 변경 저장 = 즉시 재배포. 저장 전 확인 모달 + 저장 후 재배포 결과 안내.
   const [confirmRedeploy, setConfirmRedeploy] = useState(false);
   const [redeploy, setRedeploy] = useState<RedeployResult | null>(null);
+  // M4: 자동 배포 토글 변경 저장 결과(APPLYING=몇 분 뒤 반영 / SKIPPED=지금은 적용 못 함).
+  const [autoDeployResult, setAutoDeployResult] = useState<AutoDeployResult | null>(null);
 
   const secretsBody = useMemo(() => {
     const secrets: Record<string, string> = {};
@@ -790,6 +976,7 @@ function SettingsTab({
   async function save(): Promise<void> {
     setConfirmRedeploy(false);
     setRedeploy(null);
+    setAutoDeployResult(null);
     const envVars: Record<string, string> = {};
     for (const r of envRows) if (r.key) envVars[r.key] = r.value;
     await saveMut
@@ -807,6 +994,12 @@ function SettingsTab({
       .then((res) => {
         // 저장 성공 후 로컬 비밀값 편집 상태 초기화(응답 App 의 secretKeys 로 다시 그려진다).
         setRedeploy(res.redeploy ?? null);
+        // 서버가 실제로 저장한 값으로 토글을 맞춘다(ALREADY_APPLYING 이면 기존 값으로 되돌아온다).
+        setAutoDeploy(res.autoDeployEnabled);
+        if (res.autoDeploy) {
+          setAutoDeployResult(res.autoDeploy);
+          onAutoDeployResult(res.autoDeploy);
+        }
         setSecretState({});
         setNewSecrets([]);
         onSaved();
@@ -843,6 +1036,7 @@ function SettingsTab({
           <div className="txt">
             <div className="t">자동 배포</div>
             <div className="d">코드를 push 하면 자동으로 다시 배포해요.</div>
+            {autoDeployApplying && <div className="d">적용 중… 몇 분 뒤 반영돼요.</div>}
           </div>
           <Toggle on={autoDeploy} onChange={setAutoDeploy} label="자동 배포" />
         </div>
@@ -868,6 +1062,11 @@ function SettingsTab({
         {protectError && (
           <div className="mt3">
             <ErrorNotice error={protectError} />
+          </div>
+        )}
+        {autoDeployResult && !saveMut.error && (
+          <div className="mt3">
+            <AutoDeployNotice result={autoDeployResult} />
           </div>
         )}
       </div>
@@ -1022,6 +1221,32 @@ function RedeployNotice({
     <div className="notice warn" role="status">
       <AlertTriangle size={18} className="icon" />
       <div>{message}</div>
+    </div>
+  );
+}
+
+// M4: 자동 배포 토글 저장 결과 안내. 서버 note 가 있으면 함께 보여준다.
+//  - APPLYING: 정보 톤 — 배포 설정을 다시 적용하는 데 몇 분 걸린다.
+//  - SKIPPED: 경고 톤 — 바로 적용하지 못했다(START_FAILED/NOT_READY = 저장은 됨,
+//    ALREADY_APPLYING = 이번 변경은 저장 안 됨). 사유별 안내는 서버 note 를 그대로 쓴다.
+function AutoDeployNotice({ result }: { result: AutoDeployResult }): JSX.Element {
+  if (result.status === "APPLYING") {
+    return (
+      <div className="notice info" role="status">
+        <Info size={18} className="icon" />
+        <div>
+          <div>
+            <b>{AUTO_DEPLOY_APPLYING_TITLE}</b>
+          </div>
+          {result.note && <div style={{ marginTop: 4 }}>{result.note}</div>}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="notice warn" role="status">
+      <AlertTriangle size={18} className="icon" />
+      <div>{result.note || AUTO_DEPLOY_SKIPPED_FALLBACK}</div>
     </div>
   );
 }

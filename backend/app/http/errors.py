@@ -28,6 +28,7 @@ ERROR_CODES = frozenset(
         "CONFLICT",
         "CONNECTION_NOT_READY",
         "METHOD_NOT_ALLOWED",
+        "RATE_LIMITED",
         "ROUTE_NOT_FOUND",
         "INTERNAL_ERROR",
     }
@@ -153,6 +154,13 @@ class _Errors:
             "CONNECTION_NOT_READY",
             "저장소 연결이 아직 승인되지 않았어요. '저장소 연결' 메뉴에서 승인을 완료해주세요.",
         )
+
+    @staticmethod
+    def rate_limited(
+        msg: str = "지금 요청이 많아 잠시 처리하지 못했어요. 잠시 후 다시 시도해 주세요.",
+    ) -> ApiError:
+        """외부 AWS API 호출 한도 초과(예: CloudWatch Logs ThrottlingException, QA F2). 잠시 후 재시도로 해결."""
+        return ApiError(429, "RATE_LIMITED", msg)
 
     @staticmethod
     def method_not_allowed() -> ApiError:

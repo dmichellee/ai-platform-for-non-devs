@@ -218,6 +218,27 @@ export const mockLogs: Record<string, { timestamp: number; message: string }[]> 
   ],
 };
 
+// 배포 단계 로그(QA M6) — GET /apps/{id}/deployments/{deploymentId}/logs 목 데이터(시간순).
+export const mockDeploymentLogs: Record<string, { timestamp: number; message: string }[]> = {
+  a1b2c3d4: [
+    { timestamp: now - 1000 * 60 * 60 * 2 - 40000, message: "새 버전을 적용하는 중이에요" },
+    { timestamp: now - 1000 * 60 * 60 * 2 - 20000, message: "상태 확인(/health) 200 OK" },
+    { timestamp: now - 1000 * 60 * 60 * 2, message: "새 버전 적용 완료" },
+  ],
+  "99887766": [
+    { timestamp: now - 1000 * 60 * 5 - 9000, message: "Step 3/8 : RUN npm install" },
+    { timestamp: now - 1000 * 60 * 5 - 6000, message: "npm ERR! code ERESOLVE" },
+    { timestamp: now - 1000 * 60 * 5 - 3000, message: "npm ERR! peer dependency conflict: react@19" },
+    {
+      timestamp: now - 1000 * 60 * 5 - 1000,
+      message: "The command '/bin/sh -c npm install' returned a non-zero code: 1",
+    },
+  ],
+  c9d0e1f2: [
+    { timestamp: now - 1000 * 60 * 29, message: "이미지 준비 완료, 새 버전을 적용하는 중이에요" },
+  ],
+};
+
 export const mockConnections: RepoConnection[] = [
   {
     connId: "conn-0001",

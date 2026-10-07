@@ -51,7 +51,7 @@ from .handlers.deployments import (
     rollback_deploy,
     trigger_deploy,
 )
-from .handlers.logs import get_app_logs
+from .handlers.logs import get_app_logs, get_deployment_logs
 from .handlers.metrics import get_app_metrics_handler
 from .http.router import Router
 
@@ -76,6 +76,7 @@ def build_router() -> Router:
 
     # ── 로그 ─────────────────────────────────────────────────────────────────
     r.get("/apps/:id/logs", get_app_logs)
+    r.get("/apps/:id/deployments/:deploymentId/logs", get_deployment_logs)
 
     # ── 모니터링 메트릭 (접속량/CPU/메모리 시계열) ────────────────────────────
     r.get("/apps/:id/metrics", get_app_metrics_handler)

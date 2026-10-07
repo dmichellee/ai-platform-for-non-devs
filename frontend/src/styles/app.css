@@ -1908,3 +1908,213 @@ tbody tr:hover {
     align-items: flex-start;
   }
 }
+
+/* ── 로그 영역 헤더 줄 (앱 실행 로그 / 배포 단계 로그) ── */
+.log-toolbar {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s3);
+  margin-bottom: 10px;
+}
+.panel-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s3);
+  margin-bottom: var(--s3);
+}
+
+/* ── 표 가로 스크롤 컨테이너 — 넓은 표는 화면을 밀지 않고 이 안에서만 가로로 스크롤 ── */
+.table-scroll {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 상단바 메뉴 묶음 — 데스크톱은 상자 없이(display: contents) 기존 배치 그대로. */
+.topbar-nav {
+  display: contents;
+}
+
+/* ============================================================
+   모바일(≤640px, 기준 폭 390px) — 가로 스크롤 없이 한 화면 폭에 맞춘다.
+   ui-ux-pro-max 반응형 가이드: horizontal-scroll 금지, 표는 overflow-x 래퍼,
+   터치 대상 44px, 핵심 내용 우선. 데스크톱(>640px) 규칙은 건드리지 않는다.
+   ============================================================ */
+@media (max-width: 640px) {
+  .wrap {
+    padding: var(--s3) var(--s3) var(--s6);
+  }
+
+  /* 상단바: 1줄 = 로고 + 상태칩·테마·로그아웃, 2줄 = 메뉴(넘치면 이 줄만 가로 스크롤) */
+  .app-topbar {
+    flex-wrap: wrap;
+    gap: var(--s2);
+    padding: var(--s3);
+    margin-bottom: var(--s4);
+  }
+  .app-topbar .avatar {
+    display: none;
+  }
+  .topbar-nav {
+    display: flex;
+    order: 10;
+    flex: 1 1 100%;
+    gap: var(--s1);
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-top: var(--s2);
+    border-top: 1px solid var(--border);
+  }
+  .topbar-nav::-webkit-scrollbar {
+    display: none;
+  }
+  .topbar-nav .topbar-link {
+    flex: 1 0 auto;
+    min-height: 44px;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .toggle-label {
+    display: none;
+  }
+  .toggle button {
+    padding: 7px 9px;
+  }
+  .chip {
+    white-space: nowrap;
+  }
+
+  /* 마법사 단계 표시 축약: 번호만 한 줄로, 현재 단계만 이름 표시 */
+  .steps {
+    flex-wrap: nowrap;
+    gap: 6px;
+    margin-bottom: var(--s5);
+  }
+  .steps > span {
+    gap: 6px !important;
+    min-width: 0;
+  }
+  .steps .line {
+    display: none;
+  }
+  .step:not(.active) .step-label {
+    display: none;
+  }
+  .step.active .step-label {
+    white-space: nowrap;
+  }
+
+  /* 키-값 줄: 이름 칸은 한 줄 유지 */
+  .kv .k {
+    flex: none;
+    white-space: nowrap;
+  }
+
+  /* 패널·마법사 안쪽 여백 축소(본문 폭 확보) */
+  .panel {
+    padding: var(--s4);
+  }
+  .wizard {
+    padding: var(--s4);
+    margin-top: var(--s3);
+  }
+
+  /* 접이식 머리(실행 로그 보기): 설명은 다음 줄로 */
+  .collapse-head {
+    flex-wrap: wrap;
+    white-space: nowrap;
+  }
+  .collapse-head > .muted {
+    flex: 1 1 100%;
+    margin-left: 0 !important;
+    white-space: normal;
+  }
+
+  /* 이름·값 입력 줄: 고정 폭 이름 칸(비밀 설정값)도 화면 폭에 맞춰 나눠 갖는다 */
+  .kv-row > .input:first-child {
+    flex: 2 1 0 !important;
+    max-width: none !important;
+  }
+
+  /* 카드·그리드 1열 */
+  .card-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* 페이지 머리: 제목과 버튼 묶음을 세로로, 버튼 줄은 감싸기 */
+  .page-head > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .page-head h2 {
+    flex-wrap: wrap;
+    font-size: 20px;
+  }
+  .page-head .row {
+    flex-wrap: wrap;
+  }
+  .page-head .stack {
+    align-items: stretch !important;
+    width: 100%;
+  }
+
+  /* 앱 상세 탭: 넘치면 탭 줄만 가로 스크롤 */
+  .tabs {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .tabs .tab {
+    white-space: nowrap;
+    flex: none;
+  }
+
+  /* 키-값 줄: 긴 주소·저장소 URL이 줄바꿈되게 */
+  .kv .v {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  /* 배포 이력 줄: 시각은 줄바꿈 허용 */
+  .deploy-row > div {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  /* 모달: 화면 폭에 맞춰 여백 축소 */
+  .scrim {
+    padding: var(--s3);
+  }
+  .modal {
+    padding: var(--s5) var(--s4);
+    max-height: calc(100dvh - 2 * var(--s3));
+    overflow-y: auto;
+  }
+  .modal-actions {
+    flex-wrap: wrap;
+  }
+
+  /* 관리자: 상단 줄 감싸기, 경로 표시는 다음 줄로 */
+  .admin-bar {
+    flex-wrap: wrap;
+    gap: var(--s2) var(--s3);
+    padding: var(--s3);
+  }
+  .admin-bar .breadcrumb {
+    order: 10;
+    flex: 1 1 100%;
+  }
+  .admin-body {
+    padding: var(--s3);
+  }
+  .admin-tabs {
+    padding: 0 var(--s2);
+  }
+  .search,
+  .search input {
+    width: 100%;
+  }
+}

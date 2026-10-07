@@ -14,15 +14,18 @@ from typing import Any
 
 from ..config import load_config
 from ..data.deployments import (
+    InvalidPageToken,
     adopt_deployment,
     create_deployment_for_execution,
     find_deployment_by_execution,
     list_deployments,
+    list_deployments_page,
     put_deployment,
 )
 from ..domain.redeploy import record_runtime_redeploy, start_runtime_redeploy
 from ..domain.validate import parse_body
 from ..http.errors import errors
+from ..http.query import int_param
 from ..http.response import ProxyResult, created, list_response, ok
 from ..http.router import RouteContext
 from ..integrations.codepipeline import start_pipeline
@@ -53,10 +56,17 @@ def trigger_deploy(ctx: RouteContext) -> ProxyResult:
 
 
 def list_app_deployments(ctx: RouteContext) -> ProxyResult:
-    """GET /apps/{id}/deployments — 배포 이력(최신순)."""
+    """GET /apps/{id}/deployments — 배포 이력(최신순). limit 1~100(기본 20), nextToken(불투명).
+
+    QA A6: limit=0 등 범위 밖은 500 대신 400, LastEvaluatedKey 를 nextToken 으로 전달(다음 페이지).
+    """
     app = load_owned_app(ctx)
-    limit = _parse_limit(ctx.query.get("limit"), 20)
-    return list_response(list_deployments(app["appId"], limit))
+    limit = int_param(ctx.query, "limit", default=20, minimum=1, maximum=100)
+    try:
+        items, next_token = list_deployments_page(app["appId"], limit, ctx.query.get("nextToken"))
+    except InvalidPageToken as err:
+        raise errors.validation("다음 페이지 정보가 올바르지 않아요. 처음부터 다시 불러와 주세요.") from err
+    return list_response(items, next_token)
 
 
 def rollback_deploy(ctx: RouteContext) -> ProxyResult:
@@ -149,12 +159,3 @@ def _start_pipeline_or_friendly_error(stage: str, app_id: str) -> str | None:
             "지금은 배포를 시작할 수 없어요. 앱이 아직 준비 중이거나 배포가 진행 중일 수 있어요."
         ) from err
 
-
-def _parse_limit(raw: str | None, default: int) -> int:
-    if raw is None:
-        return default
-    try:
-        value = int(raw)
-    except (ValueError, TypeError):
-        return default
-    return value

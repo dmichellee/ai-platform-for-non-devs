@@ -63,6 +63,9 @@ export function TopBar({
         AppHub
       </button>
       <div className="spacer" />
+      {/* 메뉴 묶음 — 데스크톱은 display:contents 로 기존 한 줄 배치 그대로, 좁은 화면(≤640px)에서는
+          둘째 줄로 내려 가로로 나란히(넘치면 이 줄만 가로 스크롤) 보여준다. */}
+      <nav className="topbar-nav" aria-label="주요 메뉴">
       <button
         type="button"
         className={`topbar-link ${isDash ? "active" : ""}`}
@@ -103,6 +106,7 @@ export function TopBar({
           </span>
         </button>
       )}
+      </nav>
       {appCount !== undefined && quota !== undefined && (
         <span className="chip">
           내 앱 {appCount} / {quota}

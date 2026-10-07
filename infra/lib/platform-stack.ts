@@ -303,6 +303,8 @@ export class PlatformStack extends Stack {
 
     // ── REST API Gateway + Lambda 핸들러 골격 ──────────────────────────────
     // D-decision: REST API 채택(HTTP API 아님). 근거는 반환값 참조.
+    // provisioner CodeBuild 명시 로그 그룹명 — API 역할(ProvisionerLogsRead)과 ProvisionerLogs가 공유하는 단일 소스.
+    const provisionerLogGroupName = `/apphub/${config.stage}/provisioner`;
     const apiLogGroup = new logs.LogGroup(this, "ApiHandlerLogs", {
       logGroupName: `/apphub/${config.stage}/api`,
       retention: logs.RetentionDays.ONE_MONTH,
@@ -350,6 +352,8 @@ export class PlatformStack extends Stack {
     //
     // (1) logs:FilterLogEvents — 앱 로그 뷰어(GET /apps/{id}/logs). 앱 로그 그룹은
     //     runtime 스택이 `/apphub/{stage}/app/*`(하위: `.../<appId>`)로 만든다(app-runtime).
+    //     QA F3 확인: 첫 ARN 끝 `*`가 그룹 ARN(`…/app/{id}`)과 스트림 ARN(`…/app/{id}:log-stream:…`)을 모두 덮는다
+    //     (IAM `*`는 `/`·`:` 포함 매칭). 두 번째 ARN은 의도를 명시하는 중복.
     apiHandler.addToRolePolicy(
       new iam.PolicyStatement({
         sid: "AppLogsFilter",
@@ -656,6 +660,57 @@ export class PlatformStack extends Stack {
       }),
     );
 
+    // (10) QA M6(2026-10-08) — 배포 로그 조회(GET /apps/{id}/deployments/{deploymentId}/logs).
+    //      파이프라인 실행 → 액션 실행 목록에서 CodeBuild 빌드 ID를 찾고, BatchGetBuilds로 로그 그룹/스트림을 얻어
+    //      로그 이벤트를 읽는다. 앱 파이프라인 이름 규약 `${prefix}-app-*`로 한정(deploy-notify와 동일 범위).
+    apiHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "DeployLogsPipelineRead",
+        // QA F4 — API 핸들러는 ListActionExecutions만 호출(GetPipelineExecution은 deploy-notify 전용).
+        actions: ["codepipeline:ListActionExecutions"],
+        resources: [this.formatArn({ service: "codepipeline", resource: `${prefix}-app-*` })],
+      }),
+    );
+    // (11) QA M6/M4 — CodeBuild 빌드 조회. BatchGetBuilds(배포 로그 위치·빌드 상태, 자동 배포 토글 시 저장된
+    //      빌드 ID로 진행 중 판정)는 project ARN 리소스 레벨 지원 → 앱 프로젝트
+    //      (`${prefix}-app-*` = validate/deploy 빌드)와 provisioner(롤백·시크릿 변경·pipeline 스택 재배포 빌드)로 한정.
+    apiHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "DeployLogsBuildRead",
+        actions: ["codebuild:BatchGetBuilds"],
+        resources: [
+          this.formatArn({ service: "codebuild", resource: "project", resourceName: `${prefix}-app-*` }),
+          this.provisionerBuildArn(prefix),
+        ],
+      }),
+    );
+    // (12) QA M6 — provisioner 빌드 로그 그룹 읽기. 앱 빌드 로그(`/apphub/{stage}/app/{appId}/build`, app-pipeline
+    //      buildLogGroup)는 (1) AppLogsFilter의 `/apphub/{stage}/app/*`가 이미 커버한다(IAM `*`는 `/`·`:`까지 매칭).
+    //      provisioner는 명시 로그 그룹(`/apphub/{stage}/provisioner`, 아래 ProvisionerLogs)으로 고정돼 있어 그 1개만.
+    //      QA F3 — FilterLogEvents/DescribeLogStreams는 log-group ARN(`…:log-group:/apphub/{stage}/provisioner`, 접미 없음)을,
+    //      GetLogEvents는 log-stream ARN(`…provisioner:log-stream:…`)을 평가한다. `…provisioner:*`는 콜론 뒤 문자가
+    //      필수라 그룹 ARN에 매칭되지 않으므로 그룹 ARN과 스트림 ARN을 둘 다 둔다.
+    apiHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "ProvisionerLogsRead",
+        actions: ["logs:FilterLogEvents", "logs:GetLogEvents", "logs:DescribeLogStreams"],
+        resources: [
+          this.formatArn({
+            service: "logs",
+            resource: "log-group",
+            resourceName: provisionerLogGroupName,
+            arnFormat: ArnFormat.COLON_RESOURCE_NAME,
+          }),
+          this.formatArn({
+            service: "logs",
+            resource: "log-group",
+            resourceName: `${provisionerLogGroupName}:*`,
+            arnFormat: ArnFormat.COLON_RESOURCE_NAME,
+          }),
+        ],
+      }),
+    );
+
     // D19: public = Regional(현행), private = Private REST API + execute-api 엔드포인트 연결 + 리소스 정책
     //  (aws:SourceVpce = 그 엔드포인트만 허용). 엔드포인트를 연결하면 전용 호스트명
     //  `{restApiId}-{vpceId}.execute-api.{region}.amazonaws.com`이 생기고 SPA는 그 주소를 호출한다.
@@ -926,7 +981,7 @@ export class PlatformStack extends Stack {
     // D-M5-06: 실 buildspec(provisioner.yml)로 app-pipeline/runtime을 원격 배포한다.
     //  ProvisionApp 상태 기계(provision-task)가 StartBuild env override로 트리거.
     const provisionerLogGroup = new logs.LogGroup(this, "ProvisionerLogs", {
-      logGroupName: `/apphub/${config.stage}/provisioner`,
+      logGroupName: provisionerLogGroupName,
       retention: logs.RetentionDays.ONE_MONTH,
       removalPolicy: RemovalPolicy.DESTROY,
     });

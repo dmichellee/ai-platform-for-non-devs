@@ -48,7 +48,7 @@ export function ThemeToggle(): JSX.Element {
         onClick={() => setTheme("light")}
       >
         <Sun className="icon" size={15} strokeWidth={2} />
-        라이트
+        <span className="toggle-label">라이트</span>
       </button>
       <button
         type="button"
@@ -58,7 +58,7 @@ export function ThemeToggle(): JSX.Element {
         onClick={() => setTheme("dark")}
       >
         <Moon className="icon" size={15} strokeWidth={2} />
-        다크
+        <span className="toggle-label">다크</span>
       </button>
     </div>
   );

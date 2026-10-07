@@ -299,7 +299,8 @@ export function CreateWizard(): JSX.Element {
                 <span className="num">
                   {i < step ? <Check size={13} className="icon" /> : i + 1}
                 </span>
-                {label}
+                {/* 좁은 화면에서는 현재 단계 이름만 보이고 나머지는 번호만(CSS) */}
+                <span className="step-label">{label}</span>
               </span>
               {i < STEP_LABELS.length - 1 && <span className="line" />}
             </span>

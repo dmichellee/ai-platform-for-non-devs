@@ -61,18 +61,43 @@ export interface QueryResult<T> {
   loading: boolean;
   error: ApiError | null;
   reload: () => void;
+  /** 화면 쪽 낙관적 갱신용 — 서버 왕복 없이 data 를 바꾼다(다음 재요청 결과가 덮어씀). */
+  mutate: (updater: (prev: T | null) => T | null) => void;
 }
 
-/** 단순 데이터 패칭 훅. deps 변경 또는 reload 시 재요청. */
+export interface QueryOptions<T> {
+  /**
+   * 자동 재요청 주기(ms). false/0/미지정이면 자동 재요청 없음.
+   * 함수면 최신 data 로 매 렌더 계산한다(예: 전이 상태면 5초, 아니면 30초).
+   * - 직전 요청이 끝난 뒤부터 주기를 센다(요청이 겹치지 않음).
+   * - 자동 재요청은 loading 을 켜지 않는다(스켈레톤 깜빡임 없이 조용히 갱신).
+   * - 탭이 숨겨지면(visibilitychange) 멈추고, 다시 보이면 즉시 한 번 불러온 뒤 주기를 이어간다.
+   * - 조용한 재요청이 실패하면 기존 data 를 유지한다(일시 오류로 화면을 비우지 않음).
+   *   단 404 는 "대상이 사라짐"이므로 data 를 비우고 error 로 알린다(예: 삭제 완료된 앱).
+   */
+  refetchInterval?: number | false | ((data: T | null) => number | false);
+}
+
+function isDocumentVisible(): boolean {
+  return typeof document === "undefined" || document.visibilityState !== "hidden";
+}
+
+/** 단순 데이터 패칭 훅. deps 변경 또는 reload 시 재요청. opts.refetchInterval 로 주기 갱신. */
 export function useQuery<T>(
   fetcher: (api: ApiClient) => Promise<T>,
   deps: unknown[],
+  opts: QueryOptions<T> = {},
 ): QueryResult<T> {
   const api = useApi();
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
   const [tick, setTick] = useState(0);
+  // 요청(최초·reload·자동)이 끝날 때마다 증가 — 다음 자동 재요청 예약의 기준점.
+  const [settled, setSettled] = useState(0);
+  const [visible, setVisible] = useState(isDocumentVisible);
+  // 숨김→보임 전환 직후에는 주기를 기다리지 않고 바로 불러온다.
+  const resumeRef = useRef(false);
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
 
@@ -93,7 +118,10 @@ export function useQuery<T>(
         }
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          setSettled((n) => n + 1);
+        }
       });
     return () => {
       cancelled = true;
@@ -101,8 +129,55 @@ export function useQuery<T>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, tick, ...deps]);
 
+  const ri = opts.refetchInterval;
+  const interval = (typeof ri === "function" ? ri(data) : ri) || 0;
+
+  useEffect(() => {
+    if (!interval) return;
+    const onVis = (): void => {
+      const v = isDocumentVisible();
+      if (v) resumeRef.current = true;
+      setVisible(v);
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [interval]);
+
+  useEffect(() => {
+    if (!interval || !visible || loading) return;
+    let cancelled = false;
+    const wait = resumeRef.current ? 0 : interval;
+    resumeRef.current = false;
+    const timer = window.setTimeout(() => {
+      fetcherRef
+        .current(api)
+        .then((d) => {
+          if (cancelled) return;
+          setData(d);
+          setError(null);
+        })
+        .catch((e: unknown) => {
+          if (cancelled) return;
+          if (e instanceof ApiError && e.httpStatus === 404) {
+            setData(null);
+            setError(e);
+          }
+          // 그 외 일시 오류는 조용히 넘기고 다음 주기에 다시 시도한다.
+        })
+        .finally(() => {
+          if (!cancelled) setSettled((n) => n + 1);
+        });
+    }, wait);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, interval, visible, loading, settled, ...deps]);
+
   const reload = useCallback(() => setTick((t) => t + 1), []);
-  return { data, loading, error, reload };
+  const mutate = useCallback((updater: (prev: T | null) => T | null) => setData(updater), []);
+  return { data, loading, error, reload, mutate };
 }
 
 export interface MutationState<A, R> {

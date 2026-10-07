@@ -5,6 +5,7 @@
 import type {
   AppStatus,
   ConnectionStatus,
+  DeploymentLogSource,
   DeploymentStatus,
   DeploymentTrigger,
   FailureCategory,
@@ -102,6 +103,19 @@ export const REDEPLOY_SKIPPED_MESSAGE: Record<RedeploySkipReason, string> = {
   START_FAILED:
     "저장은 됐지만 다시 배포를 시작하지 못했어요. 위의 '지금 배포'를 눌러 바뀐 비밀 설정값을 적용해주세요.",
 };
+
+// 자동 배포 토글 저장 결과(QA M4) — 서버가 배포 설정을 다시 적용하는 데 몇 분 걸린다.
+export const AUTO_DEPLOY_APPLYING_TITLE = "적용 중 — 몇 분 뒤 반영돼요";
+export const AUTO_DEPLOY_SKIPPED_FALLBACK =
+  "자동 배포 설정은 저장됐지만 지금은 바로 적용하지 못했어요.";
+
+// 배포 상세 로그 출처(QA M6) — 사용자 용어로만 노출(내부 빌드 도구 이름 금지).
+export const DEPLOYMENT_LOG_SOURCE_LABEL: Record<DeploymentLogSource, string> = {
+  "validate-build": "검사·빌드 로그",
+  deploy: "배포 로그",
+  provisioner: "앱 준비 로그",
+};
+export const DEPLOYMENT_LOG_EMPTY = "아직 기록된 로그가 없어요. 잠시 뒤 다시 확인해주세요";
 
 export const DEPLOY_STATUS_LABEL: Record<DeploymentStatus, string> = {
   PENDING: "대기 중",

@@ -108,7 +108,8 @@ phases:
       - |
         if [ "${APP_STACK_KIND}" = "pipeline" ]; then
           node /tmp/pipe-ctx.js > /tmp/pipe-ctx.env
-          cat /tmp/pipe-ctx.env
+          # 컨텍스트 파일 전체를 echo 하지 않는다(QA F5) — *B64 값은 길이만.
+          awk '{ line=$0; sub(/^export /, "", line); k=line; sub(/=.*/, "", k); v=substr(line, length(k)+2); if (k ~ /B64$/) print k "=<" length(v) " chars>"; else print k "=" v }' /tmp/pipe-ctx.env
           . /tmp/pipe-ctx.env
         fi
 
@@ -131,7 +132,9 @@ phases:
             echo "배포 컨텍스트 조립 실패(위 [apphub] 메시지 참고) — 배포하지 않습니다." >&2
             exit 1
           fi
-          cat /tmp/app-ctx.env
+          # 컨텍스트 파일 전체를 echo 하지 않는다(QA F5) — 빌드 로그는 앱 소유자에게 보인다(M6).
+          #  *B64(permissionPolicyB64=권한 템플릿 정책 문서, envVarsB64, secretKeysB64, scheduleB64)는 길이만.
+          awk '{ line=$0; sub(/^export /, "", line); k=line; sub(/=.*/, "", k); v=substr(line, length(k)+2); if (k ~ /B64$/) print k "=<" length(v) " chars>"; else print k "=" v }' /tmp/app-ctx.env
         fi
       - |
         if [ "${APP_STACK_KIND}" = "runtime" ]; then

@@ -5,6 +5,8 @@ import { AppDetail } from "../src/screens/user/AppDetail.js";
 import { Connections } from "../src/screens/user/Connections.js";
 import { CreateWizard } from "../src/screens/user/CreateWizard.js";
 import { Login } from "../src/screens/Login.js";
+import { DeploymentDetail } from "../src/screens/user/DeploymentDetail.js";
+import { mockDeployments } from "../src/mock/fixtures.js";
 import { renderWithProviders, seedSession, setHash } from "./harness.js";
 import { AuthProvider } from "../src/auth/AuthContext.js";
 import { setConfigForTest, type RuntimeConfig } from "../src/lib/config.js";
@@ -70,6 +72,15 @@ describe("사용자 화면 금지 용어 노출 검출", () => {
     await waitFor(() => expect(screen.getByText("재고 알림봇")).toBeInTheDocument());
     // 실패 사유 문구가 실제로 노출된 상태에서 금지 용어를 스캔한다.
     expect(screen.getByText(/배포 준비\(빌드 환경 구성\) 중 문제가 발생했어요/)).toBeInTheDocument();
+    assertNoForbidden();
+  });
+
+  it("배포 상세(실패 — 검사·빌드 로그 노출)에 AWS 용어가 없다", async () => {
+    const dep = mockDeployments["99887766"]![0]!;
+    setHash(`/apps/99887766/deployments/${encodeURIComponent(dep.deploymentId)}`);
+    renderWithProviders(<DeploymentDetail appId="99887766" deploymentId={dep.deploymentId} />);
+    await screen.findByText("검사·빌드 로그");
+    await screen.findByText(/npm ERR! code ERESOLVE/);
     assertNoForbidden();
   });
 

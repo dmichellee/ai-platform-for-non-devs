@@ -221,6 +221,19 @@ export interface SingleEnvelope<T> {
 export interface ListEnvelope<T> {
   data: { items: T[]; nextToken?: string };
 }
+// GET /apps/{id}/deployments/{deploymentId}/logs (2026-10-08 신설, QA M6) — 해당 배포의 검사·빌드·배포 단계 로그.
+// 계약: {data:{events, nextToken?, source, stage?}}. 로그가 아직 없으면 events:[](200). 레코드 없음 404.
+export type DeploymentLogSource = "validate-build" | "deploy" | "provisioner";
+export interface DeploymentLogs {
+  events: LogEvent[];
+  nextToken?: string;
+  source: DeploymentLogSource;
+  stage?: "VALIDATING" | "DEPLOYING";
+}
+export interface DeploymentLogsEnvelope {
+  data: DeploymentLogs;
+}
+
 export interface LogsEnvelope {
   data: { events: LogEvent[]; nextToken?: string };
 }
@@ -263,8 +276,22 @@ export type RedeployResult =
   | { status: "PENDING"; deploymentId: string; note?: string }
   | { status: "SKIPPED"; reason: RedeploySkipReason; note?: string };
 
-/** PATCH /apps/{id} 응답 data = 갱신된 App + (시크릿 변경 시) redeploy. */
-export type PatchAppResponse = App & { redeploy?: RedeployResult };
+/**
+ * PATCH /apps/{id} 응답의 자동 배포 토글 반영 결과(2026-10-08, QA M4).
+ * autoDeployEnabled 가 실제로 바뀐 PATCH 에서만 내려온다(START_FAILED 재시도 예외). 서버가 배포 설정을 다시 적용(수 분).
+ *  - APPLYING: 반영 중 — 몇 분 뒤 적용.
+ *  - SKIPPED/START_FAILED: 저장은 유지, 바로 적용 못 함(같은 값으로 다시 저장하면 재시도).
+ *  - SKIPPED/ALREADY_APPLYING: 이전 적용이 진행 중 → 이번 변경은 저장 안 됨(응답 autoDeployEnabled = 기존 값).
+ *  - SKIPPED/NOT_READY: 저장은 됨, 앱이 준비되지 않아 바로 적용 못 함.
+ * note: 화면에 그대로 노출 가능한 한국어.
+ */
+export type AutoDeploySkipReason = "START_FAILED" | "ALREADY_APPLYING" | "NOT_READY";
+export type AutoDeployResult =
+  | { status: "APPLYING"; note: string }
+  | { status: "SKIPPED"; reason: AutoDeploySkipReason; note: string };
+
+/** PATCH /apps/{id} 응답 data = 갱신된 App + (시크릿 변경 시) redeploy + (자동 배포 변경 시) autoDeploy. */
+export type PatchAppResponse = App & { redeploy?: RedeployResult; autoDeploy?: AutoDeployResult };
 
 export interface PatchAppRequest {
   autoDeployEnabled?: boolean;

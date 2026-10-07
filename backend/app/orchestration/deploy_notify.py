@@ -55,6 +55,7 @@ STATUS_ORDER 인덱스가 현재보다 낮은 값으로도 내리지 않는다(�
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from ..data.alb_registry import delete_pending, ensure_alb_registered
@@ -137,23 +138,94 @@ def _find_deployment(
 
 
 def _source_revision(stage_value: str, app_id: str, execution_id: str) -> tuple[str | None, str | None]:
-    """get_pipeline_execution 의 artifactRevisions 에서 (commitSha, commitMessage) 최대한 채움.
+    """이 실행의 (commitSha, commitMessage) 를 최대한 채움(QA N4/L1).
 
-    조회 실패/필드 없음은 (None, None) — 커밋 정보는 있으면 좋은 부가정보라 없어도 진행한다.
+    1) get_pipeline_execution.artifactRevisions[0] — revisionId(SHA) + revisionSummary.
+       CodeStar 연결(GitHub/GitLab)은 revisionSummary 가 JSON(`{"ProviderType":..,"CommitMessage":..}`)이라 파싱.
+    2) 비어 있거나 일부 결측이면 list_action_executions 의 Source 액션 output.outputVariables
+       (CommitId / CommitMessage) 로 보충 — 실행 직후엔 artifactRevisions 가 아직 비어 있는 경우가 있다.
+    조회 실패/필드 없음은 None — 커밋 정보는 있으면 좋은 부가정보라 없어도 진행한다(후속 이벤트에서 재시도).
     """
+    sha: str | None = None
+    message: str | None = None
     try:
         res = client("codepipeline").get_pipeline_execution(
             pipelineName=_pipeline_name(stage_value, app_id),
             pipelineExecutionId=execution_id,
         )
+        revisions = (res.get("pipelineExecution") or {}).get("artifactRevisions") or []
+        if revisions:
+            sha = revisions[0].get("revisionId") or None
+            message = _summary_message(revisions[0].get("revisionSummary"))
     except Exception as err:  # noqa: BLE001 - 커밋 정보 조회 실패는 무시(레코드는 생성)
         print("[deploy-notify] get_pipeline_execution failed:", str(err))
+    if sha and message:
+        return sha, message
+    fb_sha, fb_message = _source_output_variables(stage_value, app_id, execution_id)
+    return sha or fb_sha, message or fb_message
+
+
+def _summary_message(summary: object) -> str | None:
+    if not isinstance(summary, str) or not summary:
+        return None
+    text = summary.strip()
+    if text.startswith("{"):
+        try:
+            data = json.loads(text)
+        except ValueError:
+            return summary
+        if isinstance(data, dict):
+            msg = data.get("CommitMessage")
+            return msg if isinstance(msg, str) and msg else None
+    return summary
+
+
+def _source_output_variables(
+    stage_value: str, app_id: str, execution_id: str
+) -> tuple[str | None, str | None]:
+    """Source 액션 outputVariables 의 (CommitId, CommitMessage). 없으면 (None, None)."""
+    try:
+        res = client("codepipeline").list_action_executions(
+            pipelineName=_pipeline_name(stage_value, app_id),
+            filter={"pipelineExecutionId": execution_id},
+        )
+    except Exception as err:  # noqa: BLE001
+        print("[deploy-notify] list_action_executions(source) failed:", str(err))
         return None, None
-    revisions = (res.get("pipelineExecution") or {}).get("artifactRevisions") or []
-    if not revisions:
-        return None, None
-    first = revisions[0]
-    return first.get("revisionId"), first.get("revisionSummary")
+    for detail in res.get("actionExecutionDetails") or []:
+        if detail.get("stageName") != "Source":
+            continue
+        variables = (detail.get("output") or {}).get("outputVariables") or {}
+        sha = variables.get("CommitId") or None
+        message = variables.get("CommitMessage") or None
+        if sha or message:
+            return sha, message
+    return None, None
+
+
+def _backfill_commit(
+    stage_value: str, app_id: str, existing: dict[str, Any], execution_id: str
+) -> bool:
+    """레코드에 commitSha 가 없으면 재조회해 채운다(N4/L1). 상태 역행 규칙과 무관한 보충 필드.
+
+    수동 배포 접수(trigger_deploy) 레코드도 커밋 정보 없이 생성되므로 이 경로로 채워진다.
+    이미 commitSha 가 있으면 아무것도 하지 않는다(덮어쓰지 않음). 채웠으면 True.
+    """
+    if existing.get("commitSha"):
+        return False
+    sha, message = _source_revision(stage_value, app_id, execution_id)
+    if not sha:
+        return False
+    update_deployment(
+        app_id,
+        existing["deploymentId"],
+        commit_sha=sha,
+        commit_message=message if not existing.get("commitMessage") else None,
+    )
+    existing["commitSha"] = sha
+    if message and not existing.get("commitMessage"):
+        existing["commitMessage"] = message
+    return True
 
 
 def _failure_category(stage_value: str, app_id: str, execution_id: str) -> str:
@@ -237,8 +309,12 @@ def _handle_stage_event(detail: dict[str, Any], stage_value: str) -> dict[str, A
         return {"appId": app_id, "reason": "no-execution-id"}
     if state != "STARTED":
         # 스테이지 SUCCEEDED/FAILED 는 파이프라인 종결 이벤트에서 처리(스테이지 성공을 배포 성공으로
-        # 오기록하지 않는다). STARTED 외 스테이지 이벤트는 스킵.
-        return {"appId": app_id, "reason": f"stage-state-{state}-skipped"}
+        # 오기록하지 않는다). 상태는 건드리지 않되 커밋 정보 보충(N4/L1)만 한다.
+        result: dict[str, Any] = {"appId": app_id, "reason": f"stage-state-{state}-skipped"}
+        existing = _find_deployment(app_id, execution_id)
+        if existing is not None and _backfill_commit(stage_value, app_id, existing, execution_id):
+            result["commitBackfilled"] = True
+        return result
 
     next_status = _STAGE_STARTED_STATUS.get(stage_name or "")
     if next_status is None:
@@ -268,8 +344,12 @@ def _handle_stage_event(detail: dict[str, Any], stage_value: str) -> dict[str, A
             # 클레임은 있는데 레코드가 안 보임(TTL 만료 직후 등 극단) — 새로 만들지 않고 스킵.
             return {"appId": app_id, "reason": "claimed-record-missing-skipped"}
 
-    # 기존 레코드 갱신 — 역행 금지 멱등.
-    return _advance(app_id, existing, next_status)
+    # 기존 레코드 갱신 — 역행 금지 멱등. 커밋 정보가 비어 있으면 보충(N4/L1, 상태와 독립).
+    backfilled = _backfill_commit(stage_value, app_id, existing, execution_id)
+    out = _advance(app_id, existing, next_status)
+    if backfilled:
+        out["commitBackfilled"] = True
+    return out
 
 
 def _handle_pipeline_event(detail: dict[str, Any], stage_value: str) -> dict[str, Any]:
@@ -305,7 +385,10 @@ def _handle_pipeline_event(detail: dict[str, Any], stage_value: str) -> dict[str
         # 이 종결 레코드에 _advance(종결 보존)만 적용된다.
         result = _create_terminal(stage_value, app_id, execution_id, target_status, failure_category)
     else:
+        backfilled = _backfill_commit(stage_value, app_id, existing, execution_id)
         result = _advance(app_id, existing, target_status, failure_category=failure_category)
+        if backfilled:
+            result["commitBackfilled"] = True
     # 첫 배포 완료를 App.status 로도 반영(A안). 조건부 전이라 이미 ACTIVE(재배포)면 no-op.
     app_transition = _advance_app_status(app_id, target_status, failure_category)
     if app_transition:
@@ -351,6 +434,10 @@ def _create_terminal(
     existing = _find_deployment(app_id, execution_id, consistent=True)
     if existing is None:
         return {"appId": app_id, "reason": "claimed-record-missing-skipped"}
+    if commit_sha and not existing.get("commitSha"):
+        update_deployment(
+            app_id, existing["deploymentId"], commit_sha=commit_sha, commit_message=commit_message
+        )
     return _advance(app_id, existing, target_status, failure_category=failure_category)
 
 

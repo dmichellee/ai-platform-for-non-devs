@@ -13,6 +13,8 @@ import type {
   ComputePreset,
   CreateAppRequest,
   Deployment,
+  DeploymentLogs,
+  DeploymentLogsEnvelope,
   ListEnvelope,
   LogEvent,
   LogsEnvelope,
@@ -55,7 +57,14 @@ export interface ApiClient {
   // 재시작 — 지금 버전 그대로 앱만 다시 켠다(빌드/배포 없음). ACTIVE 일 때만.
   restartApp(appId: string): Promise<RestartResult>;
   // 로그
+  // 앱 실행 로그 — 서버가 최신부터(기본 최근 1시간) 내려준다. limit 1~1000, nextToken 으로 더 오래된 페이지.
   getLogs(appId: string, opts?: { limit?: number; nextToken?: string; startTime?: number }): Promise<{ events: LogEvent[]; nextToken?: string }>;
+  // 배포 1건의 검사·빌드·배포 단계 로그(QA M6 신설). limit 1~1000(기본 200), nextToken.
+  getDeploymentLogs(
+    appId: string,
+    deploymentId: string,
+    opts?: { limit?: number; nextToken?: string },
+  ): Promise<DeploymentLogs>;
   // 모니터링 지표 (api-requests.md #6, backend 병렬 구현)
   getMetrics(appId: string, range: MetricRange): Promise<AppMetrics>;
   // 연결
@@ -229,6 +238,21 @@ export class HttpApiClient implements ApiClient {
     if (opts?.nextToken) q.set("nextToken", opts.nextToken);
     if (opts?.startTime) q.set("startTime", String(opts.startTime));
     const env = await this.request<LogsEnvelope>("GET", `/apps/${appId}/logs?${q.toString()}`);
+    return env.data;
+  }
+
+  async getDeploymentLogs(
+    appId: string,
+    deploymentId: string,
+    opts?: { limit?: number; nextToken?: string },
+  ): Promise<DeploymentLogs> {
+    const q = new URLSearchParams();
+    q.set("limit", String(opts?.limit ?? 200));
+    if (opts?.nextToken) q.set("nextToken", opts.nextToken);
+    const env = await this.request<DeploymentLogsEnvelope>(
+      "GET",
+      `/apps/${appId}/deployments/${encodeURIComponent(deploymentId)}/logs?${q.toString()}`,
+    );
     return env.data;
   }
 

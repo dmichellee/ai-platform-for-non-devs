@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import json
 import time
 from typing import Any
 
@@ -258,6 +261,57 @@ def list_deployments(
         ConsistentRead=consistent,
     )
     return [_to_deployment(i) for i in res.get("Items", [])]  # type: ignore[misc]
+
+
+def get_deployment(app_id: str, deployment_id: str) -> dict[str, Any] | None:
+    """Deployment 단건(deploymentId = SK `DEPLOY#{ts}` 의 ts). 없으면 None."""
+    if not deployment_id:
+        return None
+    res = table().get_item(Key={"PK": app_pk(app_id), "SK": deploy_sk(deployment_id)})
+    item = res.get("Item")
+    if not item or item.get("entityType") != "Deployment":
+        return None
+    return _to_deployment(item)
+
+
+class InvalidPageToken(Exception):
+    """배포 이력 nextToken 이 해석 불가/다른 앱의 키 — 핸들러가 400 VALIDATION_ERROR 로 변환."""
+
+
+def _encode_page_token(key: dict[str, Any]) -> str:
+    raw = json.dumps({"SK": key["SK"]}, separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def _decode_page_token(app_id: str, token: str) -> dict[str, Any]:
+    try:
+        padded = token + "=" * (-len(token) % 4)
+        data = json.loads(base64.urlsafe_b64decode(padded.encode()).decode())
+        sk = data["SK"]
+    except (ValueError, KeyError, TypeError, binascii.Error, UnicodeDecodeError) as err:
+        raise InvalidPageToken() from err
+    if not isinstance(sk, str) or not sk.startswith(SkPrefix.DEPLOY):
+        raise InvalidPageToken()
+    # PK 는 토큰에 싣지 않고 항상 요청 앱으로 고정 — 다른 앱 파티션으로의 커서 조작 방지.
+    return {"PK": app_pk(app_id), "SK": sk}
+
+
+def list_deployments_page(
+    app_id: str, limit: int, next_token: str | None = None
+) -> tuple[list[dict[str, Any]], str | None]:
+    """배포 이력 1페이지(최신순) + 다음 페이지 토큰(LastEvaluatedKey → 불투명 nextToken). A6."""
+    params: dict[str, Any] = {
+        "KeyConditionExpression": Key("PK").eq(app_pk(app_id))
+        & Key("SK").begins_with(SkPrefix.DEPLOY),
+        "ScanIndexForward": False,
+        "Limit": limit,
+    }
+    if next_token:
+        params["ExclusiveStartKey"] = _decode_page_token(app_id, next_token)
+    res = table().query(**params)
+    items = [_to_deployment(i) for i in res.get("Items", [])]
+    last = res.get("LastEvaluatedKey")
+    return items, (_encode_page_token(last) if last else None)  # type: ignore[return-value]
 
 
 def update_deployment(

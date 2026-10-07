@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
+import { readFileSync } from "node:fs";
+import * as path from "node:path";
 import { App } from "aws-cdk-lib";
 import { Template, Match } from "aws-cdk-lib/assertions";
 import { PlatformStack } from "../lib/platform-stack";
@@ -989,6 +991,100 @@ describe("platform 스택", () => {
       // 기존 provisionerBuildArn 상수 재사용 — apphub-dev-provisioner 프로젝트.
       expect(resJson).toContain("project/apphub-dev-provisioner");
       expect(isStar(st.Resource), "StartBuild는 범위 한정(* 아님)").toBe(false);
+    });
+  });
+
+  describe("API 역할 — QA M6 배포 로그 조회 · M4 자동 배포 토글 (2026-10-08)", () => {
+    type Stmt = { Sid?: string; Action?: unknown; Resource?: unknown };
+    type Pol = { Roles?: unknown; PolicyDocument?: { Statement?: Stmt[] } };
+    const asArray = (a: unknown): string[] =>
+      Array.isArray(a) ? (a as string[]) : typeof a === "string" ? [a] : [];
+    const isStar = (r: unknown): boolean =>
+      r === "*" || (Array.isArray(r) && r.length === 1 && r[0] === "*");
+    /** API Lambda(apphub-dev-api) 실행 역할에 붙은 정책 statement만. */
+    function apiRoleStmts(): Stmt[] {
+      const fns = template.findResources("AWS::Lambda::Function", {
+        Properties: { FunctionName: "apphub-dev-api" },
+      });
+      const role = (Object.values(fns)[0].Properties as { Role: { "Fn::GetAtt": [string, string] } }).Role;
+      const roleId = role["Fn::GetAtt"][0];
+      const out: Stmt[] = [];
+      for (const pol of Object.values(template.findResources("AWS::IAM::Policy"))) {
+        const p = pol.Properties as Pol;
+        if (!JSON.stringify(p.Roles).includes(`"${roleId}"`)) continue;
+        out.push(...(p.PolicyDocument?.Statement ?? []));
+      }
+      return out;
+    }
+    const bySid = (sid: string): Stmt[] => apiRoleStmts().filter((st) => st.Sid === sid);
+    const resourcesOf = (st: Stmt): string[] =>
+      (Array.isArray(st.Resource) ? st.Resource : [st.Resource]).map((r) => JSON.stringify(r));
+
+    it("[M6/F4] codepipeline ListActionExecutions만(GetPipelineExecution은 deploy-notify 전용) — 앱 파이프라인(apphub-dev-app-*) 한정", () => {
+      const stmts = bySid("DeployLogsPipelineRead");
+      expect(stmts.length).toBe(1);
+      expect(asArray(stmts[0].Action)).toEqual(["codepipeline:ListActionExecutions"]);
+      // API 역할 어디에도 GetPipelineExecution 없음(최소권한).
+      for (const st of apiRoleStmts()) expect(asArray(st.Action)).not.toContain("codepipeline:GetPipelineExecution");
+      const res = resourcesOf(stmts[0]);
+      expect(res.length).toBe(1);
+      expect(res[0]).toContain(":apphub-dev-app-*");
+      expect(isStar(stmts[0].Resource)).toBe(false);
+    });
+
+    it("[M6/M4] codebuild BatchGetBuilds만(ListBuildsForProject 없음) — 앱 프로젝트 + provisioner 2개 ARN만", () => {
+      const stmts = bySid("DeployLogsBuildRead");
+      expect(stmts.length).toBe(1);
+      expect(asArray(stmts[0].Action)).toEqual(["codebuild:BatchGetBuilds"]);
+      // 최소권한 — backend는 저장된 빌드 ID를 BatchGetBuilds로 조회한다. API 역할 어디에도 ListBuildsForProject 없음.
+      for (const st of apiRoleStmts()) expect(asArray(st.Action)).not.toContain("codebuild:ListBuildsForProject");
+      const res = resourcesOf(stmts[0]);
+      expect(res.length).toBe(2);
+      expect(res.some((r) => r.includes("project/apphub-dev-app-*"))).toBe(true);
+      expect(res.some((r) => r.includes("project/apphub-dev-provisioner"))).toBe(true);
+      expect(isStar(stmts[0].Resource)).toBe(false);
+    });
+
+    it("[M6] 앱 빌드 로그 그룹(/apphub/dev/app/{appId}/build)은 AppLogsFilter(/apphub/dev/app/*)가 커버 — 중복 statement 없음", () => {
+      const stmts = bySid("AppLogsFilter");
+      expect(stmts.length).toBe(1);
+      expect(asArray(stmts[0].Action)).toEqual(
+        expect.arrayContaining(["logs:FilterLogEvents", "logs:GetLogEvents", "logs:DescribeLogStreams"]),
+      );
+      const res = resourcesOf(stmts[0]);
+      expect(res.some((r) => r.includes("log-group:/apphub/dev/app/*"))).toBe(true);
+      // app-pipeline buildLogGroup 규약이 이 접두어 아래에 있음을 고정(규약이 바뀌면 이 테스트로 감지).
+      const pipelineSrc = readFileSync(path.join(__dirname, "..", "lib", "constructs", "app-pipeline.ts"), "utf8");
+      expect(pipelineSrc).toContain("logGroupName: `/apphub/${p.stage}/app/${p.appId}/build`");
+    });
+
+    it("[M6] provisioner 빌드 로그 — 명시 로그 그룹(/apphub/dev/provisioner, 30일) 1개로 한정 읽기", () => {
+      const stmts = bySid("ProvisionerLogsRead");
+      expect(stmts.length).toBe(1);
+      expect(asArray(stmts[0].Action).sort()).toEqual(
+        ["logs:DescribeLogStreams", "logs:FilterLogEvents", "logs:GetLogEvents"].sort(),
+      );
+      // QA F3 — 그룹 ARN(FilterLogEvents/DescribeLogStreams) + 스트림 ARN(GetLogEvents) 둘 다.
+      const res = resourcesOf(stmts[0]);
+      expect(res.length).toBe(2);
+      expect(res.some((r) => /log-group:\/apphub\/dev\/provisioner"/.test(r))).toBe(true);
+      expect(res.some((r) => r.includes("log-group:/apphub/dev/provisioner:*"))).toBe(true);
+      // provisioner CodeBuild가 실제로 그 로그 그룹에 쓰는지(기본 /aws/codebuild/... 아님) 고정.
+      template.hasResourceProperties("AWS::Logs::LogGroup", {
+        LogGroupName: "/apphub/dev/provisioner",
+        RetentionInDays: 30,
+      });
+      template.hasResourceProperties("AWS::CodeBuild::Project", {
+        Name: "apphub-dev-provisioner",
+        LogsConfig: { CloudWatchLogs: Match.objectLike({ Status: "ENABLED" }) },
+      });
+    });
+
+    it("[M4] provisioner StartBuild는 기존 StartProvisionerBuild로 유지 — 신규 statement에 StartBuild 중복 없음", () => {
+      expect(bySid("StartProvisionerBuild").length).toBe(1);
+      for (const sid of ["DeployLogsPipelineRead", "DeployLogsBuildRead", "ProvisionerLogsRead"]) {
+        for (const st of bySid(sid)) expect(asArray(st.Action)).not.toContain("codebuild:StartBuild");
+      }
     });
   });
 

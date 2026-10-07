@@ -48,6 +48,8 @@ export function AdminPresets(): JSX.Element {
           프리셋 추가
         </button>
       </div>
+      {/* 좁은 화면: 표는 이 상자 안에서만 가로 스크롤(화면 전체를 밀지 않음) */}
+      <div className="table-scroll">
       <table>
         <thead>
           <tr>
@@ -91,6 +93,7 @@ export function AdminPresets(): JSX.Element {
           ))}
         </tbody>
       </table>
+      </div>
 
       {deleting && (
         <ConfirmDeleteModal

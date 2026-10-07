@@ -422,3 +422,62 @@ def test_prepare_follows_describe_rules_marker(fake_aws: FakeAws) -> None:
     res = fake_aws.run("prepare-sleeping-app.cjs", IS_INITIAL="false")
     assert res.returncode == 0, res.stderr
     assert len(_modify_calls(fake_aws)) == 1
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# QA F5 (2026-10-08) — 컨텍스트 파일 전체 echo 금지(권한 템플릿 정책 문서가 앱 소유자에게 보이는 빌드 로그로 샘)
+# ══════════════════════════════════════════════════════════════════════════════
+
+_CTX_FILES = ("/tmp/app-ctx.env", "/tmp/pipe-ctx.env")
+_CTX_SPECS = ("provisioner.yml", "deploy.yml")
+
+
+@pytest.mark.parametrize("name", _CTX_SPECS)
+def test_f5_ctx_env_never_dumped(name: str) -> None:
+    """cat/echo/head/tail/less 등으로 컨텍스트 파일 원문을 출력하지 않는다(source(.)·마스킹 awk 만 허용)."""
+    import re
+
+    dump = re.compile(r"\b(cat|head|tail|less|more|tee|xxd|od|strings)\b[^\n|;&]*?(/tmp/(app|pipe)-ctx\.env)")
+    for phase, cmd in _all_commands(_load(name)):
+        for line in cmd.splitlines():
+            if line.strip().startswith("#"):
+                continue
+            assert not dump.search(line), f"{name}:{phase} 컨텍스트 원문 출력 금지: {line.strip()}"
+
+
+def _mask_commands(name: str) -> list[str]:
+    out = []
+    for _phase, cmd in _all_commands(_load(name)):
+        for line in cmd.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("awk ") and any(f in stripped for f in _CTX_FILES):
+                out.append(stripped)
+    return out
+
+
+@pytest.mark.parametrize("name", _CTX_SPECS)
+def test_f5_ctx_env_masked_print_present(name: str) -> None:
+    assert _mask_commands(name), f"{name}: 마스킹 출력(awk) 단계가 없음"
+
+
+@pytest.mark.skipif(shutil.which("awk") is None or shutil.which("bash") is None, reason="awk 없음")
+@pytest.mark.parametrize("name", _CTX_SPECS)
+def test_f5_mask_hides_b64_values(name: str, tmp_path: Path) -> None:
+    policy = "eyJWZXJzaW9uIjoiMjAxMi0xMC0xNyIsIlN0YXRlbWVudCI6W119"
+    ctx = (
+        'export CTX_appId="app00001"\n'
+        'export CTX_secretArn="arn:aws:secretsmanager:ap-northeast-2:1:secret:x"\n'
+        f"export CTX_permissionPolicyB64={policy}\n"
+        "export CTX_envVarsB64=eyJBIjoiYiJ9\n"
+        "export CTX_secretKeysB64=WyJLIl0=\n"
+    )
+    for cmd in _mask_commands(name):
+        f = tmp_path / "ctx.env"
+        f.write_text(ctx, encoding="utf-8")
+        for target in _CTX_FILES:
+            cmd = cmd.replace(target, str(f))
+        out = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, check=True).stdout
+        assert policy not in out and "eyJBIjoiYiJ9" not in out and "WyJLIl0=" not in out
+        assert f"CTX_permissionPolicyB64=<{len(policy)} chars>" in out
+        assert "CTX_envVarsB64=<12 chars>" in out
+        assert 'CTX_appId="app00001"' in out  # 비민감 스칼라는 그대로(디버깅용)

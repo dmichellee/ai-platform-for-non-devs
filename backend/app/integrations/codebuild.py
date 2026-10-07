@@ -38,3 +38,16 @@ def get_build_status(build_id: str) -> str:
     if status is None or status == "IN_PROGRESS":
         return "IN_PROGRESS"
     return "FAILED"
+
+
+def get_build(build_id: str) -> dict[str, Any] | None:
+    """BatchGetBuilds 단건. 없으면 None."""
+    res = client("codebuild").batch_get_builds(ids=[build_id])
+    builds: list[dict[str, Any]] = res.get("builds") or []
+    return builds[0] if builds else None
+
+
+def build_log_location(build: dict[str, Any] | None) -> tuple[str | None, str | None]:
+    """빌드의 CloudWatch 로그 (groupName, streamName). 아직 없으면 (None, None)."""
+    logs = (build or {}).get("logs") or {}
+    return logs.get("groupName"), logs.get("streamName")

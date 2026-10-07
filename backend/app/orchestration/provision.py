@@ -30,6 +30,7 @@ from ..data.alb_registry import (
 )
 from ..data.apps import get_app, set_failure, transition_status, update_app
 from ..domain.alb_scheme import scheme_slug
+from ..domain.auto_deploy import PIPELINE_BUILD_FIELD, start_pipeline_stack_build
 from ..integrations.codebuild import get_build_status, start_provisioner_build
 from ..integrations.ssm import alb_param, network_param, platform_param
 from . import stage
@@ -129,24 +130,19 @@ def ensure_scale_out(st: str, scheme: str) -> dict[str, Any]:
 
 
 def deploy_pipeline(e: dict[str, Any]) -> dict[str, Any]:
-    """provisioner CodeBuild 를 StartBuild 로 트리거(app-pipeline 스택 cdk deploy)."""
+    """provisioner CodeBuild 를 StartBuild 로 트리거(app-pipeline 스택 cdk deploy).
+
+    env 는 자동 배포 토글 반영(PATCH, QA M4)과 같은 단일 원본(domain.auto_deploy.pipeline_build_env).
+    build id 를 App.pipelineStackBuildId 에 남겨 PATCH 가 "스택 빌드 진행 중/완료"를 판정하게 한다.
+    """
     app_id = e["appId"]
     st = stage()
     app = _require_app(app_id)
-    project_name = platform_param(st, "provisioner-project-name")
-    env: dict[str, str] = {
-        "APP_ID": app_id,
-        "STAGE": st,
-        "APP_STACK_KIND": "pipeline",
-        "PROVIDER": app["provider"],
-        "REPO_URL": app["repoUrl"],
-        "BRANCH": app["branch"],
-        "AUTO_DEPLOY": str(app.get("autoDeployEnabled")),
-    }
-    connection_arn = app.get("connectionArn")
-    if connection_arn:
-        env["CONNECTION_ARN"] = connection_arn
-    build_id = start_provisioner_build(project_name, env)
+    build_id = start_pipeline_stack_build(st, app)
+    try:
+        update_app(app_id, {PIPELINE_BUILD_FIELD: build_id})
+    except Exception as err:  # noqa: BLE001 - 추적 기록 실패는 프로비저닝을 막지 않는다
+        print("[deploy-pipeline] build id record failed:", type(err).__name__)
     return {"step": "deploy-pipeline", "appId": app_id, "buildId": build_id}
 
 

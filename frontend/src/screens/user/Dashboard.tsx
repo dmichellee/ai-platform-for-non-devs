@@ -14,6 +14,7 @@ import { sessionDisplayName, sessionInitial } from "../../auth/tokens.js";
 import { appsDomainLabel } from "../../lib/config.js";
 import type { App } from "../../lib/types.js";
 import { PROVIDER_LABEL } from "../../lib/labels.js";
+import { applyPendingDeletes, isAppTransitional, pollInterval } from "../../lib/liveStatus.js";
 
 const PRESET_NAME: Record<string, string> = {
   "preset-small": "작게",
@@ -32,7 +33,14 @@ function iconFor(app: App): { node: JSX.Element; cls: string } {
 export function Dashboard(): JSX.Element {
   const nav = useNavigate();
   const { session, logout } = useAuth();
-  const { data: apps, loading, error, reload } = useQuery<App[]>((api) => api.listApps(), []);
+  // N6: 만드는 중/삭제 중/깨우는 중인 앱이 있으면 5초, 없으면 30초마다 조용히 다시 불러온다.
+  // 삭제 접수 직후의 앱은 서버 목록이 늦게 바뀌어도 "삭제 중"으로 덧씌운다(낙관적 갱신).
+  const { data: rawApps, loading, error, reload } = useQuery<App[]>(
+    (api) => api.listApps(),
+    [],
+    { refetchInterval: (d) => pollInterval(!!d && applyPendingDeletes(d).some(isAppTransitional)) },
+  );
+  const apps = rawApps ? applyPendingDeletes(rawApps) : null;
 
   const userInitial = sessionInitial(session);
   const displayName = sessionDisplayName(session);

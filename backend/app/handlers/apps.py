@@ -25,6 +25,7 @@ from ..data.config_repo import (
 )
 from ..data.connections import get_connection
 from ..data.subdomains import release_subdomain, reserve_subdomain
+from ..domain import auto_deploy
 from ..domain.ids import generate_app_id
 from ..domain.redeploy import find_in_progress_deployment, trigger_secret_change_redeploy
 from ..domain.secrets import apply_secret_changes, create_initial_secret
@@ -46,7 +47,13 @@ _VALID_STATUS = ("CREATING", "ACTIVE", "FAILED", "DELETING")
 # failureReason(사용자용 한국어 요약)은 user/admin 모두에게 노출(앱 상세에서 원인 확인 — UX 갭 해소).
 _ADMIN_ONLY_APP_FIELDS = ("failureDetail",)
 # 내부 동시성 제어 필드(D8 시크릿 JSON 버전 조건부 갱신) — 누구에게도 노출하지 않는다.
-_INTERNAL_APP_FIELDS = ("version", "secretLockId", "secretLockExpiresAt")
+_INTERNAL_APP_FIELDS = (
+    "version",
+    "secretLockId",
+    "secretLockExpiresAt",
+    auto_deploy.PIPELINE_BUILD_FIELD,
+    auto_deploy.PENDING_FIELD,
+)
 
 
 def _view_app(app: dict[str, Any], is_admin: bool) -> dict[str, Any]:
@@ -220,13 +227,58 @@ def patch_app(ctx: RouteContext) -> ProxyResult:
         if changed:
             redeploy = trigger_secret_change_redeploy(stage, updated)
 
+    # 자동 배포 토글(QA M4): 실제로 바뀌었을 때만(또는 직전 적용 시작 실패분 재시도) pipeline 스택 재배포.
+    auto_result: dict[str, Any] | None = None
+    auto_action: str | None = None
+    if "autoDeployEnabled" in patch:
+        changed = bool(patch["autoDeployEnabled"]) != bool(app.get("autoDeployEnabled", True))
+        if changed or app.get(auto_deploy.PENDING_FIELD):
+            auto_action = auto_deploy.plan(app)
+            if auto_action == "ALREADY_APPLYING":
+                patch.pop("autoDeployEnabled")
+                auto_result = auto_deploy.skipped("ALREADY_APPLYING")
+            else:
+                # NOT_READY 는 저장만 되고 스택에 반영되지 않음 → START_FAILED 와 같은 재시도 규칙
+                #  (같은 값으로 다시 저장하면 재시도, QA F6 2026-10-08).
+                patch[auto_deploy.PENDING_FIELD] = auto_action == "NOT_READY"
+        else:
+            patch.pop("autoDeployEnabled")  # 같은 값 — 쓰지 않는다(필드 없음).
+
     if patch:
         updated = update_app(app["appId"], patch)
+
+    if auto_action == "START":
+        auto_result = _apply_auto_deploy(updated)
+    elif auto_action == "DEFER":
+        auto_result = auto_deploy.applying()
+    elif auto_action == "NOT_READY":
+        auto_result = auto_deploy.skipped("NOT_READY")
 
     view = _view_app(updated, ctx.identity.is_admin)
     if redeploy is not None:
         view["redeploy"] = redeploy
+    if auto_result is not None:
+        view["autoDeploy"] = auto_result
     return ok(view)
+
+
+def _apply_auto_deploy(app: dict[str, Any]) -> dict[str, Any]:
+    """DDB 갱신 후 provisioner(pipeline) StartBuild. 실패는 저장 유지 + START_FAILED(재시도 표시)."""
+    stage = load_config().stage
+    try:
+        build_id = auto_deploy.start_pipeline_stack_build(stage, app)
+    except Exception as err:  # noqa: BLE001 - 시작 실패는 친절 안내(저장은 유지)
+        print("[auto-deploy] start failed:", type(err).__name__, str(err)[:200])
+        try:
+            update_app(app["appId"], {auto_deploy.PENDING_FIELD: True})
+        except Exception:  # noqa: BLE001
+            pass
+        return auto_deploy.skipped("START_FAILED")
+    try:
+        update_app(app["appId"], {auto_deploy.PIPELINE_BUILD_FIELD: build_id})
+    except Exception as err:  # noqa: BLE001 - 추적 기록 실패는 적용 자체를 막지 않는다
+        print("[auto-deploy] build id record failed:", type(err).__name__)
+    return auto_deploy.applying()
 
 
 def _accept_delete(app: dict[str, Any]) -> ProxyResult:
