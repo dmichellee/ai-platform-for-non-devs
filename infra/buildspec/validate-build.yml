@@ -69,6 +69,7 @@ phases:
         echo "검증 결과: ${VALIDATE_JSON}"
         if [ "${VALIDATE_RC}" != "0" ]; then
           export FAILURE_CATEGORY="$(echo "${VALIDATE_JSON}" | python3 -c 'import sys,json; print(json.load(sys.stdin)["failureCategory"])')"
+          echo "${FAILURE_CATEGORY}" > "${CODEBUILD_SRC_DIR}/.apphub-failure-category"
           echo "Dockerfile 검증 실패: ${FAILURE_CATEGORY}" >&2
           exit 1
         fi
@@ -80,6 +81,7 @@ phases:
         set -e
         if [ "${BUILD_RC}" != "0" ]; then
           export FAILURE_CATEGORY="BUILD_FAILED"
+          echo "${FAILURE_CATEGORY}" > "${CODEBUILD_SRC_DIR}/.apphub-failure-category"
           echo "docker build 실패" >&2
           exit 1
         fi
@@ -99,6 +101,7 @@ phases:
         set -e
         if [ "${OK}" != "true" ]; then
           export FAILURE_CATEGORY="HEALTHCHECK_FAILED"
+          echo "${FAILURE_CATEGORY}" > "${CODEBUILD_SRC_DIR}/.apphub-failure-category"
           echo "스모크 /health 200 실패(60초 내 무응답)" >&2
           exit 1
         fi
@@ -113,6 +116,10 @@ phases:
 
   post_build:
     commands:
+      # 실패 분류 복원: build 단계의 `exit 1`은 셸을 종료시켜 export 한 FAILURE_CATEGORY 가 사라진다.
+      #  (CodeBuild 는 post_build 를 새 셸에서 실행하고, exported-variables 는 post_build 종료 시점 값을 내보낸다.)
+      #  그래서 실패 지점에서 파일로 남기고 여기서 다시 export 한다 — deploy-notify 가 이 값으로 분류한다.
+      - export FAILURE_CATEGORY="$(cat "${CODEBUILD_SRC_DIR}/.apphub-failure-category" 2>/dev/null || true)"
       # 다음 스테이지(Deploy)로 넘길 이미지 태그를 아티팩트 파일로도 남긴다(imagedefinitions 대체).
       - echo "{\"imageTag\":\"${IMAGE_TAG}\"}" > image-tag.json
       - cat image-tag.json

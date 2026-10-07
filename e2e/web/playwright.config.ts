@@ -1,14 +1,16 @@
 /**
  * Playwright 설정 — AppHub 웹 UI E2E (TEST-STRATEGY L4 시나리오 5).
  *
- * baseURL 은 배포된 SPA(CloudFront) 또는 로컬 preview 를 가리킨다.
- * 라이브 실행 시 환경변수로 주입:
- *   E2E_WEB_URL              SPA 베이스 URL (필수)
- *   E2E_ADMIN_USERNAME/...   관리자 프리셋 생성 시나리오용(선택)
+ * baseURL 은 배포된 콘솔(ConsoleUrl = https://console.{appsDomain}) 또는 로컬 preview 를 가리킨다.
+ * 라이브 실행 시 환경변수로 주입(run-e2e.sh 시나리오 5가 채워 준다):
+ *   E2E_WEB_URL                               콘솔 베이스 URL
+ *   E2E_USERNAME/E2E_PASSWORD                 사용자 여정(실서비스 로그인)
+ *   E2E_ADMIN_USERNAME/E2E_ADMIN_PASSWORD     관리자 여정(실서비스 로그인)
  *
- * 주의: 실제 실행은 배포된 dev SPA + (실서비스면) Cognito 로그인이 필요하다.
+ * 로그인(D21): 실서비스는 콘솔 로그인 화면에서 이메일/비밀번호를 직접 입력한다(외부 로그인 페이지 없음).
  *   SPA가 목 모드(config.json 없음)면 "사용자로 둘러보기" 우회 버튼으로
  *   백엔드 없이도 화면 흐름을 검증할 수 있다(D-M6-03).
+ *   private 모드(D19)는 콘솔이 internal ALB 뒤라 사내망/VPN 에서 실행해야 한다.
  */
 import { defineConfig, devices } from "@playwright/test";
 

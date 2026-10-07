@@ -8,9 +8,11 @@ ALB 인증이 잠자기 전환 중에도 유지된다(D-M4-04: order1 authentica
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 from ..integrations.clients import client
+from ..integrations.ssm import alb_param, legacy_waker_tg_arn
 
 
 def find_rule_by_host(listener_arn: str, host: str) -> dict[str, Any] | None:
@@ -79,8 +81,13 @@ def transition_listener_rule(
     app_target_group_arn: str | None,
     waker_target_group_arn: str,
     to: str,
+    waker_target_group_aliases: Iterable[str | None] | None = None,
 ) -> dict[str, Any]:
-    """host 규칙의 forward 대상을 to("app"|"waker") 목표 TG 로 전환. 멱등(이미 목표면 no-op)."""
+    """host 규칙의 forward 대상을 to("app"|"waker") 목표 TG 로 전환. 멱등(이미 목표면 no-op).
+
+    waker_target_group_aliases: waker 로 간주할 추가 TG(legacy `waker-tg-arn`, 계약 §1.2).
+      to="waker" 일 때 현재 forward 가 그중 하나면 이미 잠든 것으로 보고 no-op(마이그레이션 안전).
+    """
     rule = find_rule_by_host(listener_arn, host)
     rule_arn = rule.get("RuleArn") if rule else None
     if not rule or not rule_arn:
@@ -89,6 +96,40 @@ def transition_listener_rule(
     current = current_forward_target(rule.get("Actions"))
     if current == desired_target:
         return {"changed": False, "ruleArn": rule_arn}
+    if to == "waker" and current is not None:
+        aliases = {a for a in (waker_target_group_aliases or []) if a}
+        if current in aliases:
+            return {"changed": False, "ruleArn": rule_arn}
     new_actions = replace_forward_target(rule.get("Actions"), desired_target)
     client("elbv2").modify_rule(RuleArn=rule_arn, Actions=new_actions)
     return {"changed": True, "ruleArn": rule_arn}
+
+
+def app_alb_index(app: dict[str, Any]) -> int:
+    """App 의 ALB index(D20). 없으면 0(기존 앱 — network 스택의 기존 ALB)."""
+    try:
+        return int(app.get("albIndex") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def app_alb_routing(
+    stage_value: str, app: dict[str, Any], need_waker: bool = True
+) -> dict[str, Any]:
+    """App.albIndex + scheme 기준 listener·waker TG(계약 §7) + waker 판정용 legacy TG(§1.2).
+
+    need_waker=False(복원 — 목표가 앱 TG)면 waker TG 를 읽지 않는다(wakerTgArn="").
+    """
+    scheme = app["scheme"]
+    index = app_alb_index(app)
+    out: dict[str, Any] = {
+        "albIndex": index,
+        "listenerArn": alb_param(stage_value, scheme, index, "https-listener-arn"),
+        "wakerTgArn": "",
+        "wakerAliases": [],
+    }
+    if need_waker:
+        out["wakerTgArn"] = alb_param(stage_value, scheme, index, "waker-tg-arn")
+        legacy = legacy_waker_tg_arn(stage_value)
+        out["wakerAliases"] = [legacy] if legacy else []
+    return out

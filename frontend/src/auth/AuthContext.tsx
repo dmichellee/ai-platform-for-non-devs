@@ -1,9 +1,13 @@
 /**
- * 인증 컨텍스트 — Cognito Hosted UI(authorization code + PKCE 없는 implicit-free code grant는
- * 클라이언트 시크릿이 없어야 하므로, SPA용 public client는 token 엔드포인트 code 교환을 쓴다) 흐름 +
- * 목 모드 로그인 우회. 그룹 기반(admin/user) 화면 분기의 단일 판단 지점.
+ * 인증 컨텍스트 — D21 자체 로그인. 로그인 서버(cognito-idp) API를 fetch로 직접 호출한다(외부 SDK 없음).
+ *   로그인        InitiateAuth(USER_PASSWORD_AUTH)
+ *   첫 로그인     RespondToAuthChallenge(NEW_PASSWORD_REQUIRED)
+ *   비밀번호 찾기 ForgotPassword / ConfirmForgotPassword
+ *   갱신          InitiateAuth(REFRESH_TOKEN_AUTH)  (tokens.refreshTokens)
+ *   로그아웃      RevokeToken
+ * 그룹 기반(admin/user) 화면 분기의 단일 판단 지점. Hosted UI 리다이렉트·/oauth2/* 는 쓰지 않는다.
  *
- * 목 모드(config.mock=true)에서는 Cognito 없이 "사용자로 로그인 / 관리자로 로그인" 버튼으로 세션을 만든다 → QA 우회.
+ * 목 모드(config.mock=true)에서는 로그인 서버 없이 "사용자로 둘러보기 / 관리자로 둘러보기" 버튼으로 세션을 만든다 → QA 우회.
  */
 import {
   createContext,
@@ -16,7 +20,16 @@ import {
   type ReactNode,
 } from "react";
 import { navigate } from "../lib/router.js";
-import type { RuntimeConfig } from "../lib/config.js";
+import { resolveCognitoIdpEndpoint, type RuntimeConfig } from "../lib/config.js";
+import {
+  confirmForgotPassword,
+  forgotPassword,
+  IdpError,
+  initiatePasswordAuth,
+  respondNewPassword,
+  revokeToken,
+  type InitiateAuthResponse,
+} from "./cognitoIdp.js";
 import {
   base64UrlEncode,
   isAdmin,
@@ -32,6 +45,16 @@ const STORAGE_KEY = "apphub-session";
 /** 세션이 만료로 종료됐을 때 로그인 화면에 보여줄 안내. */
 export const SESSION_EXPIRED_MESSAGE = "로그인이 만료됐어요. 다시 로그인해주세요.";
 
+/** 첫 로그인(임시 비밀번호) — 새 비밀번호 설정에 필요한 값. 화면이 들고 있다가 completeNewPassword에 넘긴다. */
+export interface NewPasswordChallenge {
+  session: string;
+  username: string;
+}
+
+export type SignInResult =
+  | { status: "SIGNED_IN" }
+  | { status: "NEW_PASSWORD_REQUIRED"; challenge: NewPasswordChallenge };
+
 interface AuthState {
   session: UserSession | null;
   ready: boolean;
@@ -39,7 +62,14 @@ interface AuthState {
   /** 만료 등으로 세션이 강제 종료됐을 때의 안내(로그인 화면에서 노출). */
   notice: string | null;
   clearNotice: () => void;
-  loginRedirect: () => void; // Hosted UI 로 이동 (실서비스)
+  /** 이메일/비밀번호 로그인. 실패는 IdpError를 던진다(화면이 authErrorMessage로 안내). */
+  signIn: (email: string, password: string) => Promise<SignInResult>;
+  /** 첫 로그인 새 비밀번호 설정 → 성공 시 바로 로그인 상태. */
+  completeNewPassword: (challenge: NewPasswordChallenge, newPassword: string) => Promise<void>;
+  /** 비밀번호 찾기 — 인증 코드 발송. destination은 가려진 이메일(예: d***@e***). */
+  requestPasswordReset: (email: string) => Promise<{ destination?: string }>;
+  /** 인증 코드 + 새 비밀번호로 재설정. 성공 후 화면이 다시 로그인하게 한다. */
+  confirmPasswordReset: (email: string, code: string, newPassword: string) => Promise<void>;
   loginMock: (group: "user" | "admin") => void; // 목 모드 우회
   logout: () => void;
   getToken: () => string | null;
@@ -102,29 +132,6 @@ function makeMockSession(group: "user" | "admin"): UserSession {
   return sessionFromTokens(token)!;
 }
 
-async function exchangeCodeForTokens(
-  cfg: RuntimeConfig,
-  code: string,
-): Promise<UserSession | null> {
-  if (!cfg.cognitoDomain) return null;
-  const redirectUri = cfg.redirectUri ?? window.location.origin;
-  const body = new URLSearchParams({
-    grant_type: "authorization_code",
-    client_id: cfg.userPoolClientId,
-    code,
-    redirect_uri: redirectUri,
-  });
-  const res = await fetch(`https://${cfg.cognitoDomain}/oauth2/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-  });
-  if (!res.ok) return null;
-  const json = (await res.json()) as { id_token?: string; refresh_token?: string };
-  if (!json.id_token) return null;
-  return sessionFromTokens(json.id_token, json.refresh_token);
-}
-
 export function AuthProvider({
   config,
   children,
@@ -138,6 +145,7 @@ export function AuthProvider({
 
   // 최신 세션을 동기 참조로 유지 — 콜백(ensureFreshToken/handleUnauthorized)이
   // stale 클로저 없이 현재 세션을 읽도록. refreshInFlight는 동시 401 폭주 시 refresh 1회로 합침.
+  const endpoint = resolveCognitoIdpEndpoint(config);
   const sessionRef = useRef<UserSession | null>(null);
   sessionRef.current = session;
   const refreshInFlight = useRef<Promise<UserSession | null> | null>(null);
@@ -161,11 +169,10 @@ export function AuthProvider({
         refreshTokenOverride ??
         sessionRef.current?.refreshToken ??
         loadStoredIgnoringExpiry()?.refreshToken;
-      const cognitoDomain = config.cognitoDomain;
-      if (!refreshToken || !cognitoDomain) return null;
+      if (!refreshToken || !endpoint) return null;
       const p = (async () => {
         const next = await refreshTokens(
-          { userPoolClientId: config.userPoolClientId, cognitoDomain },
+          { userPoolClientId: config.userPoolClientId, endpoint },
           refreshToken,
         );
         if (next) applySession(next);
@@ -178,7 +185,7 @@ export function AuthProvider({
         refreshInFlight.current = null;
       }
     },
-    [config, applySession],
+    [config, endpoint, applySession],
   );
 
   /** 세션 종료 + 로그인 화면으로. 안내 문구를 남긴다(로그인 화면이 노출). */
@@ -194,26 +201,12 @@ export function AuthProvider({
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // 1) Hosted UI 콜백 처리 (?code=...)
-      const params = new URLSearchParams(window.location.search);
-      const code = params.get("code");
-      if (code && !config.mock) {
-        const s = await exchangeCodeForTokens(config, code);
-        if (!cancelled && s) {
-          applySession(s);
-          setNotice(null);
-        }
-        // URL 정리
-        window.history.replaceState({}, "", window.location.pathname + window.location.hash);
-        if (!cancelled) setReady(true);
-        return;
-      }
-      // 2) 저장된 세션. 만료됐어도 refresh_token이 있으면 조용히 갱신 시도(열어둔 탭 만료 복구).
+      // 저장된 세션. 만료됐어도 refresh_token이 있으면 조용히 갱신 시도(열어둔 탭 만료 복구).
       //    만료 세션의 refresh_token은 applySession(null)이 저장소를 비우기 전에 미리 확보한다.
       const stored = loadStored();
       const expiredRefreshToken = stored ? undefined : loadStoredIgnoringExpiry()?.refreshToken;
       if (!cancelled) applySession(stored);
-      if (!stored && !config.mock && config.cognitoDomain && expiredRefreshToken) {
+      if (!stored && !config.mock && endpoint && expiredRefreshToken) {
         const refreshed = await doRefresh(expiredRefreshToken).catch(() => null);
         if (!cancelled && refreshed) setNotice(null);
       }
@@ -222,18 +215,86 @@ export function AuthProvider({
     return () => {
       cancelled = true;
     };
-  }, [config, applySession, doRefresh]);
+  }, [config, endpoint, applySession, doRefresh]);
 
-  const loginRedirect = useCallback(() => {
-    if (!config.cognitoDomain) return;
-    const redirectUri = cfg_redirect(config);
-    const url = new URL(`https://${config.cognitoDomain}/oauth2/authorize`);
-    url.searchParams.set("client_id", config.userPoolClientId);
-    url.searchParams.set("response_type", "code");
-    url.searchParams.set("scope", "openid email profile");
-    url.searchParams.set("redirect_uri", redirectUri);
-    window.location.assign(url.toString());
-  }, [config]);
+  /** 로그인 API 주소 — 설정 누락이면 설정 오류로 던진다(화면은 "로그인 설정에 문제" 안내). */
+  const requireEndpoint = useCallback((): string => {
+    if (!endpoint) throw new IdpError("InvalidUserPoolConfigurationException", "endpoint missing");
+    return endpoint;
+  }, [endpoint]);
+
+  /** 토큰 응답 → 세션 반영. 토큰이 없으면 예상 밖 응답으로 본다. */
+  const acceptTokens = useCallback(
+    (res: InitiateAuthResponse): void => {
+      const idToken = res.AuthenticationResult?.IdToken;
+      const s = idToken ? sessionFromTokens(idToken, res.AuthenticationResult?.RefreshToken) : null;
+      if (!s) throw new IdpError(res.ChallengeName ? "UnsupportedChallenge" : "UnknownError", "no tokens");
+      applySession(s);
+      setNotice(null);
+    },
+    [applySession],
+  );
+
+  const signIn = useCallback(
+    async (email: string, password: string): Promise<SignInResult> => {
+      const username = email.trim();
+      const res = await initiatePasswordAuth(
+        requireEndpoint(),
+        config.userPoolClientId,
+        username,
+        password,
+      );
+      if (res.ChallengeName === "NEW_PASSWORD_REQUIRED" && res.Session) {
+        return {
+          status: "NEW_PASSWORD_REQUIRED",
+          challenge: {
+            session: res.Session,
+            // 이메일 별칭 로그인 — 챌린지 응답에는 실제 사용자 이름(USER_ID_FOR_SRP)을 쓴다.
+            username: res.ChallengeParameters?.USER_ID_FOR_SRP || username,
+          },
+        };
+      }
+      acceptTokens(res);
+      return { status: "SIGNED_IN" };
+    },
+    [config, requireEndpoint, acceptTokens],
+  );
+
+  const completeNewPassword = useCallback(
+    async (challenge: NewPasswordChallenge, newPassword: string): Promise<void> => {
+      const res = await respondNewPassword(
+        requireEndpoint(),
+        config.userPoolClientId,
+        challenge.session,
+        challenge.username,
+        newPassword,
+      );
+      acceptTokens(res);
+    },
+    [config, requireEndpoint, acceptTokens],
+  );
+
+  const requestPasswordReset = useCallback(
+    async (email: string): Promise<{ destination?: string }> => {
+      const res = await forgotPassword(requireEndpoint(), config.userPoolClientId, email.trim());
+      const destination = res.CodeDeliveryDetails?.Destination;
+      return destination ? { destination } : {};
+    },
+    [config, requireEndpoint],
+  );
+
+  const confirmPasswordReset = useCallback(
+    async (email: string, code: string, newPassword: string): Promise<void> => {
+      await confirmForgotPassword(
+        requireEndpoint(),
+        config.userPoolClientId,
+        email.trim(),
+        code.trim(),
+        newPassword,
+      );
+    },
+    [config, requireEndpoint],
+  );
 
   const loginMock = useCallback(
     (group: "user" | "admin") => {
@@ -243,16 +304,19 @@ export function AuthProvider({
     [applySession],
   );
 
+  /**
+   * 로그아웃 — 화면은 즉시 로그인으로 돌리고, refresh_token 폐기(RevokeToken)는 뒤에서 보낸다.
+   * 폐기 실패(네트워크 등)여도 로컬 세션은 이미 지웠으므로 사용자에게 오류를 보이지 않는다.
+   */
   const logout = useCallback(() => {
+    const refreshToken = sessionRef.current?.refreshToken;
     applySession(null);
     setNotice(null);
-    if (!config.mock && config.cognitoDomain) {
-      const url = new URL(`https://${config.cognitoDomain}/logout`);
-      url.searchParams.set("client_id", config.userPoolClientId);
-      url.searchParams.set("logout_uri", cfg_redirect(config));
-      window.location.assign(url.toString());
+    navigate("/login");
+    if (!config.mock && endpoint && refreshToken) {
+      void revokeToken(endpoint, config.userPoolClientId, refreshToken).catch(() => undefined);
     }
-  }, [config, applySession]);
+  }, [config, endpoint, applySession]);
 
   const getToken = useCallback(() => session?.idToken ?? null, [session]);
 
@@ -294,7 +358,10 @@ export function AuthProvider({
       isAdmin: isAdmin(session),
       notice,
       clearNotice,
-      loginRedirect,
+      signIn,
+      completeNewPassword,
+      requestPasswordReset,
+      confirmPasswordReset,
       loginMock,
       logout,
       getToken,
@@ -306,7 +373,10 @@ export function AuthProvider({
       ready,
       notice,
       clearNotice,
-      loginRedirect,
+      signIn,
+      completeNewPassword,
+      requestPasswordReset,
+      confirmPasswordReset,
       loginMock,
       logout,
       getToken,
@@ -316,10 +386,6 @@ export function AuthProvider({
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-}
-
-function cfg_redirect(config: RuntimeConfig): string {
-  return config.redirectUri ?? window.location.origin;
 }
 
 export function useAuth(): AuthState {

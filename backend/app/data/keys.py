@@ -4,9 +4,12 @@
 |---------------------|--------------------|-----------------|
 | App                 | APP#{appId}        | META            |
 | Deployment          | APP#{appId}        | DEPLOY#{ts}     |
+| DeployExecClaim     | APP#{appId}        | DEPLOYEXEC#{pipelineExecutionId} |
+| DeployBuildClaim    | APP#{appId}        | DEPLOYBUILD#{buildId} |
 | RepoConnection      | USER#{userId}      | CONN#{connId}   |
 | CodeCommitRepo      | USER#{userId}      | CCREPO#{repoName} |
 | AlbRegistry         | CONFIG             | ALB#{albArn}    |
+| AlbPending (D20)    | CONFIG             | ALBPENDING#{schemeSlug}#{n} |
 | ComputePreset       | CONFIG             | PRESET#{id}     |
 | PermissionTemplate  | CONFIG             | PERM#{id}       |
 | AdminSettings       | CONFIG             | SETTINGS        |
@@ -34,6 +37,22 @@ def deploy_sk(ts: str) -> str:
     return f"DEPLOY#{ts}"
 
 
+def deploy_exec_sk(pipeline_execution_id: str) -> str:
+    """파이프라인 실행당 Deployment 1건 보장용 클레임 아이템 SK(deploy-notify 경합 방어).
+
+    `DEPLOYEXEC#` 는 `DEPLOY#` prefix 로 시작하지 않으므로(6번째 글자 E≠#) 배포 이력 쿼리에 섞이지 않는다.
+    """
+    return f"DEPLOYEXEC#{pipeline_execution_id}"
+
+
+def deploy_build_sk(build_id: str) -> str:
+    """provisioner 런타임 재배포 빌드당 Deployment 1건 보장용 클레임 아이템 SK(롤백/시크릿 변경).
+
+    `DEPLOYBUILD#` 도 `DEPLOY#` prefix 와 겹치지 않는다(6번째 글자 B≠#).
+    """
+    return f"DEPLOYBUILD#{build_id}"
+
+
 def conn_sk(conn_id: str) -> str:
     return f"CONN#{conn_id}"
 
@@ -44,6 +63,11 @@ def ccrepo_sk(repo_name: str) -> str:
 
 def alb_sk(alb_arn: str) -> str:
     return f"ALB#{alb_arn}"
+
+
+def alb_pending_sk(scheme_slug: str, index: int) -> str:
+    """ALB 증설 대기 아이템 SK (D20, 계약 §3.2)."""
+    return f"ALBPENDING#{scheme_slug}#{int(index)}"
 
 
 def preset_sk(preset_id: str) -> str:
@@ -64,5 +88,6 @@ class SkPrefix:
     CONN = "CONN#"
     CCREPO = "CCREPO#"
     ALB = "ALB#"
+    ALBPENDING = "ALBPENDING#"
     PRESET = "PRESET#"
     PERM = "PERM#"

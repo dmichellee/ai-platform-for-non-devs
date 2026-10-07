@@ -10,6 +10,11 @@ DESIGN.md 3.3 마지막 단계 `[Notify] EventBridge → Lambda → DDB Deployme
      배포 레코드가 없으면 신규 생성(trigger=auto).
   2) CodePipeline Pipeline Execution State Change — 파이프라인 종결(SUCCEEDED|FAILED|...).
      SUCCEEDED→SUCCEEDED, FAILED/CANCELED/STOPPED→FAILED(+failureCategory 조회), SUPERSEDED→스킵.
+     매칭 레코드가 없으면(역순 도착 — Source 즉시 실패 시 FAILED 가 Source STARTED 보다 먼저 옴) 종결
+     상태로 신규 생성(trigger=auto) 후 동일 부수효과 수행. 실행당 레코드 1건은 클레임 아이템
+     `DEPLOYEXEC#{executionId}` + TransactWriteItems 로 보장(data.deployments.create_deployment_for_execution).
+     수동 배포 접수(trigger_deploy)도 같은 클레임을 써서, 종결 이벤트가 먼저 와도 레코드는 1건
+     (접수 쪽이 trigger=manual 로 보정, status 는 유지).
 
 App.status 전이(A안): 파이프라인 종결이 **첫 배포**면 App.status 도 함께 전이한다 — SUCCEEDED 면
 CREATING→ACTIVE(+clear_failure, runtimeState=RUNNING), FAILED 면 CREATING→FAILED(+set_failure).
@@ -25,7 +30,12 @@ STATUS_ORDER 인덱스가 현재보다 낮은 값으로도 내리지 않는다(�
      detail.project-name=`apphub-{stage}-provisioner` + env APP_STACK_KIND=runtime 인 빌드만.
      buildId 로 Deployment 를 매칭해 IN_PROGRESS→DEPLOYING, SUCCEEDED→SUCCEEDED,
      FAILED/FAULT/STOPPED/TIMED_OUT→FAILED(DEPLOY_FAILED). 파이프라인을 거치지 않는 경로라 이 이벤트가
-     없으면 롤백·시크릿 변경 레코드가 PENDING 에 멈춘다.
+     없으면 롤백·시크릿 변경 레코드가 PENDING 에 멈춘다. 레코드가 없으면(이벤트가 접수 기록보다 먼저 옴)
+     env DEPLOY_TRIGGER(rollback|secret-change)가 있을 때만 클레임 `DEPLOYBUILD#{buildId}` 로 생성,
+     없으면 스킵(trigger 판단 불가).
+     같은 이벤트 중 APP_STACK_KIND=alb(ALB 증설, D20) 는 AlbRegistry 로 처리: SUCCEEDED → SSM
+     `alb/{slug}/{n}/alb-arn` 을 읽어 ALB#(index=n, ACTIVE, ruleCount=0) 등록 + PENDING 삭제,
+     FAILED/FAULT/STOPPED/TIMED_OUT → PENDING 삭제(다음 배정 때 재시도).
 
 런타임 배포 성공 후처리(파이프라인 SUCCEEDED / provisioner runtime SUCCEEDED 공통, _after_runtime_success):
   a) 잠자는 앱 재정합(QA H2): runtimeState=SLEEPING 인 ACTIVE 앱은 배포가 끝나면 sleep_app(force) 으로
@@ -42,11 +52,20 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..data.alb_registry import delete_pending, ensure_alb_registered
 from ..data.apps import clear_failure, get_app, set_failure, set_runtime_state, transition_status
-from ..data.deployments import list_deployments, put_deployment, update_deployment
+from ..data.deployments import (
+    create_deployment_for_build,
+    create_deployment_for_execution,
+    find_deployment_by_build,
+    find_deployment_by_execution,
+    update_deployment,
+)
+from ..domain.redeploy import DEPLOY_TRIGGER_ENV, REDEPLOY_TRIGGERS
 from ..domain.secrets import prune_unreferenced_keys
 from ..integrations.clients import client
 from ..integrations.ecs_runtime import describe_app_task_definitions, referenced_secret_keys
+from ..integrations.ssm import alb_param, network_param
 from ..wake import cluster_name, stage
 from ..wake.ecs_service import app_service_name
 from ..wake.sleep import sleep_app
@@ -105,12 +124,11 @@ def _status_index(status: str | None) -> int:
     return -1
 
 
-def _find_deployment(app_id: str, execution_id: str) -> dict[str, Any] | None:
+def _find_deployment(
+    app_id: str, execution_id: str, *, consistent: bool = False
+) -> dict[str, Any] | None:
     """최근 20건 중 pipelineExecutionId 가 일치하는 레코드(계약 §매칭 1)."""
-    for dep in list_deployments(app_id, 20):
-        if dep.get("pipelineExecutionId") == execution_id:
-            return dep
-    return None
+    return find_deployment_by_execution(app_id, execution_id, consistent=consistent)
 
 
 def _source_revision(stage_value: str, app_id: str, execution_id: str) -> tuple[str | None, str | None]:
@@ -228,15 +246,22 @@ def _handle_stage_event(detail: dict[str, Any], stage_value: str) -> dict[str, A
         if stage_name != "Source":
             return {"appId": app_id, "reason": "no-record-non-source-skipped"}
         commit_sha, commit_message = _source_revision(stage_value, app_id, execution_id)
-        put_deployment(
-            app_id=app_id,
+        created = create_deployment_for_execution(
+            app_id,
+            execution_id,
             trigger="auto",
             status="PENDING",
             commit_sha=commit_sha,
             commit_message=commit_message,
-            pipeline_execution_id=execution_id,
         )
-        return {"appId": app_id, "created": True, "status": "PENDING"}
+        if created is not None:
+            return {"appId": app_id, "created": True, "status": "PENDING"}
+        # 경합에서 졌다 — 종결 이벤트가 같은 실행의 레코드를 방금 만들었다(역순 도착). 그 레코드에
+        # 일반 전이를 적용한다: 종결 상태면 _advance 가 보존(역행 금지).
+        existing = _find_deployment(app_id, execution_id, consistent=True)
+        if existing is None:
+            # 클레임은 있는데 레코드가 안 보임(TTL 만료 직후 등 극단) — 새로 만들지 않고 스킵.
+            return {"appId": app_id, "reason": "claimed-record-missing-skipped"}
 
     # 기존 레코드 갱신 — 역행 금지 멱등.
     return _advance(app_id, existing, next_status)
@@ -262,14 +287,20 @@ def _handle_pipeline_event(detail: dict[str, Any], stage_value: str) -> dict[str
         return {"appId": app_id, "reason": f"pipeline-state-{state}-skipped"}
 
     existing = _find_deployment(app_id, execution_id)
-    if existing is None:
-        # 파이프라인 종결인데 매칭 레코드가 없으면 되돌아가 만들지 않는다(Source STARTED 에서 생성됨).
-        return {"appId": app_id, "reason": "no-record-skipped"}
-
     failure_category = None
     if target_status == "FAILED":
         failure_category = _failure_category(stage_value, app_id, execution_id)
-    result = _advance(app_id, existing, target_status, failure_category=failure_category)
+
+    if existing is None:
+        # 매칭 레코드 없음 = 이벤트 역순 도착(dev 실측: Source 가 수 초 만에 실패하면 Pipeline FAILED 가
+        # Source STARTED 보다 먼저 온다). 예전엔 여기서 스킵해 → 뒤늦은 Source STARTED 가 PENDING 레코드를
+        # 만들고 영원히 고착, 첫 배포면 App 이 CREATING 에 갇혀 삭제도 못 했다.
+        # → 이 실행의 Deployment 를 **종결 상태로 바로 생성**하고, 아래 부수효과는 레코드가 원래 있던
+        # 경우와 동일하게 수행한다. 늦게 오는 STARTED 는 클레임에 막혀 새 레코드를 만들지 않고
+        # 이 종결 레코드에 _advance(종결 보존)만 적용된다.
+        result = _create_terminal(stage_value, app_id, execution_id, target_status, failure_category)
+    else:
+        result = _advance(app_id, existing, target_status, failure_category=failure_category)
     # 첫 배포 완료를 App.status 로도 반영(A안). 조건부 전이라 이미 ACTIVE(재배포)면 no-op.
     app_transition = _advance_app_status(app_id, target_status, failure_category)
     if app_transition:
@@ -277,6 +308,40 @@ def _handle_pipeline_event(detail: dict[str, Any], stage_value: str) -> dict[str
     if target_status == "SUCCEEDED" and result.get("status") == "SUCCEEDED":
         result["afterSuccess"] = _after_runtime_success(stage_value, app_id)
     return result
+
+
+def _create_terminal(
+    stage_value: str,
+    app_id: str,
+    execution_id: str,
+    target_status: str,
+    failure_category: str | None,
+) -> dict[str, Any]:
+    """역순 도착: 종결 상태 Deployment 를 생성(trigger=auto). 경합에서 지면 기존 레코드에 _advance.
+
+    반환 shape 은 _advance 와 동일(status/failureCategory) + created=True — 호출부의 후속
+    부수효과(App 전이·성공 후처리) 판정이 두 경로에서 같게 동작하도록.
+    """
+    commit_sha, commit_message = _source_revision(stage_value, app_id, execution_id)
+    created = create_deployment_for_execution(
+        app_id,
+        execution_id,
+        trigger="auto",
+        status=target_status,
+        commit_sha=commit_sha,
+        commit_message=commit_message,
+        failure_category=failure_category,
+    )
+    if created is not None:
+        result: dict[str, Any] = {"appId": app_id, "created": True, "status": target_status}
+        if failure_category is not None:
+            result["failureCategory"] = failure_category
+        return result
+    # 동시에 도착한 Source STARTED 가 먼저 PENDING 레코드를 만들었다 → 그 레코드를 종결로 전진.
+    existing = _find_deployment(app_id, execution_id, consistent=True)
+    if existing is None:
+        return {"appId": app_id, "reason": "claimed-record-missing-skipped"}
+    return _advance(app_id, existing, target_status, failure_category=failure_category)
 
 
 # ── provisioner 런타임 재배포(롤백 / 시크릿 변경) — CodeBuild Build State Change ─────────
@@ -309,6 +374,8 @@ def _handle_build_event(detail: dict[str, Any], stage_value: str) -> dict[str, A
     if detail.get("project-name") != f"apphub-{stage_value}-provisioner":
         return {"reason": "project-not-matched"}
     env = _build_env(detail)
+    if env.get("APP_STACK_KIND") == "alb":
+        return _handle_alb_build_event(detail, env, stage_value)
     if env.get("APP_STACK_KIND") != "runtime":
         return {"reason": "not-runtime-build"}
     app_id = env.get("APP_ID")
@@ -320,22 +387,74 @@ def _handle_build_event(detail: dict[str, Any], stage_value: str) -> dict[str, A
         return {"appId": app_id, "reason": f"build-status-{detail.get('build-status')}-skipped"}
 
     short_id = _short_build_id(str(build_id))
-    existing = next(
-        (
-            d
-            for d in list_deployments(app_id, 20)
-            if d.get("buildId") in (short_id, build_id)
-        ),
-        None,
-    )
-    if existing is None:
-        return {"appId": app_id, "reason": "no-record-skipped"}
-
+    build_ids = (short_id, str(build_id))
     failure_category = "DEPLOY_FAILED" if target_status == "FAILED" else None
+    existing = find_deployment_by_build(app_id, build_ids)
+    if existing is None:
+        # 레코드 없음 = 접수 API(롤백/시크릿 변경)가 StartBuild 직후 레코드를 쓰기 전에 이벤트가 먼저 왔거나
+        # (빌드 즉시 실패 등 역순), 접수 쪽 기록이 유실됨. trigger 를 env DEPLOY_TRIGGER 로 판단할 수 있을
+        # 때만 빌드 ID 클레임으로 생성한다 — 접수 API 도 같은 클레임을 쓰므로 레코드는 1건이다.
+        # DEPLOY_TRIGGER 가 없으면(이 변경 이전에 시작된 빌드, 또는 레코드를 남기지 않는 다른 runtime 빌드)
+        # rollback/secret-change 를 구분할 수 없어 잘못된 이력을 만들 수 있으므로 스킵을 유지한다.
+        trigger = env.get(DEPLOY_TRIGGER_ENV)
+        if trigger not in REDEPLOY_TRIGGERS:
+            return {"appId": app_id, "reason": "no-record-skipped"}
+        created = create_deployment_for_build(
+            app_id,
+            short_id,
+            trigger=trigger,
+            status=target_status,
+            commit_sha=env.get("IMAGE_TAG") or None,
+            failure_category=failure_category,
+        )
+        if created is not None:
+            result: dict[str, Any] = {"appId": app_id, "created": True, "status": target_status}
+            if failure_category is not None:
+                result["failureCategory"] = failure_category
+            if target_status == "SUCCEEDED":
+                result["afterSuccess"] = _after_runtime_success(stage_value, app_id)
+            return result
+        # 경합에서 짐(접수 API 가 방금 PENDING 을 만듦) → 그 레코드에 일반 전이.
+        existing = find_deployment_by_build(app_id, build_ids, consistent=True)
+        if existing is None:
+            return {"appId": app_id, "reason": "claimed-record-missing-skipped"}
+
     result = _advance(app_id, existing, target_status, failure_category=failure_category)
     if target_status == "SUCCEEDED" and result.get("status") == "SUCCEEDED":
         result["afterSuccess"] = _after_runtime_success(stage_value, app_id)
     return result
+
+
+# ── ALB 증설 빌드(D20, 계약 §3.2) — provisioner APP_STACK_KIND=alb ─────────────────
+
+
+def _handle_alb_build_event(
+    detail: dict[str, Any], env: dict[str, str], stage_value: str
+) -> dict[str, Any]:
+    """증설 스택 빌드 종결 → SUCCEEDED 면 ALB# ACTIVE 등록 + PENDING 삭제, 실패면 PENDING 삭제.
+
+    ALB# Put 은 조건부(이미 있으면 ruleCount 보존) — 중복 이벤트/중복 빌드에도 멱등.
+    실패 시 PENDING 만 지워 다음 배정 호출이 증설을 재시도하게 한다(폴링 없음).
+    """
+    slug = env.get("ALB_SCHEME")
+    index_raw = env.get("ALB_INDEX")
+    if not slug or not index_raw or not index_raw.isdigit():
+        return {"reason": "alb-build-missing-scheme-or-index"}
+    index = int(index_raw)
+    status = str(detail.get("build-status"))
+    build_id = str(detail.get("build-id") or "")
+    build_ids = tuple(b for b in {build_id, _short_build_id(build_id)} if b)
+    base = {"kind": "alb", "schemeSlug": slug, "albIndex": index, "buildStatus": status}
+    if status == "SUCCEEDED":
+        alb_arn = alb_param(stage_value, slug, index, "alb-arn")
+        vpc_id = network_param(stage_value, "vpc-id")
+        created = ensure_alb_registered(alb_arn, slug, vpc_id, index=index)
+        delete_pending(slug, index)
+        return {**base, "albArn": alb_arn, "registered": created}
+    if _BUILD_STATUS_MAP.get(status) == "FAILED":
+        deleted = delete_pending(slug, index, build_ids or None)
+        return {**base, "pendingDeleted": deleted}
+    return {**base, "reason": f"build-status-{status}-skipped"}
 
 
 # ── 런타임 배포 성공 후처리 ─────────────────────────────────────────────────────

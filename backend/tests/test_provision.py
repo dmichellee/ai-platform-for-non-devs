@@ -44,14 +44,21 @@ def test_allocate_slot_assigns_priority_and_persists(ddb_table, p2_clients, prov
     # App 레코드에 vpcId 는 더 이상 없다(VPC 선택 제거). 배치 VPC 는 network SSM 에서 확정된다.
     seed_app(ddb_table, "app1abcd", "user-1", status="CREATING", scheme="internal")
     out = provision.handle({"step": "allocate-slot", "appId": "app1abcd"})
-    assert out["step"] == "allocate-slot"
-    assert out["albArn"] == INTERNAL_ALB
-    assert out["rulePriority"] == 1
-    assert out["needsScaleOut"] is False
-    # App 레코드에 albArn/rulePriority 영속.
+    assert out == {
+        "step": "allocate-slot",
+        "appId": "app1abcd",
+        "slotStatus": "ASSIGNED",
+        "albArn": INTERNAL_ALB,
+        "albIndex": 0,
+        "rulePriority": 1,
+    }
+    # App 레코드에 albArn/albIndex/rulePriority 영속.
     app = get_app("app1abcd")
     assert app["albArn"] == INTERNAL_ALB
+    assert app["albIndex"] == 0
     assert app["rulePriority"] == 1
+    # 여유 충분 → 증설 시작 안 함.
+    assert p2_clients["codebuild"].calls_for("start_build") == []
     # 레지스트리 시드됨 — vpcId 는 network SSM(vpc-id)에서 확정된 플랫폼 VPC.
     reg_items = [i for i in list_alb_registry() if i.get("albArn") == INTERNAL_ALB]
     assert len(reg_items) == 1
@@ -70,12 +77,133 @@ def test_allocate_slot_idempotent_when_already_assigned(ddb_table, p2_clients, p
         rulePriority=7,
     )
     out = provision.handle({"step": "allocate-slot", "appId": "app2abcd"})
-    # 이미 배정됨 → 재배정 없이 기존 값 반환, needsScaleOut 미포함.
+    # 이미 배정됨 → 재배정 없이 기존 값 반환(albIndex 없으면 0).
+    assert out["slotStatus"] == "ASSIGNED"
     assert out["albArn"] == INTERNAL_ALB
+    assert out["albIndex"] == 0
     assert out["rulePriority"] == 7
-    assert "needsScaleOut" not in out
     # priority 카운터 미사용(레지스트리 시드 안 함).
     assert list_alb_registry() == []
+
+
+def test_allocate_slot_idempotent_returns_stored_alb_index(ddb_table, p2_clients, prov_env) -> None:
+    _ssm()
+    seed_app(
+        ddb_table, "app2idx0", "user-1", status="CREATING", albArn="arn:alb:2", rulePriority=9, albIndex=2
+    )
+    out = provision.handle({"step": "allocate-slot", "appId": "app2idx0"})
+    assert out["albIndex"] == 2
+    assert out["albArn"] == "arn:alb:2"
+
+
+def test_allocate_slot_prefers_per_alb_ssm_key(ddb_table, p2_clients, prov_env) -> None:
+    # n=0 신규 키(/network/alb/{slug}/0/alb-arn)가 있으면 그것을 시드로 쓴다(legacy 는 폴백).
+    _ssm({f"/apphub/{STAGE}/network/alb/internet/0/alb-arn": "arn:alb:net0"})
+    seed_app(ddb_table, "appnet01", "user-1", status="CREATING", scheme="internet-facing")
+    out = provision.handle({"step": "allocate-slot", "appId": "appnet01"})
+    assert out["albArn"] == "arn:alb:net0"
+    reg_item = [i for i in list_alb_registry() if i.get("albArn") == "arn:alb:net0"][0]
+    assert reg_item["schemeSlug"] == "internet"
+    assert reg_item["scheme"] == "internet-facing"
+
+
+def _fill(table, alb_arn: str, count: int) -> None:
+    from app.data import alb_registry as reg
+
+    reg.ensure_alb_registered(alb_arn, "internal", "vpc-platform", index=0)
+    table.update_item(
+        Key={"PK": "CONFIG", "SK": f"ALB#{alb_arn}"},
+        UpdateExpression="SET ruleCount = :c",
+        ExpressionAttributeValues={":c": count},
+    )
+
+
+def _alb_builds(p2_clients) -> list[dict[str, str]]:
+    out = []
+    for call in p2_clients["codebuild"].calls_for("start_build"):
+        out.append({e["name"]: e["value"] for e in call["environmentVariablesOverride"]})
+    return out
+
+
+def test_allocate_slot_preemptive_scale_out_at_80(ddb_table, p2_clients, prov_env) -> None:
+    _ssm()
+    _fill(ddb_table, INTERNAL_ALB, 79)  # 배정 후 80 → 여유 10 ≤ 10 → 선제 증설
+    p2_clients["codebuild"].set_response("start_build", {"build": {"id": "apphub-test-provisioner:u1"}})
+    seed_app(ddb_table, "appscl01", "user-1", status="CREATING", scheme="internal")
+    out = provision.handle({"step": "allocate-slot", "appId": "appscl01"})
+    # 증설은 기다리지 않는다 — 배정은 그대로 ASSIGNED.
+    assert out["slotStatus"] == "ASSIGNED"
+    assert out["albIndex"] == 0
+    builds = _alb_builds(p2_clients)
+    assert builds == [
+        {
+            "APP_ID": "-",
+            "STAGE": STAGE,
+            "APP_STACK_KIND": "alb",
+            "ALB_SCHEME": "internal",
+            "ALB_INDEX": "1",
+        }
+    ]
+    assert p2_clients["codebuild"].calls_for("start_build")[0]["projectName"] == "apphub-test-provisioner"
+    pend = ddb_table.get_item(Key={"PK": "CONFIG", "SK": "ALBPENDING#internal#1"})["Item"]
+    assert pend["status"] == "PROVISIONING"
+    assert pend["buildId"] == "apphub-test-provisioner:u1"
+
+    # 다음 앱 배정: PENDING 진행 중 → 중복 증설 없음.
+    seed_app(ddb_table, "appscl02", "user-1", status="CREATING", scheme="internal", subdomain="b")
+    out2 = provision.handle({"step": "allocate-slot", "appId": "appscl02"})
+    assert out2["slotStatus"] == "ASSIGNED"
+    assert len(_alb_builds(p2_clients)) == 1
+
+
+def test_allocate_slot_no_scale_out_below_threshold(ddb_table, p2_clients, prov_env) -> None:
+    _ssm()
+    _fill(ddb_table, INTERNAL_ALB, 78)  # 배정 후 79 → 여유 11
+    seed_app(ddb_table, "appscl03", "user-1", status="CREATING", scheme="internal")
+    provision.handle({"step": "allocate-slot", "appId": "appscl03"})
+    assert p2_clients["codebuild"].calls_for("start_build") == []
+
+
+def test_allocate_slot_wait_when_full_starts_scale_out_once(ddb_table, p2_clients, prov_env) -> None:
+    _ssm()
+    _fill(ddb_table, INTERNAL_ALB, 90)
+    p2_clients["codebuild"].set_response("start_build", {"build": {"id": "apphub-test-provisioner:w1"}})
+    seed_app(ddb_table, "appwait1", "user-1", status="CREATING", scheme="internal")
+    out = provision.handle({"step": "allocate-slot", "appId": "appwait1"})
+    assert out == {"step": "allocate-slot", "appId": "appwait1", "slotStatus": "WAIT"}
+    # App 에 배정 흔적 없음.
+    app = get_app("appwait1")
+    assert "albArn" not in app and "rulePriority" not in app
+    assert len(_alb_builds(p2_clients)) == 1
+    # SFN 재호출(Wait 30초 후) — 진행 중 PENDING 확인만, 재증설 없음.
+    out2 = provision.handle({"step": "allocate-slot", "appId": "appwait1"})
+    assert out2["slotStatus"] == "WAIT"
+    assert len(_alb_builds(p2_clients)) == 1
+
+
+def test_allocate_slot_assigns_to_new_alb_after_scale_out(ddb_table, p2_clients, prov_env) -> None:
+    from app.data import alb_registry as reg
+
+    _ssm()
+    _fill(ddb_table, INTERNAL_ALB, 90)
+    reg.ensure_alb_registered("arn:alb:internal-1", "internal", "vpc-platform", index=1)
+    seed_app(ddb_table, "appnew01", "user-1", status="CREATING", scheme="internal")
+    out = provision.handle({"step": "allocate-slot", "appId": "appnew01"})
+    assert out["slotStatus"] == "ASSIGNED"
+    assert out["albArn"] == "arn:alb:internal-1"
+    assert out["albIndex"] == 1
+    assert get_app("appnew01")["albIndex"] == 1
+
+
+def test_allocate_slot_start_build_failure_clears_pending(ddb_table, p2_clients, prov_env) -> None:
+    _ssm()
+    _fill(ddb_table, INTERNAL_ALB, 90)
+    p2_clients["codebuild"].set_raise("start_build", RuntimeError("throttled"))
+    seed_app(ddb_table, "appfail1", "user-1", status="CREATING", scheme="internal")
+    out = provision.handle({"step": "allocate-slot", "appId": "appfail1"})
+    assert out["slotStatus"] == "WAIT"
+    # PENDING 이 남지 않아 다음 호출이 재시도할 수 있다.
+    assert "Item" not in ddb_table.get_item(Key={"PK": "CONFIG", "SK": "ALBPENDING#internal#1"})
 
 
 def test_deploy_pipeline_starts_provisioner_build(ddb_table, p2_clients, prov_env) -> None:

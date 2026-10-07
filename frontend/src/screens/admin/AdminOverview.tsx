@@ -7,7 +7,7 @@ import { useMemo, useState } from "react";
 import { MoonStar, Search, Trash2 } from "lucide-react";
 import { ErrorNotice, Modal, Skeleton, relTime } from "../../components/common.js";
 import { useMutation, useQuery } from "../../lib/ApiProvider.js";
-import type { App, AppStatus, RuntimeState } from "../../lib/types.js";
+import type { AdminStopResult, App, AppStatus, RuntimeState } from "../../lib/types.js";
 import { SCHEME_LABEL } from "../../lib/labels.js";
 
 const PRESET_NAME: Record<string, string> = {
@@ -195,7 +195,7 @@ export function AdminOverview(): JSX.Element {
 // ── 강제 중지(재우기) 확인 모달 ──
 // 소유자 동의 없이 관리자가 즉시 잠재우는 작업이라 확인을 받는다.
 function AdminStopModal({ app, onClose, onDone }: { app: App; onClose: () => void; onDone: () => void }): JSX.Element {
-  const stopMut = useMutation<void, App>((a) => a.adminStopApp(app.appId));
+  const stopMut = useMutation<void, AdminStopResult>((a) => a.adminStopApp(app.appId));
   return (
     <Modal title="이 앱을 강제로 재울까요?" onClose={onClose}>
       <p>

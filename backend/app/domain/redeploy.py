@@ -13,7 +13,13 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from ..data.deployments import list_deployments, put_deployment
+from ..data.deployments import (
+    adopt_deployment,
+    create_deployment_for_build,
+    find_deployment_by_build,
+    list_deployments,
+    put_deployment,
+)
 from ..http.errors import errors
 from ..integrations.codebuild import start_provisioner_build
 from ..integrations.ecr import app_ecr_repo_name, image_tag_exists
@@ -81,11 +87,24 @@ def current_deployed_commit(stage: str, app: dict[str, Any]) -> tuple[str | None
 _DEFAULT_START_FAILED = "지금은 앱에 새 설정을 적용(재배포)할 수 없어요. 잠시 후 다시 시도해주세요."
 
 
+# StartBuild env override 로 실어 보내는 Deployment.trigger 값. provisioner.yml 은 이 변수를 쓰지 않고
+#  (모르는 env 는 무시), deploy-notify 가 Build State Change 이벤트의 env 에서 읽어 "레코드보다 이벤트가
+#  먼저 온" 경우에 올바른 trigger 로 레코드를 만든다(record_runtime_redeploy 참고).
+DEPLOY_TRIGGER_ENV = "DEPLOY_TRIGGER"
+REDEPLOY_TRIGGERS = ("rollback", "secret-change")
+
+
 def start_runtime_redeploy(
-    stage: str, app_id: str, commit_sha: str, failed_message: str = _DEFAULT_START_FAILED
+    stage: str,
+    app_id: str,
+    commit_sha: str,
+    *,
+    trigger: str,
+    failed_message: str = _DEFAULT_START_FAILED,
 ) -> str:
     """provisioner CodeBuild(runtime 재배포) StartBuild → build id.
 
+    trigger(rollback|secret-change)는 env DEPLOY_TRIGGER 로 함께 보낸다(deploy-notify 의 레코드 생성 판단용).
     SSM(provisioner-project-name) 조회와 StartBuild 를 **모두** 친절 에러로 감싼다(QA M1 — 이전에는
     SSM 조회가 try 밖이라 권한/파라미터 문제 시 500 INTERNAL_ERROR 로 새어 나갔다).
     """
@@ -98,11 +117,51 @@ def start_runtime_redeploy(
                 "STAGE": stage,
                 "APP_STACK_KIND": "runtime",
                 "IMAGE_TAG": commit_sha,
+                DEPLOY_TRIGGER_ENV: trigger,
             },
         )
     except Exception as err:  # noqa: BLE001 - AWS 예외를 사용자용 친절 에러로 변환
         print("[redeploy] start runtime redeploy failed:", type(err).__name__)
         raise errors.invalid_state(failed_message) from err
+
+
+def record_runtime_redeploy(
+    app_id: str,
+    build_id: str,
+    *,
+    trigger: str,
+    commit_sha: str,
+    commit_message: str | None,
+) -> dict[str, Any]:
+    """런타임 재배포 접수 레코드(PENDING)를 빌드 ID 클레임(`DEPLOYBUILD#{buildId}`) 경유로 1건만 만든다.
+
+    경합: StartBuild 직후 빌드가 즉시 실패/종결해 deploy-notify 가 Build State Change 로 레코드를 먼저
+    만들 수 있다(이벤트 env 의 DEPLOY_TRIGGER 로 trigger 판단 가능할 때만). 그 경우 클레임에 지면 그
+    레코드의 trigger/커밋 정보만 보정해 반환한다(status 유지 — 역행 금지).
+    """
+    deployment = create_deployment_for_build(
+        app_id,
+        build_id,
+        trigger=trigger,
+        status="PENDING",
+        commit_sha=commit_sha,
+        commit_message=commit_message,
+    )
+    if deployment is not None:
+        return deployment
+    existing = find_deployment_by_build(app_id, (build_id,), consistent=True)
+    if existing is None:
+        # 클레임은 있는데 레코드가 안 보임(극단 — 트랜잭션상 함께 생성되므로 사실상 없음). 응답을 위해 put.
+        return put_deployment(
+            app_id=app_id,
+            trigger=trigger,
+            commit_sha=commit_sha,
+            commit_message=commit_message,
+            build_id=build_id,
+        )
+    return adopt_deployment(
+        app_id, existing, trigger=trigger, commit_sha=commit_sha, commit_message=commit_message
+    )
 
 
 def trigger_secret_change_redeploy(stage: str, app: dict[str, Any]) -> dict[str, Any]:
@@ -126,15 +185,15 @@ def trigger_secret_change_redeploy(stage: str, app: dict[str, Any]) -> dict[str,
     if not exists:
         return _skipped("IMAGE_NOT_FOUND")
     try:
-        build_id = start_runtime_redeploy(stage, app_id, commit_sha)
+        build_id = start_runtime_redeploy(stage, app_id, commit_sha, trigger="secret-change")
     except Exception:  # noqa: BLE001 - 친절 에러 대신 SKIPPED/START_FAILED 로 응답(저장은 성공)
         return _skipped("START_FAILED")
-    deployment = put_deployment(
-        app_id=app_id,
+    deployment = record_runtime_redeploy(
+        app_id,
+        build_id,
         trigger="secret-change",
         commit_sha=commit_sha,
         commit_message=commit_message,
-        build_id=build_id,
     )
     return {
         "status": "PENDING",

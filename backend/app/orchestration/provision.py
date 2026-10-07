@@ -1,7 +1,7 @@
 """ProvisionApp task Lambda 디스패처 (DESIGN.md 3.2, D-M5-01).
 
 step 흐름(ASL 이 Wait/Choice/Retry/Catch 로 감싼다):
-  allocate-slot → deploy-pipeline(provisioner CodeBuild StartBuild)
+  allocate-slot(slotStatus=WAIT 면 Wait 30초 → 재호출, D20) → deploy-pipeline(provisioner CodeBuild StartBuild)
     → poll-build(Choice buildStatus=SUCCEEDED + Wait 루프) → first-deploy(no-op — 파이프라인
       생성 시 CreatePipeline 자동 실행에 위임, StartPipelineExecution 호출 안 함)
     → finalize(성공: status CREATING 유지 / 실패: CREATING→FAILED).
@@ -19,10 +19,19 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from ..data.alb_registry import allocate_alb_slot
+from ..data.alb_registry import (
+    ALB_SCALE_OUT_SPARE,
+    allocate_alb_slot,
+    delete_pending,
+    list_pending,
+    next_alb_index,
+    reserve_pending,
+    set_pending_build,
+)
 from ..data.apps import get_app, set_failure, transition_status, update_app
+from ..domain.alb_scheme import scheme_slug
 from ..integrations.codebuild import get_build_status, start_provisioner_build
-from ..integrations.ssm import alb_arn_for_scheme, network_param, platform_param
+from ..integrations.ssm import alb_param, network_param, platform_param
 from . import stage
 from .failure import build_failure
 
@@ -35,32 +44,88 @@ def _require_app(app_id: str) -> dict[str, Any]:
 
 
 def allocate_slot(e: dict[str, Any]) -> dict[str, Any]:
-    """ALB 슬롯 배정(멱등 — 이미 albArn/rulePriority 있으면 재배정하지 않음)."""
+    """ALB 슬롯 배정(D20, 계약 §3.4·§4). ASSIGNED 또는 WAIT 반환.
+
+    - 멱등: App 에 albArn/rulePriority 가 이미 있으면 재배정 없이 ASSIGNED(albIndex 없으면 0).
+    - 같은 scheme 의 ACTIVE ALB 를 index 순으로 `ruleCount<90` 조건부 +1 → App 에 albArn/albIndex/
+      rulePriority 기록. 배정 후 여유 ≤ 10 이면 선제 증설 시작(기다리지 않음).
+    - 모두 90 이면 증설 시작(또는 진행 중 PENDING 확인) 후 WAIT — ASL 이 Wait 30초 → 재호출.
+    """
     app_id = e["appId"]
     app = _require_app(app_id)
     if app.get("albArn") and app.get("rulePriority") is not None:
         return {
             "step": "allocate-slot",
             "appId": app_id,
+            "slotStatus": "ASSIGNED",
             "albArn": app["albArn"],
+            "albIndex": int(app.get("albIndex") or 0),
             "rulePriority": app["rulePriority"],
         }
     scheme = app["scheme"]
     st = stage()
-    alb_arn = alb_arn_for_scheme(st, scheme)
+    seed_alb_arn = alb_param(st, scheme, 0, "alb-arn")
     # VPC 선택 기능 제거 — 1차는 플랫폼 부트스트랩 VPC 단일 배치(DESIGN 3.7·10장).
-    #  App 레코드에 vpcId 가 없으므로 배치 VPC 는 network SSM(vpc-id)에서 확정한다.
-    #  이 값은 AlbRegistry 아이템의 vpcId 속성(관리자 인프라 현황용)으로만 쓰인다.
+    #  배치 VPC 는 network SSM(vpc-id)에서 확정(AlbRegistry.vpcId — 관리자 인프라 현황용).
     vpc_id = network_param(st, "vpc-id")
-    slot = allocate_alb_slot(alb_arn, scheme, vpc_id)
-    update_app(app_id, {"albArn": slot["albArn"], "rulePriority": slot["rulePriority"]})
+    slot = allocate_alb_slot(scheme, seed_alb_arn, vpc_id)
+    if slot["slotStatus"] != "ASSIGNED":
+        scale = ensure_scale_out(st, scheme)
+        print("[allocate-slot] WAIT", {"appId": app_id, "scheme": scheme, **scale})
+        return {"step": "allocate-slot", "appId": app_id, "slotStatus": "WAIT"}
+    update_app(
+        app_id,
+        {
+            "albArn": slot["albArn"],
+            "albIndex": slot["albIndex"],
+            "rulePriority": slot["rulePriority"],
+        },
+    )
+    if slot["spare"] <= ALB_SCALE_OUT_SPARE:
+        scale = ensure_scale_out(st, scheme)
+        print("[allocate-slot] scale-out", {"appId": app_id, "scheme": scheme, **scale})
     return {
         "step": "allocate-slot",
         "appId": app_id,
+        "slotStatus": "ASSIGNED",
         "albArn": slot["albArn"],
+        "albIndex": slot["albIndex"],
         "rulePriority": slot["rulePriority"],
-        "needsScaleOut": slot["needsScaleOut"],
     }
+
+
+def ensure_scale_out(st: str, scheme: str) -> dict[str, Any]:
+    """다음 ALB 증설을 시작(멱등). 진행 중 PENDING 이 있으면 아무것도 하지 않는다.
+
+    PENDING 조건부 Put(중복 방지) → provisioner StartBuild(APP_STACK_KIND=alb, 계약 §5) → buildId 기록.
+    StartBuild 실패 시 PENDING 을 지우고 삼킨다(다음 배정 호출이 재시도) — 배정 흐름을 깨지 않는다.
+    완료(PENDING→ALB# ACTIVE)는 deploy-notify 가 provisioner Build State Change 로 처리한다.
+    """
+    slug = scheme_slug(scheme)
+    pending = list_pending(slug)
+    if pending:
+        return {"scaleOut": "in-progress", "albIndex": pending[0]["index"]}
+    index = next_alb_index(slug, pending)
+    if not reserve_pending(slug, index):
+        return {"scaleOut": "in-progress", "albIndex": index}
+    try:
+        project_name = platform_param(st, "provisioner-project-name")
+        build_id = start_provisioner_build(
+            project_name,
+            {
+                "APP_ID": "-",
+                "STAGE": st,
+                "APP_STACK_KIND": "alb",
+                "ALB_SCHEME": slug,
+                "ALB_INDEX": str(index),
+            },
+        )
+    except Exception as err:  # noqa: BLE001 - 증설 시작 실패는 배정 흐름을 깨지 않는다(재시도)
+        delete_pending(slug, index)
+        print("[allocate-slot] scale-out start failed:", str(err))
+        return {"scaleOut": "start-failed", "albIndex": index}
+    set_pending_build(slug, index, build_id)
+    return {"scaleOut": "started", "albIndex": index, "buildId": build_id}
 
 
 def deploy_pipeline(e: dict[str, Any]) -> dict[str, Any]:

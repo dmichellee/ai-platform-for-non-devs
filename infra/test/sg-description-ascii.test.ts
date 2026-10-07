@@ -4,6 +4,7 @@ import { Template } from "aws-cdk-lib/assertions";
 import { NetworkStack } from "../lib/network-stack";
 import { PlatformStack } from "../lib/platform-stack";
 import { AppPipelineStack, AppRuntimeStack } from "../lib/app-stacks";
+import { AlbShardStack } from "../lib/alb-shard-stack";
 import type { AppPipelineParams, AppRuntimeParams } from "../lib/constructs/app-params";
 import { assertSgDescriptionsAscii } from "./helpers/sg-ingress";
 import { testConfig, testEnv } from "./helpers/config";
@@ -32,9 +33,9 @@ function networkTemplate(): Template {
   return Template.fromStack(stack);
 }
 
-function platformTemplate(): Template {
+function platformTemplate(frontendMode: "public" | "private" = "public"): Template {
   const app = new App();
-  const config = testConfig("dev");
+  const config = testConfig("dev", { frontendMode });
   const stack = new PlatformStack(app, "apphub-dev-platform", {
     stage: "dev",
     config,
@@ -95,6 +96,22 @@ describe("EC2 SG GroupDescription ASCII 강제 (전 스택 공통)", () => {
 
   it("platform 스택의 모든 SG description이 ASCII", () => {
     assertSgDescriptionsAscii(platformTemplate());
+  });
+
+  it("platform 스택(private 모드 — 콘솔 ALB/태스크/VPC 엔드포인트 SG)의 모든 SG description이 ASCII", () => {
+    assertSgDescriptionsAscii(platformTemplate("private"));
+  });
+
+  it("ALB 증설 스택의 모든 SG description이 ASCII", () => {
+    for (const schemeSlug of ["internet", "internal"] as const) {
+      const stack = new AlbShardStack(new App(), `apphub-dev-alb-${schemeSlug}-1`, {
+        env: ENV,
+        stage: "dev",
+        schemeSlug,
+        albIndex: 1,
+      });
+      assertSgDescriptionsAscii(Template.fromStack(stack));
+    }
   });
 
   it("app-runtime 스택의 모든 SG description이 ASCII", () => {

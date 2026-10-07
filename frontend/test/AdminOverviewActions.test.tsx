@@ -3,7 +3,6 @@ import { screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { AdminOverview } from "../src/screens/admin/AdminOverview.js";
 import { renderWithProviders, seedSession } from "./harness.js";
 import { MockApiClient } from "../src/mock/mockApi.js";
-import type { App } from "../src/lib/types.js";
 
 /**
  * ⑤ 관리자 전체 현황 — 강제 중지(재우기) + 타인 앱 삭제.
@@ -82,8 +81,10 @@ describe("⑤ 관리자 — 타인 앱 삭제", () => {
 describe("⑤ mockApi 상태 전이", () => {
   it("adminStopApp: ACTIVE·RUNNING → SLEEPING", async () => {
     const client = new MockApiClient();
-    const updated: App = await client.adminStopApp("a1b2c3d4");
-    expect(updated.runtimeState).toBe("SLEEPING");
+    const res = await client.adminStopApp("a1b2c3d4");
+    expect(res).toEqual({ appId: "a1b2c3d4", runtimeState: "SLEEPING", stopped: true });
+    const after = (await client.adminListAllApps()).find((a) => a.appId === "a1b2c3d4");
+    expect(after?.runtimeState).toBe("SLEEPING");
   });
 
   it("adminDeleteApp: 타인 앱 → DELETING", async () => {

@@ -6,6 +6,7 @@ from typing import Any
 
 from boto3.dynamodb.conditions import Key
 
+from ..domain.alb_scheme import scheme_from_slug
 from ..util import now_iso
 from .client import clean_item, strip_item, table
 from .keys import (
@@ -127,7 +128,29 @@ def delete_permission_template(perm_id: str) -> None:
 
 
 def list_alb_registry() -> list[dict[str, Any]]:
-    res = table().query(
-        KeyConditionExpression=Key("PK").eq(CONFIG_PK) & Key("SK").begins_with(SkPrefix.ALB),
-    )
-    return [strip_item(i, _CONFIG_DROP) for i in res.get("Items", [])]  # type: ignore[misc]
+    """관리자 인프라 현황(계약 delta §8): ALB# 항목 + 증설 대기(PENDING) 항목.
+
+    ALB#: `{albArn, scheme, schemeSlug, index, status, ruleCount, ruleLimit, vpcId}`
+      (기존 아이템에 index/status 없으면 0/ACTIVE).
+    PENDING: `{scheme, schemeSlug, index, status:"PROVISIONING", ruleCount:0, ruleLimit, createdAt}`
+      (albArn 없음, 만료(ttl 경과)분 제외). 정렬: schemeSlug → index, 같은 index 면 ALB# 먼저.
+    """
+    from . import alb_registry  # 순환 import 방지(alb_registry 는 쓰기 소유 모듈)
+
+    items: list[dict[str, Any]] = []
+    for alb in alb_registry.list_albs():
+        items.append({**alb, "ruleLimit": alb_registry.ALB_RULE_LIMIT})
+    for pend in alb_registry.list_pending():
+        items.append(
+            {
+                "scheme": scheme_from_slug(pend["schemeSlug"]),
+                "schemeSlug": pend["schemeSlug"],
+                "index": pend["index"],
+                "status": alb_registry.PENDING_STATUS,
+                "ruleCount": 0,
+                "ruleLimit": alb_registry.ALB_RULE_LIMIT,
+                "createdAt": pend.get("createdAt"),
+            }
+        )
+    items.sort(key=lambda i: (i.get("schemeSlug") or "", i["index"], "albArn" not in i))
+    return [{k: v for k, v in i.items() if v is not None} for i in items]

@@ -55,6 +55,12 @@ export interface AppRuntimeParams {
   /** 접속 서브도메인. `{subdomain}.{appsDomain}` 로 노출. */
   readonly subdomain: string;
   readonly scheme: AppScheme;
+  /**
+   * 배정된 ALB 인덱스(D20, 계약 §3.3·§6). 0 = network 스택의 기존 ALB, n≥1 = 증설 스택.
+   * 리스너 ARN·ALB DNS/zone id·ALB full name을 `/network/alb/{slug}/{albIndex}/*`에서 읽는다.
+   * 미지정(기존 앱) = 0.
+   */
+  readonly albIndex?: number;
   /** 프리셋에서 온 Fargate 유효 조합/스케일 설정(ComputePreset). */
   readonly cpu: number;
   readonly memory: number;
@@ -145,6 +151,7 @@ export function loadRuntimeParams(app: App, stage: Stage, appId: string): AppRun
     appId,
     subdomain: ctxString(app, "subdomain"),
     scheme,
+    albIndex: ctxAlbIndex(app),
     cpu: ctxNumber(app, "cpu"),
     memory: ctxNumber(app, "memory"),
     minCount: ctxNumber(app, "minCount"),
@@ -161,6 +168,17 @@ export function loadRuntimeParams(app: App, stage: Stage, appId: string): AppRun
     cognitoProtect: ctxBool(app, "cognitoProtect", scheme === "internet-facing"),
     isInitialDeploy: ctxBool(app, "isInitialDeploy", true),
   };
+}
+
+/** `-c albIndex=` (선택, 기본 0). 0 이상의 정수가 아니면 실패(잘못된 ALB에 규칙을 붙이지 않도록). */
+export function ctxAlbIndex(app: App): number {
+  const raw = ctxStringOpt(app, "albIndex");
+  if (raw === undefined) return 0;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) {
+    throw new Error(`앱 스택 컨텍스트 'albIndex' 는 0 이상의 정수여야 합니다(받은 값: ${raw}).`);
+  }
+  return n;
 }
 
 /**

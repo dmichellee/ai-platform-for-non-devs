@@ -2,6 +2,7 @@
  * JWT 처리 — Cognito idToken에서 sub/이메일/그룹을 읽고 만료를 판단한다.
  * (검증은 API Gateway authorizer의 몫. 프론트는 클레임 파싱과 갱신 시점 판단만 한다.)
  */
+import { initiateRefreshAuth } from "./cognitoIdp.js";
 
 export interface UserSession {
   sub: string;
@@ -129,45 +130,28 @@ export function isExpired(session: UserSession | null): boolean {
 }
 
 export interface RefreshDeps {
-  cognitoDomain?: string;
+  /** 로그인 API 주소(resolveCognitoIdpEndpoint 결과). */
+  endpoint?: string | null;
   userPoolClientId: string;
 }
 
 /**
- * refresh_token으로 idToken을 조용히 갱신한다(Cognito token endpoint, grant_type=refresh_token).
- * - refresh_token은 응답에 포함되지 않으므로 기존 값을 유지한다.
- * - 실패(만료된 refresh_token, 도메인 없음, 네트워크 오류 등)면 null을 돌려준다.
+ * refresh_token으로 idToken을 조용히 갱신한다(cognito-idp InitiateAuth REFRESH_TOKEN_AUTH — D21).
+ * - 응답에 RefreshToken이 없으면(회전 미사용) 기존 값을 유지한다.
+ * - 실패(만료·폐기된 refresh_token, 주소 없음, 네트워크 오류 등)면 null을 돌려준다.
  *   호출 측이 null을 받으면 세션 클리어 + 로그인으로 보내는 판단을 한다.
- * code 교환(exchangeCodeForTokens)과 같은 엔드포인트/응답 형식을 쓴다.
  */
 export async function refreshTokens(
   deps: RefreshDeps,
   refreshToken: string,
 ): Promise<UserSession | null> {
-  if (!deps.cognitoDomain || !refreshToken) return null;
-  const body = new URLSearchParams({
-    grant_type: "refresh_token",
-    client_id: deps.userPoolClientId,
-    refresh_token: refreshToken,
-  });
-  let res: Response;
+  if (!deps.endpoint || !refreshToken) return null;
   try {
-    res = await fetch(`https://${deps.cognitoDomain}/oauth2/token`, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body,
-    });
+    const res = await initiateRefreshAuth(deps.endpoint, deps.userPoolClientId, refreshToken);
+    const idToken = res.AuthenticationResult?.IdToken;
+    if (!idToken) return null;
+    return sessionFromTokens(idToken, res.AuthenticationResult?.RefreshToken ?? refreshToken);
   } catch {
     return null;
   }
-  if (!res.ok) return null;
-  let json: { id_token?: string; refresh_token?: string };
-  try {
-    json = (await res.json()) as { id_token?: string; refresh_token?: string };
-  } catch {
-    return null;
-  }
-  if (!json.id_token) return null;
-  // refresh_token 회전(rotation)을 켠 경우 새 값이 올 수 있고, 아니면 기존 값 유지.
-  return sessionFromTokens(json.id_token, json.refresh_token ?? refreshToken);
 }

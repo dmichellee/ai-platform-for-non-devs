@@ -57,6 +57,9 @@ def _view_app(app: dict[str, Any], is_admin: bool) -> dict[str, Any]:
     hidden = _INTERNAL_APP_FIELDS if is_admin else _INTERNAL_APP_FIELDS + _ADMIN_ONLY_APP_FIELDS
     view = {k: v for k, v in app.items() if k not in hidden}
     view["secretKeys"] = list(app.get("secretKeys") or [])
+    # albIndex(D20, 내부용): 배정된 앱인데 값이 없으면(기존 앱) 0 으로 간주.
+    if view.get("albArn") and view.get("albIndex") is None:
+        view["albIndex"] = 0
     return view
 
 

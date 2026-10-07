@@ -1,0 +1,3 @@
+# deploy.sh(private 모드)가 cdk deploy 전에 채우는 빌드 산출물(SPA dist + Kiro zip). 추적 제외.
+site/*
+!site/.gitkeep

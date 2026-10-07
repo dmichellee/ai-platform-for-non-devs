@@ -10,9 +10,17 @@ Deployment 레코드는 접수 시점에 생성하고 실행 식별자(pipelineE
 
 from __future__ import annotations
 
+from typing import Any
+
 from ..config import load_config
-from ..data.deployments import list_deployments, put_deployment
-from ..domain.redeploy import start_runtime_redeploy
+from ..data.deployments import (
+    adopt_deployment,
+    create_deployment_for_execution,
+    find_deployment_by_execution,
+    list_deployments,
+    put_deployment,
+)
+from ..domain.redeploy import record_runtime_redeploy, start_runtime_redeploy
 from ..domain.validate import parse_body
 from ..http.errors import errors
 from ..http.response import ProxyResult, created, list_response, ok
@@ -35,11 +43,7 @@ def trigger_deploy(ctx: RouteContext) -> ProxyResult:
     stage = load_config().stage
     pipeline_execution_id = _start_pipeline_or_friendly_error(stage, app["appId"])
 
-    deployment = put_deployment(
-        app_id=app["appId"],
-        trigger="manual",
-        pipeline_execution_id=pipeline_execution_id,
-    )
+    deployment = _record_manual_deploy(app["appId"], pipeline_execution_id)
     return created(
         {
             **deployment,
@@ -93,20 +97,47 @@ def rollback_deploy(ctx: RouteContext) -> ProxyResult:
         stage,
         app["appId"],
         commit_sha,
+        trigger="rollback",
         failed_message="지금은 되돌리기를 시작할 수 없어요. 잠시 후 다시 시도해주세요.",
     )
 
-    deployment = put_deployment(
-        app_id=app["appId"],
+    deployment = record_runtime_redeploy(
+        app["appId"],
+        build_id,
         trigger="rollback",
         commit_sha=commit_sha,
         commit_message=target.get("commitMessage"),
-        build_id=build_id,
     )
     return ok({**deployment, "note": "이전 버전으로 되돌리는 요청이 접수되었어요."})
 
 
 # ── 내부 헬퍼 ─────────────────────────────────────────────────────────────────
+
+
+def _record_manual_deploy(app_id: str, pipeline_execution_id: str | None) -> dict[str, Any]:
+    """수동 배포 접수 레코드를 실행 ID 클레임 경유로 1건만 만든다.
+
+    경합: StartPipelineExecution 직후 실행이 즉시 실패(Source 실패 등)하면 deploy-notify 가 종결 이벤트로
+    `trigger=auto, FAILED` 레코드를 먼저 만들 수 있다(또는 Source STARTED 로 auto PENDING). 예전엔 여기서
+    클레임 없이 put 해 'auto FAILED' + 'manual PENDING(영구 고착)' 2건이 생겼다.
+    → 같은 클레임(`DEPLOYEXEC#{executionId}`)으로 생성하고, 졌으면 그 레코드의 trigger 만 manual 로
+    보정해 응답한다(status 는 유지 — 종결이면 종결 그대로).
+    실행 ID 를 못 받은 경우(StartPipelineExecution 응답 결측)는 클레임 키가 없으므로 기존처럼 put.
+    """
+    if not pipeline_execution_id:
+        return put_deployment(app_id=app_id, trigger="manual")
+    deployment = create_deployment_for_execution(
+        app_id, pipeline_execution_id, trigger="manual", status="PENDING"
+    )
+    if deployment is not None:
+        return deployment
+    existing = find_deployment_by_execution(app_id, pipeline_execution_id, consistent=True)
+    if existing is None:
+        # 클레임은 있는데 레코드가 안 보임(극단 — 트랜잭션상 함께 생성되므로 사실상 없음). 응답을 위해 put.
+        return put_deployment(
+            app_id=app_id, trigger="manual", pipeline_execution_id=pipeline_execution_id
+        )
+    return adopt_deployment(app_id, existing, trigger="manual")
 
 
 def _start_pipeline_or_friendly_error(stage: str, app_id: str) -> str | None:

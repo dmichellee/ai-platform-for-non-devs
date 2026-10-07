@@ -22,6 +22,23 @@
 
 export type Stage = "dev" | "prod";
 
+/**
+ * 플랫폼 웹 배포 모드(D19, PLATFORM-ENGINEERING 4.1). 기본 public.
+ *  - public : CloudFront+S3 + API GW Regional
+ *  - private: 콘솔 internal ALB + ECS(nginx) + Private REST API(VPC 엔드포인트)
+ */
+export type FrontendMode = "public" | "private";
+
+/** frontendMode 컨텍스트 문자열 검증(미지정 → public). 알 수 없는 값은 throw(조용한 오설치 방지). */
+export function parseFrontendMode(raw: string | undefined): FrontendMode {
+  if (raw === undefined || raw === "" || raw === "public") return "public";
+  if (raw === "private") return "private";
+  throw new Error(
+    `유효하지 않은 frontendMode: ${JSON.stringify(raw)}. ` +
+      "`--frontend-mode public|private`(내부적으로 `-c frontendMode=...`)로 지정하세요.",
+  );
+}
+
 export interface StageConfig {
   /** dev | prod */
   readonly stage: Stage;
@@ -42,6 +59,8 @@ export interface StageConfig {
    * 미지정 시 스택은 VPC CIDR로 대체한다.
    */
   readonly allowedIngressCidrs: readonly string[];
+  /** 플랫폼 웹 배포 모드(D19). 기본 public. */
+  readonly frontendMode: FrontendMode;
 }
 
 /** D17 위반: 전 개방 대역. 플랫폼 소유 SG ingress에 절대 허용하지 않는다. */
@@ -94,6 +113,8 @@ export interface ConfigInputs {
   readonly region?: string;
   /** 플랫폼 소유 SG ingress 허용 대역. 전 개방 대역은 거부(D17). */
   readonly allowedIngressCidrs?: readonly string[];
+  /** 플랫폼 웹 배포 모드(D19). deploy.sh `--frontend-mode` → `-c frontendMode=...`. 미지정 시 public. */
+  readonly frontendMode?: FrontendMode;
 }
 
 /**
@@ -163,6 +184,7 @@ export function loadConfig(stage: Stage, inputs?: ConfigInputs): StageConfig {
     appsDomain,
     hostedZoneId,
     allowedIngressCidrs,
+    frontendMode: inputs?.frontendMode ?? "public",
   };
 }
 

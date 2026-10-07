@@ -3,28 +3,36 @@ import {
   ArnFormat,
   CfnOutput,
   Duration,
+  Fn,
   RemovalPolicy,
   Stack,
   StackProps,
   aws_apigateway as apigw,
+  aws_certificatemanager as acm,
   aws_cloudfront as cloudfront,
   aws_cloudfront_origins as origins,
   aws_cloudwatch as cw,
   aws_codebuild as codebuild,
   aws_cognito as cognito,
   aws_dynamodb as dynamodb,
+  aws_ec2 as ec2,
+  aws_ecr_assets as ecr_assets,
+  aws_ecs as ecs,
+  aws_elasticloadbalancingv2 as elbv2,
   aws_events as events,
   aws_events_targets as events_targets,
   aws_iam as iam,
   aws_lambda as lambda,
   aws_logs as logs,
+  aws_route53 as route53,
+  aws_route53_targets as route53_targets,
   aws_s3 as s3,
   aws_ssm as ssm,
   aws_stepfunctions as sfn,
   aws_stepfunctions_tasks as sfn_tasks,
 } from "aws-cdk-lib";
 import { Construct } from "constructs";
-import { StageConfig, resourcePrefix } from "../lib/config";
+import { StageConfig, resourcePrefix, type FrontendMode } from "../lib/config";
 
 /**
  * platform-stack — 앱과 무관한 컨트롤 플레인 (apphub-conventions 2장, DESIGN.md 3.1).
@@ -34,7 +42,11 @@ import { StageConfig, resourcePrefix } from "../lib/config";
  *  - DynamoDB 단일 테이블 apphub-{stage}-main (PK/SK + GSI1 ownerId + GSI2 status)
  *  - REST API Gateway + Lambda 핸들러 골격(실핸들러는 M3 backend) + Cognito authorizer
  *  - Step Functions 스텁 (ProvisionApp / DeleteApp — M5에서 채움)
- *  - SPA 호스팅: S3(비공개) + CloudFront(OAC)
+ *  - 플랫폼 웹 호스팅(D19 — `config.frontendMode`로 분기, 반대 모드 리소스는 만들지 않음):
+ *      public : S3(비공개) + CloudFront(OAC) + 대체 도메인 console.{appsDomain}(us-east-1 인증서, 이 스택 안)
+ *               + API GW Regional
+ *      private: 콘솔 internal ALB + ECS(nginx, DockerImageAsset) + Private REST API(execute-api 엔드포인트)
+ *               + cognito-idp 엔드포인트
  *  - provisioner CodeBuild 프로젝트(앱 스택 cdk deploy용) 뼈대
  *  - CloudWatch 대시보드(관리자 관측성) 최소
  *
@@ -51,8 +63,17 @@ export class PlatformStack extends Stack {
   readonly userPoolClient: cognito.UserPoolClient;
   readonly api: apigw.RestApi;
   readonly apiHandler: lambda.Function;
+  /** SPA 버킷 — 두 모드 공통(QA M-1, private 모드에선 비어 있음). */
   readonly spaBucket: s3.Bucket;
-  readonly distribution: cloudfront.Distribution;
+  /** D19: public 모드에서만 존재. */
+  readonly distribution?: cloudfront.Distribution;
+  readonly frontendMode: FrontendMode;
+  /** 콘솔 주소 `https://console.{appsDomain}` (두 모드 공통, D19). */
+  readonly consoleUrl: string;
+  /** SPA가 실제로 호출할 API 베이스 URL(모드별 — private는 VPC 엔드포인트 전용 호스트명). */
+  readonly effectiveApiUrl: string;
+  /** SPA 로그인(D21)이 호출할 cognito-idp 주소(모드별). */
+  readonly cognitoIdpEndpoint: string;
   readonly provisioner: codebuild.Project;
   readonly provisionStateMachine: sfn.StateMachine;
   readonly deleteStateMachine: sfn.StateMachine;
@@ -64,6 +85,16 @@ export class PlatformStack extends Stack {
 
     const { config } = props;
     const prefix = resourcePrefix(config.stage);
+    const frontendMode = config.frontendMode;
+    this.frontendMode = frontendMode;
+    const isPrivate = frontendMode === "private";
+    // D19: 콘솔 주소는 두 모드 공통 `https://console.{appsDomain}` (`console`은 앱 서브도메인 예약어).
+    const consoleHost = `console.${config.appsDomain}`;
+    const consoleUrl = `https://${consoleHost}`;
+    this.consoleUrl = consoleUrl;
+    // network 공유값(SSM, Export 아님). 배포 시점 resolve — bin/apphub.ts가 network→platform 순서를 명시.
+    const netSsm = (key: string): string =>
+      ssm.StringParameter.valueForStringParameter(this, `/apphub/${config.stage}/network/${key}`);
 
     // ── DynamoDB 단일 테이블 ────────────────────────────────────────────────
     // PK/SK + GSI1(ownerId → 사용자별 앱) + GSI2(status → 관리자 현황). PAY_PER_REQUEST.
@@ -138,7 +169,23 @@ export class PlatformStack extends Stack {
       },
     });
 
-    // ── SPA 호스팅: 비공개 S3 + CloudFront(OAC) ────────────────────────────
+    // ── 플랫폼 웹 호스팅 (D19) — public: 비공개 S3 + CloudFront(OAC) ──────────────
+    //  public zone `console` A/AAAA alias → CloudFront, private zone `console` CNAME → CloudFront 도메인
+    //  (private zone은 CloudFront alias 불가 — PLATFORM-ENGINEERING 4.1). 인증서는 CloudFront 요건상
+    //  us-east-1 ACM이어야 하며, 별도 스택 없이 이 스택 안에서 만든다(DnsValidatedCertificate — 커스텀
+    //  리소스가 us-east-1에 발급·DNS 검증, 사용자 요구: 별도 스택 금지).
+    const publicZone = route53.HostedZone.fromHostedZoneAttributes(this, "PublicZone", {
+      hostedZoneId: config.hostedZoneId,
+      zoneName: config.appsDomain,
+    });
+    const privateZone = route53.HostedZone.fromHostedZoneAttributes(this, "PrivateZone", {
+      hostedZoneId: netSsm("private-hosted-zone-id"),
+      zoneName: config.appsDomain,
+    });
+    // SPA 버킷은 **두 모드 공통**(QA M-1): 고정 이름 + prod RETAIN이라, 모드별로 만들었다 지우면
+    //  public→private(prod: 버킷 잔존)→public 재전환 때 같은 이름 CREATE가 충돌한다. 논리 ID "SpaBucket"을
+    //  모드와 무관하게 유지하고, private 모드에선 비어 있다(deploy.sh가 S3 sync를 생략).
+    //  CloudFront 전용 리소스(Distribution·OAC·OAC 버킷 정책 문·인증서·public 레코드)만 public에서 만든다.
     const spaBucket = new s3.Bucket(this, "SpaBucket", {
       bucketName: `${prefix}-spa-${this.account}`,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
@@ -147,51 +194,122 @@ export class PlatformStack extends Stack {
       removalPolicy: config.stage === "prod" ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
       autoDeleteObjects: config.stage !== "prod",
     });
+    let distribution: cloudfront.Distribution | undefined;
+    if (!isPrivate) {
+
+      // us-east-1 인증서(CloudFront 요건). DnsValidatedCertificate는 deprecated지만 cross-region 인증서를
+      //  같은 스택에서 만들 수 있는 유일한 L2다(Certificate L2는 스택 리전 고정, crossRegionReferences는
+      //  별도 스택 필요). cleanupRoute53Records: 스택 삭제 시 검증 CNAME도 정리.
+      const consoleCertificate = new acm.DnsValidatedCertificate(this, "ConsoleCertUsEast1", {
+        domainName: consoleHost,
+        hostedZone: publicZone,
+        region: "us-east-1",
+        cleanupRoute53Records: true,
+      });
+
+      distribution = new cloudfront.Distribution(this, "SpaDistribution", {
+        comment: `${prefix} SPA`,
+        defaultRootObject: "index.html",
+        domainNames: [consoleHost],
+        certificate: consoleCertificate,
+        defaultBehavior: {
+          origin: origins.S3BucketOrigin.withOriginAccessControl(spaBucket),
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+        },
+        // SPA 라우팅: 404/403 → index.html
+        errorResponses: [
+          { httpStatus: 403, responseHttpStatus: 200, responsePagePath: "/index.html" },
+          { httpStatus: 404, responseHttpStatus: 200, responsePagePath: "/index.html" },
+        ],
+      });
+
+      const cfTarget = route53.RecordTarget.fromAlias(new route53_targets.CloudFrontTarget(distribution));
+      new route53.ARecord(this, "ConsolePublicA", { zone: publicZone, recordName: "console", target: cfTarget });
+      new route53.AaaaRecord(this, "ConsolePublicAaaa", { zone: publicZone, recordName: "console", target: cfTarget });
+    }
     this.spaBucket = spaBucket;
-
-    const distribution = new cloudfront.Distribution(this, "SpaDistribution", {
-      comment: `${prefix} SPA`,
-      defaultRootObject: "index.html",
-      defaultBehavior: {
-        origin: origins.S3BucketOrigin.withOriginAccessControl(spaBucket),
-        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
-      },
-      // SPA 라우팅: 404/403 → index.html
-      errorResponses: [
-        { httpStatus: 403, responseHttpStatus: 200, responsePagePath: "/index.html" },
-        { httpStatus: 404, responseHttpStatus: 200, responsePagePath: "/index.html" },
-      ],
-    });
     this.distribution = distribution;
+    // private zone `console` 레코드 대상(두 모드 모두 CNAME — 리더 결정 2026-10-07).
+    //  public: CloudFront 도메인(private zone은 CloudFront alias 불가), private: 콘솔 ALB DNS(아래에서 설정).
+    //  모드 간 타입·논리 ID("ConsolePrivateCname")를 같게 유지해 모드 전환 시 CloudFormation이 같은 레코드를
+    //  값만 갱신한다(교체 아님). 다른 타입(A alias ↔ CNAME)이면 새 레코드 생성이 옛 레코드 삭제보다 먼저라
+    //  같은 이름 CNAME/A 충돌로 전환 배포가 실패한다.
+    let consolePrivateTarget: string | undefined = distribution?.distributionDomainName;
 
-    // ── SPA User Pool Client (Hosted UI code grant) ────────────────────────
-    // 콜백/로그아웃 URL은 **프론트 AuthContext가 실제로 보내는 redirect_uri와 1바이트까지 일치**해야
-    //  한다(불일치 시 Cognito redirect_mismatch). 진실은 프론트다:
-    //   - frontend/src/auth/AuthContext.tsx: redirect_uri = `config.redirectUri ?? window.location.origin`.
-    //     deploy.sh는 config.json에 redirectUri를 넣지 않으므로 → 항상 `window.location.origin`.
-    //   - `window.location.origin`은 **경로/트레일링슬래시 없는 origin 루트**(예: https://{host}).
-    //   - 콜백 처리도 origin 루트에서 `?code=`를 읽는다(`/callback` 경로 미사용).
-    //   - logout_uri도 동일하게 origin 루트.
-    //  따라서 callback/logout 모두 `https://{cloudFrontDomain}`(경로 없음) 로 등록한다.
-    //  같은 스택 내 distribution 참조이므로 순환 없음(CloudFront→UserPoolClient 단방향 토큰 참조).
-    //  dev는 로컬 개발 편의를 위해 Vite dev 서버 origin(http://localhost:5173)도 함께 허용한다.
-    const spaOriginUrl = `https://${distribution.distributionDomainName}`;
+    // ── SPA User Pool Client (D21 자체 로그인 — Hosted UI OAuth 미사용) ─────────────
+    //  SPA는 cognito-idp API를 직접 호출한다(InitiateAuth USER_PASSWORD_AUTH / REFRESH_TOKEN_AUTH,
+    //  RespondToAuthChallenge, ForgotPassword, RevokeToken). 따라서 USER_PASSWORD_AUTH를 허용하고
+    //  OAuth(Hosted UI code grant) 플로우·콜백 URL은 비활성(disableOAuth). REFRESH_TOKEN_AUTH는 CDK가
+    //  항상 포함한다. RevokeToken(로그아웃)을 위해 토큰 폐기를 명시적으로 켠다.
+    //  Cognito 도메인(Hosted UI)과 앱 보호용 app-auth 클라이언트(D16)는 위에서 그대로 유지한다.
     const localDevOrigins = config.stage === "prod" ? [] : ["http://localhost:5173"];
     const userPoolClient = userPool.addClient("SpaClient", {
       userPoolClientName: `${prefix}-spa`,
       generateSecret: false, // SPA(퍼블릭 클라이언트)
-      authFlows: { userSrp: true },
-      oAuth: {
-        flows: { authorizationCodeGrant: true },
-        scopes: [cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL, cognito.OAuthScope.PROFILE],
-        // redirect_uri == callbackUrl (origin 루트, 경로/트레일링슬래시 없음).
-        callbackUrls: [spaOriginUrl, ...localDevOrigins],
-        // logout_uri == logoutUrl (동일 origin 루트).
-        logoutUrls: [spaOriginUrl, ...localDevOrigins],
-      },
+      authFlows: { userPassword: true },
+      disableOAuth: true,
+      enableTokenRevocation: true,
     });
     this.userPoolClient = userPoolClient;
+
+    // ── private 모드 공유 네트워크 참조 + VPC 엔드포인트 (D19) ───────────────────
+    //  VPC·서브넷은 network SSM(fromVpcAttributes 명시 배열 — lookup 없이 synth, 2 AZ 고정 D-M2-01).
+    //  SG ingress 대역 = --internal-cidrs(미지정 시 VPC CIDR). 0.0.0.0/0 금지(D17 — 예외 대상 아님).
+    let privateNet:
+      | {
+          vpc: ec2.IVpc;
+          internalCidrs: string[];
+          executeApiEndpoint: ec2.InterfaceVpcEndpoint;
+          cognitoIdpEndpoint: ec2.InterfaceVpcEndpoint;
+        }
+      | undefined;
+    if (isPrivate) {
+      const SUBNET_COUNT = 2;
+      const azs: string[] = [];
+      const privateSubnetIds: string[] = [];
+      for (let i = 0; i < SUBNET_COUNT; i++) {
+        privateSubnetIds.push(netSsm(`private-subnet-id-${i}`));
+        azs.push(netSsm(`private-subnet-az-${i}`));
+      }
+      const vpcCidr = netSsm("vpc-cidr");
+      const vpc = ec2.Vpc.fromVpcAttributes(this, "SharedVpc", {
+        vpcId: netSsm("vpc-id"),
+        vpcCidrBlock: vpcCidr,
+        availabilityZones: azs,
+        privateSubnetIds,
+      });
+      const internalCidrs = config.allowedIngressCidrs.length > 0 ? [...config.allowedIngressCidrs] : [vpcCidr];
+
+      const endpointSg = new ec2.SecurityGroup(this, "VpcEndpointSg", {
+        vpc,
+        securityGroupName: `${prefix}-platform-vpce-sg`,
+        description: "Platform VPC endpoints (execute-api, cognito-idp) - internal CIDRs only (D17)",
+        allowAllOutbound: true,
+      });
+      for (const cidr of internalCidrs) {
+        endpointSg.addIngressRule(ec2.Peer.ipv4(cidr), ec2.Port.tcp(443), "HTTPS from internal CIDR");
+      }
+      // privateDnsEnabled:false — 엔드포인트 전용 호스트명으로만 호출(VPC 전체 DNS를 가로채지 않음).
+      //  open:false — CDK 기본(VPC CIDR 자동 ingress) 대신 위 SG의 대역 한정 규칙만 쓴다.
+      const executeApiEndpoint = new ec2.InterfaceVpcEndpoint(this, "ExecuteApiVpcEndpoint", {
+        vpc,
+        service: ec2.InterfaceVpcEndpointAwsService.APIGATEWAY,
+        privateDnsEnabled: false,
+        open: false,
+        securityGroups: [endpointSg],
+        subnets: { subnets: vpc.privateSubnets },
+      });
+      const cognitoIdpEndpoint = new ec2.InterfaceVpcEndpoint(this, "CognitoIdpVpcEndpoint", {
+        vpc,
+        service: ec2.InterfaceVpcEndpointAwsService.COGNITO_IDP,
+        privateDnsEnabled: false,
+        open: false,
+        securityGroups: [endpointSg],
+        subnets: { subnets: vpc.privateSubnets },
+      });
+      privateNet = { vpc, internalCidrs, executeApiEndpoint, cognitoIdpEndpoint };
+    }
 
     // ── REST API Gateway + Lambda 핸들러 골격 ──────────────────────────────
     // D-decision: REST API 채택(HTTP API 아님). 근거는 반환값 참조.
@@ -225,11 +343,9 @@ export class PlatformStack extends Stack {
         CLUSTER_NAME: `${prefix}-cluster`,
         // 핸들러 CORS(app/http/cors.py)가 요청 Origin을 허용 목록과
         //  대조해 그대로 에코한다(와일드카드 * 미사용 — D17/PLATFORM-ENGINEERING과 무관하나 보안 관행).
-        //  허용 origin은 SPA CloudFront 도메인. dev는 Vite dev 서버(localhost:5173)도 함께 허용
-        //  (SpaClient callbackUrls의 localDevOrigins와 동일 정책). distribution은 위에서 이미 참조 중이라 순환 없음.
-        ALLOWED_ORIGINS:
-          `https://${distribution.distributionDomainName}` +
-          (config.stage === "dev" ? ",http://localhost:5173" : ""),
+        //  허용 origin은 콘솔 주소 `https://console.{appsDomain}`(D19 두 모드 공통). dev는 Vite dev 서버
+        //  (localhost:5173)도 함께 허용.
+        ALLOWED_ORIGINS: [consoleUrl, ...localDevOrigins].join(","),
       },
       description: "Platform REST handler (M3 routing)",
     });
@@ -458,18 +574,13 @@ export class PlatformStack extends Stack {
     );
     // (6c) 리스너 규칙 forward 전환 — transition_listener_rule이 host 규칙의 forward 대상을 공유 Waker TG로 교체.
     //      ModifyRule은 listener-rule ARN을 지원하나 앱 규칙 ARN을 사전에 알 수 없어(런타임 조회)
-    //      listener-rule/app/* 와일드카드로 좁힌다(network-stack elbControl의 listenerRuleArn과 동일 패턴).
+    //      listener-rule/app/{prefix}-*/* 로 좁힌다(n=0 + 증설 ALB 포함, D20 — network-stack listenerRuleArn과 동일 패턴).
     apiHandler.addToRolePolicy(
       new iam.PolicyStatement({
         sid: "AdminStopElbRules",
         actions: ["elasticloadbalancing:ModifyRule"],
         resources: [
-          this.formatArn({
-            service: "elasticloadbalancing",
-            resource: "listener-rule/app",
-            resourceName: "*",
-            arnFormat: ArnFormat.SLASH_RESOURCE_NAME,
-          }),
+          this.platformListenerRuleArn(prefix),
         ],
       }),
     );
@@ -552,21 +663,53 @@ export class PlatformStack extends Stack {
       }),
     );
 
+    // D19: public = Regional(현행), private = Private REST API + execute-api 엔드포인트 연결 + 리소스 정책
+    //  (aws:SourceVpce = 그 엔드포인트만 허용). 엔드포인트를 연결하면 전용 호스트명
+    //  `{restApiId}-{vpceId}.execute-api.{region}.amazonaws.com`이 생기고 SPA는 그 주소를 호출한다.
+    const privateApiProps: Partial<apigw.RestApiProps> = privateNet
+      ? {
+          endpointConfiguration: {
+            types: [apigw.EndpointType.PRIVATE],
+            vpcEndpoints: [privateNet.executeApiEndpoint],
+          },
+          policy: new iam.PolicyDocument({
+            statements: [
+              new iam.PolicyStatement({
+                sid: "DenyOutsideVpce",
+                effect: iam.Effect.DENY,
+                principals: [new iam.AnyPrincipal()],
+                actions: ["execute-api:Invoke"],
+                resources: ["execute-api:/*"],
+                conditions: {
+                  StringNotEquals: { "aws:SourceVpce": privateNet.executeApiEndpoint.vpcEndpointId },
+                },
+              }),
+              new iam.PolicyStatement({
+                sid: "AllowFromVpce",
+                effect: iam.Effect.ALLOW,
+                principals: [new iam.AnyPrincipal()],
+                actions: ["execute-api:Invoke"],
+                resources: ["execute-api:/*"],
+              }),
+            ],
+          }),
+        }
+      : {
+          endpointConfiguration: { types: [apigw.EndpointType.REGIONAL] },
+        };
     const api = new apigw.RestApi(this, "Api", {
       restApiName: `${prefix}-api`,
       description: "AppHub control plane REST API",
       deployOptions: { stageName: config.stage },
+      ...privateApiProps,
       // OPTIONS preflight는 API GW가 각 리소스에 만드는 MOCK 통합이 처리한다(ANY proxy 통합보다 우선).
       //  실제 응답의 CORS는 Lambda 핸들러(app/http/cors.py)가 붙이므로, 두 경로의 정책을 정합시킨다:
-      //   - allowOrigins: SPA CloudFront 도메인(+dev localhost) == ALLOWED_ORIGINS env == 핸들러 에코 대상.
+      //   - allowOrigins: 콘솔 주소(+dev localhost) == ALLOWED_ORIGINS env == 핸들러 에코 대상.
       //   - allowHeaders: Cors.DEFAULT_HEADERS는 Authorization 포함(핸들러 ALLOW_HEADERS와 정합).
       //   - allowCredentials: 핸들러가 Access-Control-Allow-Credentials:true를 붙이므로 preflight도 맞춘다.
       //  Access-Control-Allow-Origin: * 는 사용하지 않는다(credentials와 양립 불가·보안 관행).
       defaultCorsPreflightOptions: {
-        allowOrigins: [
-          `https://${distribution.distributionDomainName}`,
-          ...localDevOrigins,
-        ],
+        allowOrigins: [consoleUrl, ...localDevOrigins],
         allowMethods: apigw.Cors.ALL_METHODS,
         allowHeaders: apigw.Cors.DEFAULT_HEADERS,
         allowCredentials: true,
@@ -587,13 +730,13 @@ export class PlatformStack extends Stack {
     //  읽게 한다. (정상 응답·preflight CORS는 defaultCorsPreflightOptions와 Lambda 핸들러가 그대로 담당 —
     //  이 블록은 그 경로를 건드리지 않는다.)
     // 제약: Gateway Response 헤더 값은 정적 문자열이라 요청 Origin 에코(다중 오리진)가 불가하다.
-    //  단일 정적값만 가능하므로 SPA CloudFront 도메인을 우선한다(spaOriginUrl, single-quote로 감쌈).
+    //  단일 정적값만 가능하므로 콘솔 주소를 우선한다(consoleUrl, single-quote로 감쌈).
     //  ⇒ dev 로컬(http://localhost:5173)은 게이트웨이 단 401/403에서 여전히 CORS 표시가 남을 수 있으나
     //     수용한다(로컬 개발 편의보다 배포 도메인의 만료 UX가 우선). 정상 응답/preflight의 localhost는
     //     defaultCorsPreflightOptions·핸들러 CORS가 계속 지원한다.
     const gatewayCorsHeaders: { [key: string]: string } = {
       // 정적 문자열이어야 하므로 값 자체를 single-quote로 감싼다(`'https://...'`).
-      "Access-Control-Allow-Origin": `'${spaOriginUrl}'`,
+      "Access-Control-Allow-Origin": `'${consoleUrl}'`,
       "Access-Control-Allow-Headers": "'Authorization,Content-Type'",
     };
     // authorizer 거부(401)와 인가 실패(403)가 핵심이고, 그 외 게이트웨이 단 4xx/5xx도 함께 커버한다.
@@ -623,6 +766,126 @@ export class PlatformStack extends Stack {
     });
     void proxy;
 
+    // ── 모드별 실제 호출 주소 (D19 / 계약 §9) ─────────────────────────────────
+    //  public : API = Regional 기본 URL, 로그인 = 공용 cognito-idp
+    //  private: API = execute-api 엔드포인트 전용 호스트명, 로그인 = cognito-idp 엔드포인트 DNS
+    //           (vpcEndpointDnsEntries[0] = "{hostedZoneId}:{regional DNS}" → DNS 부분만)
+    const effectiveApiUrl = privateNet
+      ? `https://${api.restApiId}-${privateNet.executeApiEndpoint.vpcEndpointId}.execute-api.${this.region}.amazonaws.com/${config.stage}`
+      : api.url;
+    const cognitoIdpEndpoint = privateNet
+      ? `https://${Fn.select(1, Fn.split(":", Fn.select(0, privateNet.cognitoIdpEndpoint.vpcEndpointDnsEntries)))}/`
+      : `https://cognito-idp.${this.region}.amazonaws.com/`;
+    this.effectiveApiUrl = effectiveApiUrl;
+    this.cognitoIdpEndpoint = cognitoIdpEndpoint;
+
+    // ── private 모드 콘솔: internal ALB + ECS Fargate(nginx) (D19, PLATFORM-ENGINEERING 4.1) ──
+    //  - 콘솔 ALB `${prefix}-console-alb`: internal, SG ingress = internal CIDRs 443만(D17 — 예외 아님).
+    //    HTTPS 리스너는 network 와일드카드 인증서. 앱용 ALB 레지스트리/슬롯 배정 대상이 아니다.
+    //  - ECS 서비스 `${prefix}-console`: 공유 클러스터(D18) 위, desiredCount 1, 잠자기 대상 아님
+    //    (wake-restore 규칙은 `service:${prefix}-app-` prefix만 매칭). 태스크 SG는 콘솔 ALB SG 참조만.
+    //  - 이미지: DockerImageAsset(infra/console/, deploy.sh가 site/에 SPA dist·Kiro zip 준비) — 내용 해시로 멱등.
+    //    config.json은 컨테이너 시작 시 env로 생성(이미지↔스택 출력 순환 방지, 계약 §9.1 형식).
+    //  - DNS: private zone `console` CNAME → 콘솔 ALB DNS(두 모드 공통 CNAME, 같은 논리 ID).
+    if (privateNet) {
+      const { vpc, internalCidrs } = privateNet;
+      const consoleAlbSg = new ec2.SecurityGroup(this, "ConsoleAlbSg", {
+        vpc,
+        securityGroupName: `${prefix}-console-alb-sg`,
+        description: "Platform console internal ALB SG - internal CIDRs 443 only (D17)",
+        allowAllOutbound: true,
+      });
+      for (const cidr of internalCidrs) {
+        consoleAlbSg.addIngressRule(ec2.Peer.ipv4(cidr), ec2.Port.tcp(443), "HTTPS from internal CIDR");
+      }
+      const consoleAlb = new elbv2.ApplicationLoadBalancer(this, "ConsoleAlb", {
+        loadBalancerName: `${prefix}-console-alb`,
+        vpc,
+        internetFacing: false,
+        securityGroup: consoleAlbSg,
+        vpcSubnets: { subnets: vpc.privateSubnets },
+      });
+
+      const cluster = ecs.Cluster.fromClusterAttributes(this, "SharedCluster", {
+        clusterName: netSsm("cluster-name"),
+        clusterArn: netSsm("cluster-arn"),
+        vpc,
+        securityGroups: [],
+      });
+      const consoleImage = new ecr_assets.DockerImageAsset(this, "ConsoleImage", {
+        directory: path.join(__dirname, "..", "console"),
+        platform: ecr_assets.Platform.LINUX_AMD64,
+      });
+      const consoleLogs = new logs.LogGroup(this, "ConsoleLogs", {
+        logGroupName: `/apphub/${config.stage}/console`,
+        retention: logs.RetentionDays.ONE_MONTH,
+        removalPolicy: RemovalPolicy.DESTROY,
+      });
+      const consoleTaskDef = new ecs.FargateTaskDefinition(this, "ConsoleTaskDef", {
+        family: `${prefix}-console`,
+        cpu: 256,
+        memoryLimitMiB: 512,
+        runtimePlatform: {
+          cpuArchitecture: ecs.CpuArchitecture.X86_64,
+          operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
+        },
+      });
+      consoleTaskDef.addContainer("console", {
+        containerName: "console",
+        image: ecs.ContainerImage.fromDockerImageAsset(consoleImage),
+        logging: ecs.LogDrivers.awsLogs({ streamPrefix: "console", logGroup: consoleLogs }),
+        portMappings: [{ containerPort: 8080, protocol: ecs.Protocol.TCP }],
+        // entrypoint(infra/console/40-apphub-config.sh)가 이 env로 /config.json을 만든다(계약 §9.1).
+        environment: {
+          APPHUB_API_URL: effectiveApiUrl,
+          APPHUB_USER_POOL_ID: userPool.userPoolId,
+          APPHUB_USER_POOL_CLIENT_ID: userPoolClient.userPoolClientId,
+          APPHUB_REGION: this.region,
+          APPHUB_COGNITO_IDP_ENDPOINT: cognitoIdpEndpoint,
+          APPHUB_APPS_DOMAIN: config.appsDomain,
+          APPHUB_STAGE: config.stage,
+        },
+      });
+      const consoleTaskSg = new ec2.SecurityGroup(this, "ConsoleTaskSg", {
+        vpc,
+        securityGroupName: `${prefix}-console-task-sg`,
+        description: "Platform console nginx task SG - inbound from console ALB SG only (D17)",
+        allowAllOutbound: true,
+      });
+      const consoleService = new ecs.FargateService(this, "ConsoleService", {
+        serviceName: `${prefix}-console`,
+        cluster,
+        taskDefinition: consoleTaskDef,
+        desiredCount: 1,
+        securityGroups: [consoleTaskSg],
+        vpcSubnets: { subnets: vpc.privateSubnets },
+        assignPublicIp: false,
+        minHealthyPercent: 100,
+        maxHealthyPercent: 200,
+        circuitBreaker: { rollback: true },
+      });
+      const consoleListener = consoleAlb.addListener("ConsoleHttps", {
+        port: 443,
+        protocol: elbv2.ApplicationProtocol.HTTPS,
+        certificates: [acm.Certificate.fromCertificateArn(this, "WildcardCert", netSsm("certificate-arn"))],
+        sslPolicy: elbv2.SslPolicy.RECOMMENDED_TLS,
+        open: false, // SG 자동 0.0.0.0/0 개방 금지(D17) — ingress는 위 대역 한정 규칙만
+      });
+      // addTargets가 태스크 SG에 "콘솔 ALB SG → 8080" ingress(SG 참조)를 자동 부여한다(CIDR 아님).
+      consoleListener.addTargets("ConsoleTargets", {
+        targetGroupName: `${prefix}-console`,
+        port: 8080,
+        protocol: elbv2.ApplicationProtocol.HTTP,
+        targets: [consoleService],
+        deregistrationDelay: Duration.seconds(10),
+        healthCheck: { path: "/health", healthyHttpCodes: "200" },
+      });
+      consolePrivateTarget = consoleAlb.loadBalancerDnsName;
+      this.output("ConsoleAlbDnsName", consoleAlb.loadBalancerDnsName);
+      this.output("ExecuteApiVpcEndpointId", privateNet.executeApiEndpoint.vpcEndpointId);
+      this.output("CognitoIdpVpcEndpointId", privateNet.cognitoIdpEndpoint.vpcEndpointId);
+    }
+
     // ── 플랫폼 자산 S3 버킷 (검증기 번들 · CDK 소스 tarball) ─────────────────
     // D-M5-06: deploy.sh가 이 버킷의 **고정 키**로 검증기/CDK소스를 업로드하고, provisioner·
     //  app-pipeline CodeBuild env(VALIDATOR_S3_URI/CDK_SOURCE_S3_URI)가 이를 가리킨다(신뢰 경계).
@@ -648,7 +911,8 @@ export class PlatformStack extends Stack {
     //  자산 버킷을 별도 오리진(OAC)으로 서빙한다. 두 zip 모두 이 단일 behavior로 커버된다.
     //  SPA 기본 origin은 그대로. 민감정보 없음(공개 다운로드).
     //  업로드는 scripts/build-kiro-bundle.sh --upload(또는 deploy.sh)가 두 고정 키로 모두 수행.
-    distribution.addBehavior(
+    //  D19 private 모드는 CloudFront가 없고 콘솔 nginx가 이미지에 담긴 zip을 같은 경로로 서빙한다.
+    distribution?.addBehavior(
       "/kiro-config/*",
       origins.S3BucketOrigin.withOriginAccessControl(assetsBucket),
       {
@@ -757,7 +1021,8 @@ export class PlatformStack extends Stack {
     deployNotify.addToRolePolicy(
       new iam.PolicyStatement({
         sid: "DeployNotifyTableRw",
-        actions: ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Query"],
+        // DeleteItem: D20 ALB 증설 빌드 종결 시 CONFIG/ALBPENDING#{slug}#{n} 삭제(계약 §3.2).
+        actions: ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Query", "dynamodb:DeleteItem"],
         resources: [
           this.formatArn({ service: "dynamodb", resource: "table", resourceName: `${prefix}-main` }),
           this.formatArn({ service: "dynamodb", resource: "table", resourceName: `${prefix}-main/index/*` }),
@@ -838,12 +1103,7 @@ export class PlatformStack extends Stack {
         sid: "DeployNotifyElbModifyRule",
         actions: ["elasticloadbalancing:ModifyRule"],
         resources: [
-          this.formatArn({
-            service: "elasticloadbalancing",
-            resource: "listener-rule/app",
-            resourceName: "*",
-            arnFormat: ArnFormat.SLASH_RESOURCE_NAME,
-          }),
+          this.platformListenerRuleArn(prefix),
         ],
       }),
     );
@@ -932,6 +1192,15 @@ export class PlatformStack extends Stack {
     });
     deployNotifyBuildRule.addTarget(new events_targets.LambdaFunction(deployNotify));
 
+    // 사내 DNS 포워딩 환경(private zone만 보임)에서도 콘솔이 해석되게 private zone에 CNAME(D3, D19).
+    if (consolePrivateTarget) {
+      new route53.CnameRecord(this, "ConsolePrivateCname", {
+        zone: privateZone,
+        recordName: "console",
+        domainName: consolePrivateTarget,
+      });
+    }
+
     // ── CloudWatch 대시보드(관리자 관측성) 최소 ─────────────────────────────
     // DESIGN.md 9: 파이프라인 성공률, Step Functions 실패, ALB 규칙 사용량, 앱 수.
     //  M2에서는 존재하는 리소스(API Lambda, provisioner, SFN) 지표만. 나머지는 후속 확장.
@@ -962,11 +1231,18 @@ export class PlatformStack extends Stack {
       // D16 ALB authenticate-cognito(app-runtime, M4)용:
       "app-auth-client-id": appAuthClient.userPoolClientId,
       "user-pool-domain": `${hostedUiDomainPrefix}.auth.${this.region}.amazoncognito.com`,
-      "api-url": api.url,
+      // D19: api-url = 모드별 실제 호출 URL(private는 VPC 엔드포인트 전용 호스트명).
+      "api-url": effectiveApiUrl,
       "api-id": api.restApiId,
+      "frontend-mode": frontendMode,
+      "console-url": consoleUrl,
       "spa-bucket-name": spaBucket.bucketName,
-      "cloudfront-domain": distribution.distributionDomainName,
-      "cloudfront-distribution-id": distribution.distributionId,
+      ...(distribution
+        ? {
+            "cloudfront-domain": distribution.distributionDomainName,
+            "cloudfront-distribution-id": distribution.distributionId,
+          }
+        : {}),
       "provisioner-project-name": provisioner.projectName,
       "provision-sm-arn": provisionStateMachine.stateMachineArn,
       "delete-sm-arn": deleteStateMachine.stateMachineArn,
@@ -983,10 +1259,16 @@ export class PlatformStack extends Stack {
     this.output("TableName", table.tableName);
     this.output("UserPoolId", userPool.userPoolId);
     this.output("UserPoolClientId", userPoolClient.userPoolClientId);
-    this.output("ApiUrl", api.url);
+    // D19(계약 §9): ApiUrl = 모드별 실제 호출 URL, ConsoleUrl/FrontendMode/CognitoIdpEndpoint 공통.
+    this.output("ApiUrl", effectiveApiUrl);
+    this.output("FrontendMode", frontendMode);
+    this.output("ConsoleUrl", consoleUrl);
+    this.output("CognitoIdpEndpoint", cognitoIdpEndpoint);
     this.output("SpaBucketName", spaBucket.bucketName);
-    this.output("CloudFrontDomain", distribution.distributionDomainName);
-    this.output("CloudFrontDistributionId", distribution.distributionId);
+    if (distribution) {
+      this.output("CloudFrontDomain", distribution.distributionDomainName);
+      this.output("CloudFrontDistributionId", distribution.distributionId);
+    }
     this.output("ProvisionerProjectName", provisioner.projectName);
     this.output("ProvisionStateMachineArn", provisionStateMachine.stateMachineArn);
     this.output("DeleteStateMachineArn", deleteStateMachine.stateMachineArn);
@@ -1028,6 +1310,20 @@ export class PlatformStack extends Stack {
     });
   }
 
+  /**
+   * 플랫폼 ALB 리스너 규칙 ARN 범위 `listener-rule/app/{prefix}-*\/*` — n=0 ALB 2대와 증설 ALB
+   * (`{prefix}-{slug}-alb-{n}`, D20 계약 §7)를 모두 포함하고 타 ALB는 제외한다.
+   * network-stack grantWakeFunctionPermissions의 listenerRuleArn과 동일 패턴.
+   */
+  private platformListenerRuleArn(prefix: string): string {
+    return this.formatArn({
+      service: "elasticloadbalancing",
+      resource: "listener-rule/app",
+      resourceName: `${prefix}-*/*`,
+      arnFormat: ArnFormat.SLASH_RESOURCE_NAME,
+    });
+  }
+
   /** provisioner CodeBuild 프로젝트 ARN(`${prefix}-provisioner`). 롤백 runtime 재배포·롤백 트리거. */
   private provisionerBuildArn(prefix: string): string {
     return this.formatArn({ service: "codebuild", resource: "project", resourceName: `${prefix}-provisioner` });
@@ -1066,6 +1362,36 @@ export class PlatformStack extends Stack {
         ],
         resources: [
           this.formatArn({ service: "cloudformation", resource: "stack", resourceName: `${prefix}-app-*` }),
+          // D20: ALB 증설 스택(APP_STACK_KIND=alb) `${prefix}-alb-{slug}-{n}`.
+          this.formatArn({ service: "cloudformation", resource: "stack", resourceName: `${prefix}-alb-*` }),
+        ],
+      }),
+    );
+    // (1b) D20 ALB 증설 스택 리소스 — bootstrap 역할 assume(2)이 주 경로지만 앱 리소스(5)와 같은 방침으로
+    //      직접 배포 대비 범위도 증설 ALB 이름 규약으로 한정해 둔다.
+    //      ALB `${prefix}-{slug}-alb-{n}`, 리스너/리스너 규칙(그 ALB 하위), Waker TG `${prefix}-waker-*`,
+    //      Waker Lambda invoke 권한(공유 함수 1개), ALB별 SSM 키(`network/alb/*`).
+    provisioner.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "AlbShardDeploy",
+        actions: [
+          "elasticloadbalancing:CreateLoadBalancer", "elasticloadbalancing:DeleteLoadBalancer",
+          "elasticloadbalancing:ModifyLoadBalancerAttributes", "elasticloadbalancing:SetSecurityGroups",
+          "elasticloadbalancing:CreateListener", "elasticloadbalancing:DeleteListener",
+          "elasticloadbalancing:ModifyListener",
+          "elasticloadbalancing:CreateTargetGroup", "elasticloadbalancing:DeleteTargetGroup",
+          "elasticloadbalancing:ModifyTargetGroupAttributes",
+          "elasticloadbalancing:RegisterTargets", "elasticloadbalancing:DeregisterTargets",
+          "elasticloadbalancing:AddTags",
+          "lambda:AddPermission", "lambda:RemovePermission",
+          "ssm:PutParameter", "ssm:DeleteParameter", "ssm:AddTagsToResource",
+        ],
+        resources: [
+          this.formatArn({ service: "elasticloadbalancing", resource: "loadbalancer", resourceName: `app/${prefix}-*-alb-*/*` }),
+          this.formatArn({ service: "elasticloadbalancing", resource: "listener", resourceName: `app/${prefix}-*-alb-*/*` }),
+          this.formatArn({ service: "elasticloadbalancing", resource: "targetgroup", resourceName: `${prefix}-waker-*/*` }),
+          this.formatArn({ service: "lambda", resource: "function", resourceName: `${prefix}-waker`, arnFormat: ArnFormat.COLON_RESOURCE_NAME }),
+          this.formatArn({ service: "ssm", resource: "parameter", resourceName: `apphub/${stage}/network/alb/*` }),
         ],
       }),
     );
@@ -1258,7 +1584,9 @@ export class PlatformStack extends Stack {
     provisionTask.addToRolePolicy(
       new iam.PolicyStatement({
         sid: "AppTableRW",
-        actions: ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"],
+        // Query: D20 allocate-slot이 CONFIG/ALB#·ALBPENDING# 항목을 조회(같은 scheme의 ALB 목록, 계약 §3.4).
+        // DeleteItem: 고착 PENDING 정리 등 배정 경로의 보정 쓰기 대비(같은 단일 테이블 한정).
+        actions: ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Query", "dynamodb:DeleteItem"],
         resources: [tableArn],
       }),
     );
@@ -1320,7 +1648,7 @@ export class PlatformStack extends Stack {
     );
 
     // ── ProvisionApp ASL ──────────────────────────────────────────────────
-    // allocate-slot → deploy-pipeline → poll-build(Choice+Wait30s 루프) → first-deploy → finalize(success).
+    // allocate-slot(WAIT 루프, D20) → deploy-pipeline → poll-build(Choice+Wait30s 루프) → first-deploy → finalize(success).
     //  Catch(모든 Task) → finalize(failure) → Fail.
     //  각 Task payload는 { appId, [buildId], step, [outcome] }로 명시 구성하고, 결과($.Payload)를
     //  resultPath "$"로 전체 교체해 다음 Task가 appId/buildId/buildStatus/stackDeleteState를 이어 쓴다.
@@ -1336,12 +1664,49 @@ export class PlatformStack extends Stack {
       resultPath: "$.error",
     };
 
+    // ── allocate-slot + slotStatus WAIT 루프 (D20, 계약 §4) ─────────────────────
+    //  allocate-slot 반환: {slotStatus:"ASSIGNED", albArn, albIndex, rulePriority} | {slotStatus:"WAIT"}.
+    //  WAIT(모든 ALB 규칙 90 도달 → 증설 진행 중) → Wait 30초 → 재호출. 최대 SLOT_WAIT_MAX_ATTEMPTS회(약 20분)
+    //  초과 시 finalize(failure, failedStep=allocate-slot). 결과는 `$.slot`에 담아 `$.appId`·시도 횟수를 보존한다
+    //  (deploy-pipeline 이후는 appId만 쓰고 결과 `$` 전체 교체 — 현행 유지). slotStatus가 없으면(구 반환) ASSIGNED로 간주.
+    const SLOT_WAIT_MAX_ATTEMPTS = 40;
+    const slotFinalizeFail = new sfn_tasks.LambdaInvoke(this, "ProvisionFinalizeSlotFailure", {
+      lambdaFunction: provisionTask,
+      payload: sfn.TaskInput.fromObject({
+        "appId.$": "$.appId",
+        step: "finalize",
+        outcome: "failure",
+        failedStep: "allocate-slot",
+        "error.$": "$.error",
+      }),
+      payloadResponseOnly: true,
+      resultPath: "$.finalizeResult",
+    }).next(new sfn.Fail(this, "ProvisionSlotFailed", { cause: "ProvisionApp 실패(자리 배정)", error: "ProvisionFailed" }));
+
+    const initSlotWait = new sfn.Pass(this, "InitSlotWait", {
+      result: sfn.Result.fromObject({ attempts: 0 }),
+      resultPath: "$.slotWait",
+    });
     const allocateSlot = new sfn_tasks.LambdaInvoke(this, "AllocateSlot", {
       lambdaFunction: provisionTask,
       payload: sfn.TaskInput.fromObject({ "appId.$": "$.appId", step: "allocate-slot" }),
       payloadResponseOnly: true,
-      resultPath: "$",
-    }).addCatch(provFinalizeFail, catchToFail);
+      resultPath: "$.slot",
+    }).addCatch(slotFinalizeFail, catchToFail);
+    const slotWaitTimeout = new sfn.Pass(this, "SlotWaitTimeout", {
+      parameters: {
+        Error: "SlotWaitTimeout",
+        Cause: `ALB 증설 대기 시간 초과(${SLOT_WAIT_MAX_ATTEMPTS}회 x 30초)`,
+      },
+      resultPath: "$.error",
+    }).next(slotFinalizeFail);
+    const waitSlot = new sfn.Wait(this, "WaitSlot", {
+      time: sfn.WaitTime.duration(Duration.seconds(30)),
+    });
+    const countSlotWait = new sfn.Pass(this, "CountSlotWait", {
+      parameters: { "attempts.$": "States.MathAdd($.slotWait.attempts, 1)" },
+      resultPath: "$.slotWait",
+    });
 
     const deployPipeline = new sfn_tasks.LambdaInvoke(this, "DeployPipeline", {
       lambdaFunction: provisionTask,
@@ -1381,7 +1746,24 @@ export class PlatformStack extends Stack {
       .otherwise(waitBuild.next(pollBuild));
     pollBuild.next(buildChoice);
 
-    const provisionDefinition = allocateSlot.next(deployPipeline).next(pollBuild);
+    const slotChoice = new sfn.Choice(this, "SlotAssigned?")
+      .when(
+        sfn.Condition.and(
+          sfn.Condition.isPresent("$.slot.slotStatus"),
+          sfn.Condition.stringEquals("$.slot.slotStatus", "WAIT"),
+        ),
+        new sfn.Choice(this, "SlotWaitExhausted?")
+          .when(
+            sfn.Condition.numberGreaterThanEquals("$.slotWait.attempts", SLOT_WAIT_MAX_ATTEMPTS),
+            slotWaitTimeout,
+          )
+          .otherwise(waitSlot.next(countSlotWait).next(allocateSlot)),
+      )
+      .otherwise(deployPipeline);
+    allocateSlot.next(slotChoice);
+    deployPipeline.next(pollBuild);
+
+    const provisionDefinition = initSlotWait.next(allocateSlot);
 
     const provisionStateMachine = new sfn.StateMachine(this, "ProvisionApp", {
       stateMachineName: `${prefix}-provision-app`,

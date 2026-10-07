@@ -458,3 +458,149 @@ def test_handle_wraps_and_logs(ddb_table, p2_clients, notify_env) -> None:
     _seed_manual_pending(ddb_table)
     res = dn.handle(_stage_event("ValidateBuild", "STARTED"))
     assert res["status"] == "VALIDATING"
+
+
+# ── 역순 도착(종결 이벤트가 Source STARTED 보다 먼저) — dev 실측 2026-10-07 ─────────────
+
+_SOURCE_FAILED = {"actionExecutionDetails": [{"stageName": "Source", "status": "Failed"}]}
+
+
+def test_reverse_order_failed_then_started_single_failed_record(ddb_table, p2_clients, notify_env) -> None:
+    """(a) Stage FAILED → Pipeline FAILED(레코드 없음) → Source STARTED(늦게) → Pipeline STARTED.
+
+    레코드 1개 FAILED/SOURCE_UNAVAILABLE, App CREATING→FAILED + failureReason. PENDING 고착 없음.
+    """
+    seed_app(ddb_table, APP, OWNER, status="CREATING", runtimeState="SLEEPING")
+    p2_clients["codepipeline"].set_response("list_action_executions", _SOURCE_FAILED)
+    p2_clients["codepipeline"].set_response(
+        "get_pipeline_execution",
+        {"pipelineExecution": {"artifactRevisions": [{"revisionId": "sha9", "revisionSummary": "init"}]}},
+    )
+
+    assert "skipped" in dn.handle_event(_stage_event("Source", "FAILED"))["reason"]
+    res = dn.handle_event(_pipeline_event("FAILED"))
+    assert res["created"] is True
+    assert res["status"] == "FAILED"
+    assert res["failureCategory"] == "SOURCE_UNAVAILABLE"
+    assert res["appStatus"] == "FAILED"
+
+    late = dn.handle_event(_stage_event("Source", "STARTED"))
+    assert late["reason"] == "terminal-FAILED-preserved"
+    assert "skipped" in dn.handle_event(_pipeline_event("STARTED"))["reason"]
+
+    dep = _only(ddb_table)
+    assert dep["status"] == "FAILED"
+    assert dep["failureCategory"] == "SOURCE_UNAVAILABLE"
+    assert dep["trigger"] == "auto"
+    assert dep["pipelineExecutionId"] == EXEC
+    assert dep["commitSha"] == "sha9"
+    app = get_app(APP)
+    assert app["status"] == "FAILED"
+    assert "저장소 연결 상태를 확인하세요" in app["failureReason"]
+
+
+def test_reverse_order_succeeded_then_started_keeps_succeeded(ddb_table, p2_clients, notify_env) -> None:
+    """(b) Pipeline SUCCEEDED 먼저(레코드 없음) → Source/Deploy STARTED 나중 → SUCCEEDED 유지, App ACTIVE."""
+    seed_app(ddb_table, APP, OWNER, status="CREATING", runtimeState="SLEEPING")
+    res = dn.handle_event(_pipeline_event("SUCCEEDED"))
+    assert res["created"] is True
+    assert res["status"] == "SUCCEEDED"
+    assert res["appStatus"] == "ACTIVE"
+    assert "afterSuccess" in res  # 성공 후처리(재수면/시크릿 정리)도 원래 경로와 동일하게 수행
+
+    for stage_name in ("Source", "ValidateBuild", "Deploy"):
+        late = dn.handle_event(_stage_event(stage_name, "STARTED"))
+        assert late["reason"] == "terminal-SUCCEEDED-preserved"
+
+    assert _only(ddb_table)["status"] == "SUCCEEDED"
+    app = get_app(APP)
+    assert app["status"] == "ACTIVE"
+    assert app["runtimeState"] == "RUNNING"
+
+
+def test_normal_order_auto_deploy_no_regression(ddb_table, p2_clients, notify_env) -> None:
+    """(c) 정상 순서: Source STARTED(생성) → ValidateBuild → Deploy → SUCCEEDED. 레코드 1개."""
+    seed_app(ddb_table, APP, OWNER, status="CREATING", runtimeState="SLEEPING")
+    assert dn.handle_event(_stage_event("Source", "STARTED"))["created"] is True
+    assert dn.handle_event(_stage_event("Source", "STARTED"))["reason"] == "already-PENDING"  # 중복 이벤트
+    dn.handle_event(_stage_event("ValidateBuild", "STARTED"))
+    dn.handle_event(_stage_event("Deploy", "STARTED"))
+    res = dn.handle_event(_pipeline_event("SUCCEEDED"))
+    assert res["status"] == "SUCCEEDED"
+    assert "created" not in res
+    assert res["appStatus"] == "ACTIVE"
+    assert _only(ddb_table)["status"] == "SUCCEEDED"
+
+
+def test_duplicate_terminal_event_without_record_creates_once(ddb_table, p2_clients, notify_env) -> None:
+    """레코드 없는 상태에서 Pipeline FAILED 가 두 번(EventBridge 재시도) — 레코드 1개, 두 번째는 보존."""
+    seed_app(ddb_table, APP, OWNER, status="CREATING", runtimeState="SLEEPING")
+    p2_clients["codepipeline"].set_response("list_action_executions", _SOURCE_FAILED)
+    assert dn.handle_event(_pipeline_event("FAILED"))["created"] is True
+    second = dn.handle_event(_pipeline_event("FAILED"))
+    assert second["reason"] == "terminal-FAILED-preserved"
+    assert _only(ddb_table)["status"] == "FAILED"
+
+
+def test_race_started_created_between_lookup_and_terminal_create(
+    ddb_table, p2_clients, notify_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(경합) 종결 핸들러가 '레코드 없음'을 본 직후 STARTED 가 PENDING 을 먼저 만든 경우.
+
+    종결 쪽 생성은 클레임 충돌로 취소 → 강한 일관성 재조회로 그 PENDING 을 FAILED 로 전진. 레코드 1개.
+    """
+    seed_app(ddb_table, APP, OWNER, status="CREATING", runtimeState="SLEEPING")
+    p2_clients["codepipeline"].set_response("list_action_executions", _SOURCE_FAILED)
+    real_find = dn._find_deployment
+
+    def find_then_race(app_id: str, execution_id: str, *, consistent: bool = False):
+        if not consistent:
+            # 첫(최종 일관성) 조회는 '없음'을 보게 하고, 그 사이 STARTED 가 레코드를 만든다.
+            monkeypatch.setattr(dn, "_find_deployment", real_find)
+            assert dn.handle_event(_stage_event("Source", "STARTED"))["created"] is True
+            return None
+        return real_find(app_id, execution_id, consistent=consistent)
+
+    monkeypatch.setattr(dn, "_find_deployment", find_then_race)
+    res = dn.handle_event(_pipeline_event("FAILED"))
+    assert res["status"] == "FAILED"
+    assert "created" not in res
+    assert res["appStatus"] == "FAILED"
+    dep = _only(ddb_table)
+    assert dep["status"] == "FAILED"
+    assert dep["failureCategory"] == "SOURCE_UNAVAILABLE"
+
+
+def test_race_terminal_created_between_lookup_and_started_create(
+    ddb_table, p2_clients, notify_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(경합) STARTED 핸들러가 '레코드 없음'을 본 직후 종결 이벤트가 FAILED 를 먼저 만든 경우.
+
+    STARTED 쪽 생성은 클레임 충돌로 취소 → 재조회한 FAILED 레코드는 종결 보존. 레코드 1개.
+    """
+    seed_app(ddb_table, APP, OWNER, status="CREATING", runtimeState="SLEEPING")
+    p2_clients["codepipeline"].set_response("list_action_executions", _SOURCE_FAILED)
+    real_find = dn._find_deployment
+
+    def find_then_race(app_id: str, execution_id: str, *, consistent: bool = False):
+        if not consistent:
+            monkeypatch.setattr(dn, "_find_deployment", real_find)
+            assert dn.handle_event(_pipeline_event("FAILED"))["created"] is True
+            return None
+        return real_find(app_id, execution_id, consistent=consistent)
+
+    monkeypatch.setattr(dn, "_find_deployment", find_then_race)
+    res = dn.handle_event(_stage_event("Source", "STARTED"))
+    assert res["reason"] == "terminal-FAILED-preserved"
+    dep = _only(ddb_table)
+    assert dep["status"] == "FAILED"
+    assert get_app(APP)["status"] == "FAILED"
+
+
+def test_claim_item_not_listed_as_deployment(ddb_table, p2_clients, notify_env) -> None:
+    """클레임 아이템(DEPLOYEXEC#)은 배포 이력 조회(DEPLOY# prefix)에 섞이지 않는다."""
+    seed_app(ddb_table, APP, OWNER, status="ACTIVE")
+    dn.handle_event(_stage_event("Source", "STARTED"))
+    items = ddb_table.scan()["Items"]
+    assert any(i["SK"].startswith("DEPLOYEXEC#") for i in items)
+    assert len(list_deployments(APP, 20)) == 1

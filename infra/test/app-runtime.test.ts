@@ -441,7 +441,8 @@ describe("app-runtime — scaleMetric=requests 오토스케일링 (QA F-3 회귀
     expect(sep).toBe("");
     expect(parts).toContain("/"); // 두 full-name 사이 구분자
     const rawParts = JSON.stringify(parts);
-    expect(rawParts).toContain("internetalbfullname"); // internet-facing → internet-alb-full-name SSM
+    // D20: 배정 ALB별 키 `/network/alb/internet/0/alb-full-name`(albIndex 미지정 = 0).
+    expect(rawParts).toContain("networkalbinternet0albfullname");
     expect(rawParts).toContain("TargetGroupFullName"); // 이 construct의 TG full-name
   });
 
@@ -453,7 +454,7 @@ describe("app-runtime — scaleMetric=requests 오토스케일링 (QA F-3 회귀
     const cfg = Object.values(policies)[0].Properties
       .TargetTrackingScalingPolicyConfiguration as Record<string, unknown>;
     const spec = cfg.PredefinedMetricSpecification as Record<string, unknown>;
-    expect(JSON.stringify(spec.ResourceLabel)).toContain("internalalbfullname");
+    expect(JSON.stringify(spec.ResourceLabel)).toContain("networkalbinternal0albfullname");
   });
 
   it("maxCount==minCount(스케일링 비활성)이면 어떤 ScalingPolicy도 만들지 않는다", () => {
@@ -500,5 +501,82 @@ describe("app-runtime — 권한 템플릿 정책 주입", () => {
         ]),
       }),
     });
+  });
+});
+
+describe("app-runtime — D20 albIndex로 배정 ALB SSM 참조 (계약 §6)", () => {
+  it("albIndex 미지정(기존 앱) = 0 → `/network/alb/{slug}/0/*` 키를 읽고 scheme 고정 키는 읽지 않는다", () => {
+    const t = synth(baseParams({ scheme: "internal", sleepMode: "on-demand" }));
+    const params = (t.toJSON() as { Parameters?: Record<string, { Default?: string }> }).Parameters ?? {};
+    const names = Object.values(params).map((p) => p.Default);
+    expect(names).toContain("/apphub/dev/network/alb/internal/0/https-listener-arn");
+    expect(names).toContain("/apphub/dev/network/alb/internal/0/alb-dns");
+    expect(names).toContain("/apphub/dev/network/alb/internal/0/alb-canonical-zone-id");
+    expect(names).toContain("/apphub/dev/network/alb/internal/0/alb-full-name"); // 유휴 알람
+    expect(names).not.toContain("/apphub/dev/network/internal-https-listener-arn");
+    expect(names).not.toContain("/apphub/dev/network/internal-alb-dns");
+  });
+
+  it("albIndex=3 internet-facing → `/network/alb/internet/3/*`(리스너·DNS·zone id·full name), SG는 scheme 고정 키 재사용", () => {
+    const t = synth(
+      baseParams({ scheme: "internet-facing", albIndex: 3, cognitoProtect: false, sleepMode: "on-demand", schedule: undefined }),
+    );
+    const params = (t.toJSON() as { Parameters?: Record<string, { Default?: string }> }).Parameters ?? {};
+    const names = Object.values(params).map((p) => p.Default);
+    for (const key of ["https-listener-arn", "alb-dns", "alb-canonical-zone-id", "alb-full-name"]) {
+      expect(names).toContain(`/apphub/dev/network/alb/internet/3/${key}`);
+    }
+    expect(names).toContain("/apphub/dev/network/internet-alb-sg-id");
+    expect(names.some((n) => typeof n === "string" && n.includes("/alb/internet/0/"))).toBe(false);
+    // 리스너 규칙은 albIndex=3 리스너 ARN 파라미터를 참조한다.
+    const rule = Object.values(t.findResources("AWS::ElasticLoadBalancingV2::ListenerRule"))[0];
+    expect(JSON.stringify(rule)).toContain("networkalbinternet3httpslistenerarn");
+  });
+
+  it("always-on + cpu 스케일이면 ALB full name SSM을 참조하지 않는다(불필요 파라미터 없음)", () => {
+    const t = synth(baseParams({ sleepMode: "always-on", schedule: undefined }));
+    const params = (t.toJSON() as { Parameters?: Record<string, { Default?: string }> }).Parameters ?? {};
+    expect(Object.values(params).map((p) => p.Default)).not.toContain(
+      "/apphub/dev/network/alb/internal/0/alb-full-name",
+    );
+  });
+});
+
+describe("app-runtime — D3 Route53 레코드 zone (버그 C)", () => {
+  const recordZones = (t: Template): string[] =>
+    Object.values(t.findResources("AWS::Route53::RecordSet")).map((r) =>
+      JSON.stringify((r.Properties as Record<string, unknown>)["HostedZoneId"]),
+    );
+
+  it("internal 앱: private zone A alias 1개", () => {
+    const t = synth(baseParams({ scheme: "internal" }));
+    const zones = recordZones(t);
+    expect(zones.length).toBe(1);
+    expect(zones[0]).toContain("networkprivatehostedzoneid");
+  });
+
+  it("internet-facing 앱: public zone + private zone 2개 A alias(둘 다 배정 ALB)", () => {
+    const t = synth(
+      baseParams({ scheme: "internet-facing", cognitoProtect: false, sleepMode: "on-demand", schedule: undefined }),
+    );
+    const records = Object.values(t.findResources("AWS::Route53::RecordSet"));
+    expect(records.length).toBe(2);
+    const zones = recordZones(t);
+    expect(zones.some((z) => z.includes("networkpublichostedzoneid"))).toBe(true);
+    expect(zones.some((z) => z.includes("networkprivatehostedzoneid"))).toBe(true);
+    for (const r of records) {
+      const p = r.Properties as Record<string, unknown>;
+      expect(p["Type"]).toBe("A");
+      expect(JSON.stringify(p["AliasTarget"])).toContain("networkalbinternet0albdns");
+    }
+  });
+
+  it("internet-facing의 기존 public zone 레코드 논리 ID(AliasA)는 유지된다(교체 방지)", () => {
+    const t = synth(
+      baseParams({ scheme: "internet-facing", cognitoProtect: false, sleepMode: "on-demand", schedule: undefined }),
+    );
+    const ids = Object.keys(t.findResources("AWS::Route53::RecordSet"));
+    expect(ids.some((id) => id.startsWith("RuntimeAliasA") && !id.startsWith("RuntimeAliasAPrivate"))).toBe(true);
+    expect(ids.some((id) => id.startsWith("RuntimeAliasAPrivate"))).toBe(true);
   });
 });

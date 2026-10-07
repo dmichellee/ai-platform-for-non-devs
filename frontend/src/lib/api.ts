@@ -5,6 +5,7 @@
  */
 import type {
   AdminSettings,
+  AdminStopResult,
   AlbRegistry,
   App,
   AppMetrics,
@@ -90,7 +91,7 @@ export interface ApiClient {
   adminListAllApps(status?: string): Promise<App[]>;
   adminAlbRegistry(): Promise<AlbRegistry[]>;
   // 강제 중지(재우기) — 관리자가 임의 사용자 앱을 즉시 잠재운다(api-requests.md #7).
-  adminStopApp(appId: string): Promise<App>;
+  adminStopApp(appId: string): Promise<AdminStopResult>;
   // 관리자에 의한 타인 앱 삭제 — 소유자 검사 없이 삭제(api-requests.md #7).
   adminDeleteApp(appId: string): Promise<{ appId: string; status: "DELETING" }>;
 }
@@ -323,9 +324,9 @@ export class HttpApiClient implements ApiClient {
   adminAlbRegistry(): Promise<AlbRegistry[]> {
     return this.list<AlbRegistry>("GET", "/admin/alb-registry");
   }
-  // POST /admin/apps/{id}/stop — 강제 중지(재우기). 응답: 갱신된 App(runtimeState=SLEEPING).
-  adminStopApp(appId: string): Promise<App> {
-    return this.single<App>("POST", `/admin/apps/${appId}/stop`);
+  // POST /admin/apps/{id}/stop — 강제 중지(재우기). 응답: {appId, runtimeState:"SLEEPING", stopped}.
+  adminStopApp(appId: string): Promise<AdminStopResult> {
+    return this.single<AdminStopResult>("POST", `/admin/apps/${appId}/stop`);
   }
   // DELETE /admin/apps/{id} — 관리자에 의한 타인 앱 삭제. 응답: {appId,status:"DELETING"}.
   adminDeleteApp(appId: string): Promise<{ appId: string; status: "DELETING" }> {

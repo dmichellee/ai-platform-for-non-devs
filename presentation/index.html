@@ -150,6 +150,7 @@
           <div class="col" style="gap:5px;font:600 11px var(--font-mono)">
             <div class="row" style="gap:5px"><span class="tag vio">network</span><span class="tag vio">platform</span><span class="small muted" style="font-family:var(--font-body)">stage당 1회</span></div>
             <div class="row" style="gap:5px"><span class="tag" style="background:#E0F2FE;color:#0B6AA8">pipeline</span><span class="tag" style="background:#E0F2FE;color:#0B6AA8">runtime</span><span class="small muted" style="font-family:var(--font-body)">앱마다</span></div>
+            <div class="row" style="gap:5px"><span class="tag vio">+ alb</span><span class="small muted" style="font-family:var(--font-body)">증설 시에만 생성</span></div>
           </div>
         </div>
       </div>
@@ -533,7 +534,7 @@
     <div class="sn">SECTION 02</div>
     <h2>아키텍처</h2>
     <p>컨트롤 플레인 · 파이프라인 계층 · 앱 호스팅 계층</p>
-    <div class="chips"><span>전체 구성도</span><span>CDK 스택 4종</span><span>네트워크·라우팅</span><span>API·데이터 모델</span></div>
+    <div class="chips"><span>전체 구성도</span><span>CDK 스택</span><span>네트워크·라우팅</span><span>API·데이터 모델</span></div>
   </div>
   <div class="sweep-line"></div>
 </section>
@@ -605,7 +606,7 @@
       <div class="actor" style="top:364px"><div class="ico-box"><svg class="ico"><use href="#i-users"/></svg></div><b>앱 사용자</b><span>사내 / 인터넷</span></div>
 
       <!-- Z1 nodes (icon center y=48) -->
-      <div class="node" style="left:205px;top:30px"><div class="pair"><img src="assets/aws/cloudfront.svg" alt=""><img src="assets/aws/s3.svg" alt=""></div><b>CloudFront + S3</b><span>React SPA</span></div>
+      <div class="node" style="left:205px;top:30px"><div class="pair"><img src="assets/aws/cloudfront.svg" alt=""><img src="assets/aws/s3.svg" alt=""></div><b>CloudFront + S3</b><span>SPA (public)</span></div>
       <div class="node" style="left:345px;top:30px"><div class="pair"><img src="assets/aws/apigw.svg" alt=""><img src="assets/aws/cognito.svg" alt=""></div><b>API GW + Cognito</b><span>JWT authorizer</span></div>
       <div class="node" style="left:485px;top:30px"><img src="assets/aws/lambda.svg" alt=""><b>Lambda · api</b><span>Python 3.13 / boto3</span></div>
       <div class="node" style="left:625px;top:30px"><img src="assets/aws/dynamodb.svg" alt=""><b>DynamoDB</b><span>단일 테이블 + GSI 2</span></div>
@@ -623,7 +624,7 @@
 
       <!-- Z3 nodes (icon center y=392) -->
       <div class="node" style="left:205px;top:374px"><img src="assets/aws/route53.svg" alt=""><b>Route 53</b><span>public / private zone</span></div>
-      <div class="node" style="left:345px;top:374px"><div class="pair"><img src="assets/aws/elb.svg" alt=""><img src="assets/aws/acm.svg" alt=""></div><b>공유 ALB × 2</b><span>internet / internal · *.apps</span></div>
+      <div class="node" style="left:345px;top:374px"><div class="pair"><img src="assets/aws/elb.svg" alt=""><img src="assets/aws/acm.svg" alt=""></div><b>공유 ALB</b><span>internet / internal · 증설</span></div>
       <div class="node" style="left:485px;top:374px"><div class="pair"><img src="assets/aws/ecs.svg" alt=""><img src="assets/aws/fargate.svg" alt=""></div><b>ECS Fargate</b><span>공유 클러스터 · :8080</span></div>
       <div class="node" style="left:625px;top:374px"><img src="assets/aws/secrets.svg" alt=""><b>Secrets Manager</b><span>ECS secrets 주입</span></div>
       <div class="node" style="left:765px;top:374px"><img src="assets/aws/cloudwatch.svg" alt=""><b>CloudWatch</b><span>유휴 알람 · 로그</span></div>
@@ -647,20 +648,20 @@
 </section>
 
 <!-- ═══════════════════ 13 CDK STACKS ═══════════════════ -->
-<section class="slide" data-nav="CDK 스택 4종" data-group="02 아키텍처">
+<section class="slide" data-nav="CDK 스택" data-group="02 아키텍처">
   <div class="pad">
     <div class="kicker">아키텍처 · Infrastructure as Code</div>
-    <h2 class="s-title">CDK 스택 4종 — 공유 2개는 관리자가 1회, 앱별 2개는 플랫폼이 생성</h2>
+    <h2 class="s-title">CDK 스택 4종 — 공유 2개는 관리자가 1회, 앱별 2개는 플랫폼이 생성 (+ 증설 시 alb)</h2>
     <div class="body vc" style="gap:14px">
       <div class="g4" style="gap:14px">
         <div class="card hl" style="display:flex;flex-direction:column;gap:8px">
           <div class="row center" style="gap:8px"><img src="assets/aws/elb.svg" width="30" alt=""><div><b style="font-size:15px">network</b><div class="mono small muted">apphub-{stage}-network</div></div></div>
-          <ul class="bl sm"><li>VPC 10.20.0.0/16 · 2 AZ · NAT 1</li><li>공유 ALB 2 (internet / internal)</li><li>공유 ECS 클러스터</li><li>와일드카드 ACM · Route 53 zone 2</li><li>SG 3 · Waker 계열 Lambda 3</li></ul>
+          <ul class="bl sm"><li>VPC 10.20.0.0/16 · 2 AZ · NAT 1</li><li>공유 ALB 2 (internet / internal) · 한도 시 증설 스택 추가</li><li>공유 ECS 클러스터</li><li>와일드카드 ACM · Route 53 zone 2</li><li>SG 3 · Waker 계열 Lambda 3</li></ul>
           <div class="mt8"><span class="tag ghost">관리자 · deploy.sh</span> <span class="tag ghost">stage당 1개</span></div>
         </div>
         <div class="card hl" style="display:flex;flex-direction:column;gap:8px">
           <div class="row center" style="gap:8px"><img src="assets/aws/apigw.svg" width="30" alt=""><div><b style="font-size:15px">platform</b><div class="mono small muted">apphub-{stage}-platform</div></div></div>
-          <ul class="bl sm"><li>Cognito (admin 초대 전용)</li><li>DynamoDB · API GW + Lambda</li><li>Step Functions 2 · task Lambda 2</li><li>SPA(CloudFront+S3) · 자산 버킷</li><li>provisioner CodeBuild · deploy-notify</li></ul>
+          <ul class="bl sm"><li>Cognito (admin 초대 전용)</li><li>DynamoDB · API GW + Lambda</li><li>Step Functions 2 · task Lambda 2</li><li>SPA(public: CloudFront+S3 / private: 사내 ALB+ECS) · 자산 버킷</li><li>provisioner CodeBuild · deploy-notify</li></ul>
           <div class="mt8"><span class="tag ghost">관리자 · deploy.sh</span> <span class="tag ghost">stage당 1개</span></div>
         </div>
         <div class="card" style="display:flex;flex-direction:column;gap:8px">
@@ -693,14 +694,14 @@
   </style>
   <div class="pad">
     <div class="kicker">아키텍처 · 네트워크 · 라우팅</div>
-    <h2 class="s-title">공개 범위별 ALB 2개, 앱은 호스트 이름으로 구분</h2>
+    <h2 class="s-title">공개 범위별 공유 ALB, 앱은 호스트 이름으로 구분</h2>
     <div class="body vc" style="gap:14px">
       <div class="row" style="gap:12px;align-items:center">
         <div class="col" style="flex:1.9;gap:12px">
           <div class="lane">
             <div class="nbox"><div class="t"><svg class="ico"><use href="#i-users"/></svg>인터넷 사용자</div><span class="muted">"인터넷" 선택 앱</span></div>
             <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
-            <div class="nbox"><div class="t"><img src="assets/aws/route53.svg" alt="">Public hosted zone</div>기존 회사 도메인 zone에 A alias</div>
+            <div class="nbox"><div class="t"><img src="assets/aws/route53.svg" alt="">Public hosted zone</div>기존 회사 도메인 zone에 A alias<br><span class="muted">사내 조회용 private zone에도 등록</span></div>
             <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
             <div class="nbox"><div class="t"><img src="assets/aws/elb.svg" alt="">internet-facing ALB</div>public subnet · SG 443/80 ← <code>0.0.0.0/0</code><br><span class="tag warn" style="margin-top:3px">유일하게 허용된 전체 개방 SG</span></div>
           </div>
@@ -746,7 +747,7 @@
             <span class="tag ghost">SPA</span>→<span class="tag ghost">API GW <code>/{proxy+}</code> ANY</span>→<span class="tag ghost">Cognito authorizer</span>→<span class="tag ghost">Lambda <code>handler.py</code></span>→<span class="tag ghost">router</span>
           </div>
           <ul class="bl sm mt12">
-            <li>OPTIONS preflight는 인증 전에 응답, CORS는 CloudFront origin만 허용</li>
+            <li>OPTIONS preflight는 인증 전에 응답, CORS는 콘솔 origin(<code>console.{appsDomain}</code>)만 허용</li>
             <li>모든 예외 → <code>{error:{code,message}}</code> 형식</li>
             <li>소유자 검사: 남의 앱은 403, 없는 앱은 404</li>
           </ul>
@@ -1129,7 +1130,7 @@
       <div class="card"><h4><svg class="ico"><use href="#i-user"/></svg>인증 · 인가</h4>
         <ul class="bl sm mt8"><li>Cognito: 자가 가입 off(초대 전용), 비밀번호 12자+ 복합</li><li>API: JWT authorizer, admin/user 그룹</li><li>앱: ALB authenticate-cognito (인터넷 공개 앱 기본 on)</li></ul></div>
       <div class="card"><h4><svg class="ico"><use href="#i-db"/></svg>저장소 · 전송</h4>
-        <ul class="bl sm mt8"><li>S3 퍼블릭 액세스 전면 차단 · SSE · SSL 강제</li><li>CloudFront → S3는 OAC</li><li>DynamoDB PITR, prod는 RETAIN</li><li>CORS는 허용 origin만 반사 (<code>*</code> 없음)</li></ul></div>
+        <ul class="bl sm mt8"><li>S3 퍼블릭 액세스 전면 차단 · SSE · SSL 강제</li><li>CloudFront → S3는 OAC (public 모드)</li><li>DynamoDB PITR, prod는 RETAIN</li><li>CORS는 허용 origin만 반사 (<code>*</code> 없음)</li></ul></div>
     </div>
   </div>
 </section>
@@ -1140,7 +1141,7 @@
     <div class="kicker">운영 · 설치 / 제거</div>
     <h2 class="s-title">명령 1개로 설치, 몇 번을 다시 실행해도 결과가 같음</h2>
     <div class="body vc" style="gap:14px">
-      <div class="card soft" style="padding:10px 16px"><code style="font-size:13px;background:none;border:0">./scripts/deploy.sh --stage dev|prod --domain apps.example.com [--hosted-zone-id] [--region] [--admin-email] [--internal-cidrs "10.0.0.0/16,…"] [--skip-spa]</code></div>
+      <div class="card soft" style="padding:10px 16px"><code style="font-size:13px;background:none;border:0">./scripts/deploy.sh --stage dev|prod --domain apps.example.com [--hosted-zone-id] [--region] [--admin-email] [--frontend-mode public|private] [--internal-cidrs "10.0.0.0/16,…"] [--skip-spa]</code></div>
       <div class="flow">
         <div class="step"><div class="h"><span class="num">1</span><b>사전 점검</b></div><p>aws · node 22+ · pnpm · docker · rsync · zip, 자격 증명, hosted zone 자동 조회</p><div class="svc">실패 시 변경 없이 종료</div></div>
         <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
@@ -1150,14 +1151,14 @@
         <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
         <div class="step"><div class="h"><span class="num">4</span><b>초기 데이터</b></div><p>기본 권한 템플릿 시드, 첫 관리자 계정 생성</p><div class="svc">없을 때만 생성 (관리자 수정 보존)</div></div>
         <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
-        <div class="step"><div class="h"><span class="num">5</span><b>SPA 배포</b></div><p>빌드 → <code>config.json</code> 생성 → S3 sync → CloudFront 무효화</p><div class="svc">sync --delete · /* invalidation</div></div>
+        <div class="step"><div class="h"><span class="num">5</span><b>SPA 배포</b></div><p>빌드 → <code>config.json</code> 생성 → S3 sync → CloudFront 무효화 (public 모드 · private는 콘솔 이미지에 포함)</p><div class="svc">sync --delete · /* invalidation</div></div>
       </div>
       <div class="row" style="gap:16px">
         <div class="card grow"><div class="cap">destroy.sh — 의존 역순 삭제</div>
           <div class="row center mt8" style="gap:8px;flex-wrap:wrap;font-size:13px">
-            <span class="tag ghost">확인 (prod는 이름 입력)</span>→<span class="tag ghost">모든 app-*-runtime</span>→<span class="tag ghost">모든 app-*-pipeline</span>→<span class="tag ghost">platform</span>→<span class="tag ghost">network</span>
+            <span class="tag ghost">확인 (prod는 이름 입력)</span>→<span class="tag ghost">모든 app-*-runtime</span>→<span class="tag ghost">모든 app-*-pipeline</span>→<span class="tag ghost">alb-* (증설 ALB)</span>→<span class="tag ghost">platform</span>→<span class="tag ghost">network</span>
           </div>
-          <div class="small muted mt8">cdk destroy 실패 시 cloudformation delete-stack 폴백 · prod RETAIN 리소스는 수동 정리 안내</div></div>
+          <div class="small muted mt8">모든 스택 cloudformation delete-stack + wait (synth 불필요) · FAILED 상태 스택 포함 · prod RETAIN 리소스는 수동 정리 안내</div></div>
         <div class="card" style="width:400px"><div class="cap">멱등성 검증 (e2e/idempotency-test.sh)</div>
           <ul class="bl sm"><li>(A) deploy.sh 2회 연속 → 두 번째는 변경 없음</li><li>(B) destroy → 재설치 정상 동작</li></ul></div>
       </div>
@@ -1169,15 +1170,15 @@
 <section class="slide" data-nav="테스트 전략" data-group="04 품질·보안·운영">
   <div class="pad">
     <div class="kicker">품질 · 테스트</div>
-    <h2 class="s-title">계층별 단위 테스트 722개 + 실제 AWS E2E 5개 시나리오</h2>
+    <h2 class="s-title">계층별 단위 테스트 855개 + 실제 AWS E2E 5개 시나리오</h2>
     <div class="body vc row" style="gap:22px">
       <div class="col" style="width:440px;gap:14px">
         <div class="card"><div class="cap">자동화 테스트 수 (test 함수 기준)</div>
           <div class="bars mt8">
-            <div class="bar-row"><span>backend</span><div class="track"><div class="fill" style="width:100%"></div></div><span class="val">352</span></div>
-            <div class="bar-row"><span>frontend</span><div class="track"><div class="fill" style="width:55.4%"></div></div><span class="val">195</span></div>
-            <div class="bar-row"><span>infra (CDK)</span><div class="track"><div class="fill" style="width:49.7%"></div></div><span class="val">175</span></div>
-            <div class="bar-row"><span>Playwright</span><div class="track"><div class="fill" style="width:2.6%"></div></div><span class="val">9</span></div>
+            <div class="bar-row"><span>backend</span><div class="track"><div class="fill" style="width:100%"></div></div><span class="val">387</span></div>
+            <div class="bar-row"><span>frontend</span><div class="track"><div class="fill" style="width:58.7%"></div></div><span class="val">227</span></div>
+            <div class="bar-row"><span>infra (CDK)</span><div class="track"><div class="fill" style="width:62.3%"></div></div><span class="val">241</span></div>
+            <div class="bar-row"><span>Playwright</span><div class="track"><div class="fill" style="width:2.3%"></div></div><span class="val">9</span></div>
           </div>
           <div class="small muted mt12">pytest · vitest + Testing Library · CDK assertions · Playwright</div></div>
         <div class="card"><div class="cap">라이브 E2E (run-e2e.sh · dev 계정 · 약 30분)</div>
@@ -1197,8 +1198,8 @@
           </tbody>
         </table>
         <div class="g2 mt12" style="gap:10px">
-          <div class="card soft" style="padding:10px 12px"><div class="cap">backend 상위</div><div class="small">secrets_d8 33 · deploy_notify 32 · apps 31 · cc_repos 28 · provision 21</div></div>
-          <div class="card soft" style="padding:10px 12px"><div class="cap">infra 상위</div><div class="small">platform-stack 66 · app-runtime 34 · network-stack 29 · app-pipeline 16</div></div>
+          <div class="card soft" style="padding:10px 12px"><div class="cap">backend 상위</div><div class="small">secrets_d8 33 · deploy_notify 32 · apps 31 · provision 28 · cc_repos 28</div></div>
+          <div class="card soft" style="padding:10px 12px"><div class="cap">infra 상위</div><div class="small">platform-stack 66 · app-runtime 40 · network-stack 37 · platform-frontend-mode 29</div></div>
         </div>
       </div>
     </div>
@@ -1215,7 +1216,7 @@
         <div class="card"><h4><svg class="ico"><use href="#i-net"/></svg>네트워크 확장</h4>
           <ul class="bl mt8">
             <li>VPC는 플랫폼 VPC 1개 고정 — VPC 선택 기능은 제거됨 (<code>provision.py</code>)</li>
-            <li>ALB는 공개 범위별 1개씩. <code>ruleCount ≥ 90</code>이면 <code>needsScaleOut</code> 신호만 반환, <b>ALB 증설은 미구현</b></li>
+            <li>ALB는 공개 범위별로 시작해 규칙 80개 도달 시 자동 증설(ALB당 배정 한도 90) — 실제 AWS 증설 흐름은 dev 배포로 확인 필요</li>
           </ul></div>
         <div class="card"><h4><svg class="ico"><use href="#i-git"/></svg>저장소 연결</h4>
           <ul class="bl mt8">
@@ -1240,7 +1241,7 @@
     <h2 class="s-title" style="font-size:40px;margin-top:16px">AppHub = <span class="sweep">질문 7개</span>로 앱 하나의 AWS 인프라를 정의</h2>
     <div class="g4 mt20" style="gap:16px;margin-top:40px">
       <div class="card"><div class="ico-box"><svg class="ico"><use href="#i-sliders"/></svg></div><h4 class="mt12">사용자</h4><p>AWS 용어 없는 마법사, 상태 배지, 한국어 실패 안내</p></div>
-      <div class="card"><div class="ico-box"><svg class="ico"><use href="#i-layers"/></svg></div><h4 class="mt12">인프라</h4><p>CDK 스택 4종, 앱 1개 = 스택 2개, 멱등 설치·삭제</p></div>
+      <div class="card"><div class="ico-box"><svg class="ico"><use href="#i-layers"/></svg></div><h4 class="mt12">인프라</h4><p>CDK 스택 4종(+ 증설 시 alb), 앱 1개 = 스택 2개, 멱등 설치·삭제</p></div>
       <div class="card"><div class="ico-box"><svg class="ico"><use href="#i-repeat"/></svg></div><h4 class="mt12">자동화</h4><p>Step Functions + CodePipeline, 이벤트 기반 상태 반영, scale-to-zero</p></div>
       <div class="card"><div class="ico-box"><svg class="ico"><use href="#i-shield"/></svg></div><h4 class="mt12">통제</h4><p>관리자 프리셋·권한 템플릿, 3단계 배포 표준 검사, 최소 권한</p></div>
     </div>

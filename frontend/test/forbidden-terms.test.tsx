@@ -1,10 +1,13 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { screen, fireEvent, waitFor } from "@testing-library/react";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { screen, fireEvent, waitFor, render, act } from "@testing-library/react";
 import { Dashboard } from "../src/screens/user/Dashboard.js";
 import { AppDetail } from "../src/screens/user/AppDetail.js";
 import { Connections } from "../src/screens/user/Connections.js";
 import { CreateWizard } from "../src/screens/user/CreateWizard.js";
+import { Login } from "../src/screens/Login.js";
 import { renderWithProviders, seedSession, setHash } from "./harness.js";
+import { AuthProvider } from "../src/auth/AuthContext.js";
+import { setConfigForTest, type RuntimeConfig } from "../src/lib/config.js";
 
 /**
  * 용어 사전 위반 검출 (apphub-conventions §6).
@@ -122,5 +125,97 @@ describe("사용자 화면 금지 용어 노출 검출", () => {
     expect(text.includes("VPC")).toBe(false);
     // 시간표 요일은 한글(월~일)로만 노출
     expect(screen.getByRole("button", { name: "월요일" })).toBeInTheDocument();
+  });
+});
+
+describe("로그인 화면 금지 용어 노출 검출 (D21)", () => {
+  const REAL: RuntimeConfig = {
+    apiUrl: "https://api.test",
+    userPoolId: "ap-northeast-2_pool",
+    userPoolClientId: "client-1",
+    region: "ap-northeast-2",
+    stage: "test",
+    mock: false,
+  };
+  const reply = (json: unknown, status = 200): Response =>
+    new Response(JSON.stringify(json), { status });
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function renderReal(): void {
+    setConfigForTest(REAL);
+    render(
+      <AuthProvider config={REAL}>
+        <Login />
+      </AuthProvider>,
+    );
+  }
+
+  it("미리보기(목) 로그인 화면에 AWS 용어가 없다", async () => {
+    setConfigForTest({ ...REAL, mock: true });
+    render(
+      <AuthProvider config={{ ...REAL, mock: true }}>
+        <Login />
+      </AuthProvider>,
+    );
+    await screen.findByText("사용자로 둘러보기");
+    assertNoForbidden();
+  });
+
+  it("로그인·오류·첫 로그인·비밀번호 찾기 전 단계에 AWS 용어가 없다", async () => {
+    let initiate = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_u: string, init: RequestInit) => {
+        const op = (init.headers as Record<string, string>)["X-Amz-Target"]!.split(".")[1];
+        if (op === "InitiateAuth") {
+          initiate += 1;
+          return initiate === 1
+            ? reply({ __type: "NotAuthorizedException", message: "Incorrect username or password." }, 400)
+            : reply({ ChallengeName: "NEW_PASSWORD_REQUIRED", Session: "s", ChallengeParameters: {} });
+        }
+        if (op === "RespondToAuthChallenge")
+          return reply({ __type: "InvalidPasswordException", message: "Cognito password policy" }, 400);
+        if (op === "ForgotPassword") return reply({ CodeDeliveryDetails: { Destination: "d***@e***" } });
+        return reply({ __type: "CodeMismatchException", message: "x" }, 400);
+      }),
+    );
+    renderReal();
+
+    // 1) 로그인 + 오류
+    fireEvent.change(await screen.findByLabelText("회사 이메일"), { target: { value: "a@b.c" } });
+    fireEvent.change(screen.getByLabelText("비밀번호"), { target: { value: "pw" } });
+    fireEvent.click(screen.getByRole("button", { name: "로그인" }));
+    await screen.findByRole("alert");
+    assertNoForbidden();
+
+    // 2) 첫 로그인 + 규칙 오류
+    fireEvent.click(screen.getByRole("button", { name: "로그인" }));
+    await screen.findByText("새 비밀번호를 정해주세요");
+    fireEvent.change(screen.getByLabelText("새 비밀번호"), { target: { value: "x" } });
+    fireEvent.change(screen.getByLabelText("새 비밀번호 확인"), { target: { value: "x" } });
+    fireEvent.click(screen.getByRole("button", { name: /비밀번호 정하고 시작하기/ }));
+    await screen.findByRole("alert");
+    assertNoForbidden();
+
+    // 3) 비밀번호 찾기 → 코드 입력 + 오류
+    fireEvent.click(screen.getByRole("button", { name: /처음으로 돌아가기/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "비밀번호를 잊으셨나요?" }));
+    assertNoForbidden();
+    fireEvent.click(screen.getByRole("button", { name: /인증 코드 받기/ }));
+    await screen.findByText("새 비밀번호 설정");
+    fireEvent.change(screen.getByLabelText("인증 코드"), { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText("새 비밀번호"), { target: { value: "x" } });
+    fireEvent.change(screen.getByLabelText("새 비밀번호 확인"), { target: { value: "x" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /비밀번호 바꾸기/ }));
+    });
+    await screen.findByRole("alert");
+    assertNoForbidden();
   });
 });

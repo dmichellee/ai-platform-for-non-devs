@@ -16,9 +16,13 @@
 
 세 계층으로 구성된다.
 
-- **컨트롤 플레인** — React SPA(CloudFront+S3) + API Gateway/Lambda(Python 3.13, boto3) + DynamoDB + Step Functions + Cognito
+- **컨트롤 플레인** — React SPA + API Gateway/Lambda(Python 3.13, boto3) + DynamoDB + Step Functions + Cognito.
+  플랫폼 웹은 설치 시 `--frontend-mode`로 선택: **public**(CloudFront+S3, API Regional) 또는
+  **private**(사내망 전용 — 플랫폼 전용 internal ALB + ECS nginx, Private API + VPC 엔드포인트).
+  두 모드 모두 콘솔 주소는 `https://console.<appsDomain>`, 로그인은 SPA 자체 화면(Cognito API 직접 호출).
 - **파이프라인 계층** — 앱별 CodePipeline + CodeBuild 2단계(검증·빌드 → 배포), ECR. 원격 실행.
-- **앱 호스팅 계층** — VPC별 공유 ALB(호스트 기반 라우팅) + ECS Fargate + Route53(`*.apps.<도메인>`) + Secrets Manager
+- **앱 호스팅 계층** — 공개 범위별 공유 ALB(호스트 기반 라우팅, 규칙 한도 근접 시 자동 증설) + ECS Fargate(공유 클러스터)
+  + Route53(`*.<appsDomain>`, 사내용 앱은 private zone, 외부 공개 앱은 public+private zone) + Secrets Manager
 
 앱 하나 = CloudFormation 스택 2개(`pipeline` + `runtime`). 멱등성은 CloudFormation이 보장하고,
 앱 삭제는 스택 2개 삭제로 끝나 리소스 누수가 없다.
@@ -27,10 +31,11 @@
 
 | 스택 | 내용 | 배포 주체 |
 |---|---|---|
-| `apphub-{stage}-network` | 공유 ALB, 공유 ECS 클러스터, 와일드카드 ACM, Route53, 보안 그룹, Waker | 관리자 (`deploy.sh`) |
-| `apphub-{stage}-platform` | Cognito, DynamoDB, API GW+Lambda, Step Functions, SPA 호스팅, provisioner CodeBuild | 관리자 (`deploy.sh`) |
+| `apphub-{stage}-network` | 공유 ALB 2대(n=0), 공유 ECS 클러스터, 와일드카드 ACM, private hosted zone, 보안 그룹, Waker/복원/잠자기 Lambda + ALB별 Waker TG, SSM 공유값 | 관리자 (`deploy.sh`) |
+| `apphub-{stage}-platform` | Cognito, DynamoDB, API GW+Lambda, Step Functions, provisioner CodeBuild + 플랫폼 웹(모드별 — public: CloudFront + us-east-1 인증서 / private: 콘솔 ALB + ECS nginx + VPC 엔드포인트 + Private API) | 관리자 (`deploy.sh --frontend-mode`) |
+| `apphub-{stage}-alb-{internet\|internal}-{n}` (n≥1) | 증설 ALB 1대 + 리스너 + 전용 Waker TG + SSM 발행. 앱 생성 흐름이 규칙 여유 부족을 감지하면 자동 생성(앱 삭제와 무관한 플랫폼 소유) | 플랫폼 (provisioner) |
 | `apphub-{stage}-app-{appId}-pipeline` | 앱별 CodePipeline, CodeBuild 2개, ECR | 플랫폼 (provisioner) |
-| `apphub-{stage}-app-{appId}-runtime` | ECS 서비스/태스크, Target Group, 리스너 규칙, Route53, 앱 IAM 역할, 가동 스케줄 | 앱 파이프라인 |
+| `apphub-{stage}-app-{appId}-runtime` | ECS 서비스/태스크, Target Group, 배정된 ALB의 리스너 규칙, Route53, 앱 IAM 역할, 가동 스케줄 | 앱 파이프라인 |
 
 ## 저장소 구조 (모노레포)
 
@@ -79,29 +84,42 @@ uv run ruff check .     # 린트
 
 ```bash
 ./scripts/deploy.sh --stage dev|prod --domain <apps.example.com> \
+    [--frontend-mode public|private] \
     [--hosted-zone-id <ZID>] [--region <region>] \
     [--admin-email <email>] [--admin-name <name>] \
     [--internal-cidrs "10.0.0.0/16,..."] \
     [--skip-spa]
 ```
 
-`--domain`은 사용자 앱 apex 도메인(예: dev는 `apps-dev.example.com`)이며 Route53 public
-hosted zone이 있어야 한다. `--hosted-zone-id` 미지정 시 도메인(및 상위 라벨)로 자동 조회한다.
+- `--domain`은 사용자 앱 apex 도메인(예: dev는 `apps-dev.example.com`)이며 Route53 public
+  hosted zone이 있어야 한다. `--hosted-zone-id` 미지정 시 도메인(및 상위 라벨)로 자동 조회한다.
+- `--frontend-mode`(기본 `public`): 플랫폼 웹 배포 모드. `private`는 콘솔·API·로그인이 모두 사내망(VPC) 안에서만
+  열리므로 사내망-VPC 연결과 `<appsDomain>` DNS 포워딩이 필요하다. 다른 값으로 재실행하면 모드가 전환된다.
+- `--internal-cidrs`: 사내용 ALB(및 private 모드 콘솔·VPC 엔드포인트)에 접속을 허용할 대역. 미지정 시 VPC 대역만.
 
-동작 순서: 사전 점검 → `cdk bootstrap` → `network`·`platform` 스택 배포 → provisioner 자산·Kiro 설정 업로드
-→ 최초 관리자 계정 생성 → SPA 빌드·S3 sync·CloudFront invalidation.
+동작 순서(출력의 단계 번호와 동일):
+`1/5` 사전 점검 → `2/5` `cdk bootstrap` → `2b/5` Lambda 자산 동기화 → `2c/5` (private만) SPA 빌드·Kiro zip을 콘솔 이미지 내용으로 준비
+→ `3/5` `network` → `platform` 스택 배포 → `3b/5` provisioner 자산 업로드 → `3c/5` Kiro 설정 zip 업로드(public만)
+→ `3d/5` 기본 권한 템플릿 시드 → `4/5` 최초 관리자 계정 생성 + (public만) SPA 빌드·`config.json`·S3 sync·CloudFront invalidation
+→ `5/5` 완료 출력(콘솔 주소 `https://console.<appsDomain>`, 모드, User Pool, Kiro 설정 URL).
+
+ALB 증설 스택(`apphub-{stage}-alb-*`)은 deploy.sh가 아니라 플랫폼이 앱 생성 중 필요할 때 provisioner CodeBuild로 만든다.
 
 제거:
 
 ```bash
-./scripts/destroy.sh --stage dev|prod
+./scripts/destroy.sh --stage dev|prod [--region <region>] [--yes]
 ```
+
+CDK synth 없이 `aws cloudformation delete-stack`으로 `app-*-runtime → app-*-pipeline → alb-* → platform → network`
+순서로 지운다(실패/롤백 상태 스택 포함, 재실행 안전). prod는 `apphub-prod` 입력 확인을 강제하며,
+prod의 RETAIN 리소스(DynamoDB·User Pool·버킷)와 CDK bootstrap은 지우지 않는다.
 
 ## 설계 문서
 
 설계 문서가 단일 진실 원본이며 `docs/` 에 있다(로컬 전용, 버전관리 제외).
 
-- `docs/DESIGN.md` — 플랫폼 기능·아키텍처·설계 결정(D1–D18)
+- `docs/DESIGN.md` — 플랫폼 기능·아키텍처·설계 결정(D1–D21)
 - `docs/PLATFORM-ENGINEERING.md` — 플랫폼 개발·설치 규칙
 - `docs/TEST-STRATEGY.md` — 테스트 전략
 - `docs/KIRO-STANDARDS.md` — Kiro 빌드 표준

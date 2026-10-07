@@ -200,6 +200,8 @@ def env(ddb_table, stub_clients):
             f"/apphub/{STAGE}/network/internal-https-listener-arn": "arn:listener:internal",
             f"/apphub/{STAGE}/network/internet-https-listener-arn": "arn:listener:internet",
             f"/apphub/{STAGE}/network/waker-tg-arn": "arn:tg:waker",
+            # D20: ALB별 Waker TG(n=0 internal 은 신규 TG — legacy 폴백 없음, 계약 §1.2).
+            f"/apphub/{STAGE}/network/alb/internal/0/waker-tg-arn": "arn:tg:waker",
             f"/apphub/{STAGE}/network/apps-domain": "apps.example.com",
         }
     )
@@ -323,7 +325,13 @@ def test_patch_upsert_merges_json_and_redeploys_last_succeeded_commit(env) -> No
     redeploy = out["data"]["redeploy"]
     assert redeploy["status"] == "PENDING"
     ov = _start_build_env(env["cb"])
-    assert ov == {"APP_ID": APP, "STAGE": STAGE, "APP_STACK_KIND": "runtime", "IMAGE_TAG": "sha-ok"}
+    assert ov == {
+        "APP_ID": APP,
+        "STAGE": STAGE,
+        "APP_STACK_KIND": "runtime",
+        "IMAGE_TAG": "sha-ok",
+        "DEPLOY_TRIGGER": "secret-change",
+    }
     dep = next(d for d in list_deployments(APP, 20) if d["deploymentId"] == redeploy["deploymentId"])
     assert dep["trigger"] == "secret-change"
     assert dep["status"] == "PENDING"
@@ -610,6 +618,38 @@ def test_notify_build_pipeline_kind_or_unknown_build_skipped(notify_ready) -> No
     assert dn.handle(_build_event("SUCCEEDED", kind="pipeline"))["reason"] == "not-runtime-build"
     assert dn.handle(_build_event("SUCCEEDED", build_uuid="other"))["reason"] == "no-record-skipped"
     assert list_deployments(APP, 20)[0]["status"] == "PENDING"
+
+
+def test_secret_change_race_build_event_first_single_record(env, monkeypatch) -> None:
+    """시크릿 변경 재배포: StartBuild 직후 빌드 FAILED 이벤트가 접수 기록보다 먼저 → 1건 secret-change FAILED."""
+    from app.domain import redeploy as redeploy_mod
+
+    monkeypatch.setenv("STAGE", STAGE)
+    _seed_app_with_secret(env["table"], ["A"], {"A": VALUE_A}, env["sm"])
+    put_deployment(app_id=APP, trigger="auto", status="SUCCEEDED", commit_sha="sha-ok", commit_message="m")
+    real_start = redeploy_mod.start_provisioner_build
+
+    def start_then_event(project: str, build_env: dict[str, str]) -> str:
+        build_id = real_start(project, build_env)
+        event = _build_event("FAILED")
+        event["detail"]["additional-information"]["environment"]["environment-variables"].append(
+            {"name": "DEPLOY_TRIGGER", "value": build_env["DEPLOY_TRIGGER"]}
+        )
+        assert dn.handle(event)["created"] is True
+        return build_id
+
+    monkeypatch.setattr(redeploy_mod, "start_provisioner_build", start_then_event)
+    out = _patch({"secrets": {"A": VALUE_NEW}})
+    assert out["status"] == 200
+    redeploy = out["data"]["redeploy"]
+    redeploys = [d for d in list_deployments(APP, 20) if d.get("buildId") == f"{PROVISIONER}:uuid-1"]
+    assert len(redeploys) == 1
+    dep = redeploys[0]
+    assert dep["deploymentId"] == redeploy["deploymentId"]
+    assert dep["trigger"] == "secret-change"
+    assert dep["status"] == "FAILED"
+    assert dep["commitSha"] == "sha-ok"
+    assert dep["commitMessage"] == "m"
 
 
 def test_notify_prune_skips_when_service_unknown(notify_ready) -> None:

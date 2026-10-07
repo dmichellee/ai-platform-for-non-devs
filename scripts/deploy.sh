@@ -5,6 +5,7 @@
 #
 # 사용:
 #   ./scripts/deploy.sh --stage dev|prod --domain <apps.example.com> \
+#       [--frontend-mode public|private] \
 #       [--hosted-zone-id <ZID>] [--region <region>] \
 #       [--admin-email <email>] [--admin-name <name>] [--internal-cidrs "10.0.0.0/16,..."] [--skip-spa]
 #
@@ -17,11 +18,14 @@
 # 동작(몇 번을 실행해도 같은 결과):
 #   1. 사전 점검(자격증명/리전/hosted zone/docker/node/cdk). 실패 시 아무것도 바꾸지 않고 종료.
 #   2. cdk bootstrap (이미 되어 있으면 통과).
+#      2c. (private 모드, D19) SPA 빌드 + Kiro zip → infra/console/site/ 준비 — 콘솔 이미지
+#          (DockerImageAsset) 내용이므로 cdk deploy **앞**에서 한다.
 #   3. cdk deploy apphub-{stage}-network apphub-{stage}-platform (변경 없으면 no-op).
-#      이어서 provisioner 자산(검증기·CDK소스)과 Kiro 설정 zip을 자산 버킷 고정 키로 업로드.
-#   4. 최초 관리자 계정 생성(존재하면 통과), SPA(frontend/) 빌드 → config.json 생성 →
-#      S3 sync → CloudFront invalidation(/* — kiro-config 포함).
-#   5. 완료 출력(웹 URL, 다음 단계).
+#      이어서 provisioner 자산(검증기·CDK소스)과 (public 모드) Kiro 설정 zip을 자산 버킷 고정 키로 업로드.
+#   4. 최초 관리자 계정 생성(존재하면 통과). public 모드: SPA 빌드 → config.json 생성 →
+#      S3 sync → CloudFront invalidation(/* — kiro-config 포함). private 모드: 콘솔 컨테이너가
+#      시작 시 config.json을 만든다(업로드 단계 없음).
+#   5. 완료 출력(콘솔 주소 ConsoleUrl, 다음 단계).
 set -euo pipefail
 
 # ── 경로 ──────────────────────────────────────────────────────────────────
@@ -39,6 +43,7 @@ ADMIN_EMAIL=""
 ADMIN_NAME=""
 INTERNAL_CIDRS=""
 SKIP_SPA="false"
+FRONTEND_MODE="public"  # --frontend-mode (D19). public | private
 
 usage() {
   cat <<'USAGE'
@@ -51,12 +56,23 @@ usage() {
   --region <region>           배포 리전 (기본: ap-northeast-2)
   --admin-email <email>       최초 관리자 이메일(존재하면 통과). 미지정 시 대화형 질문.
   --admin-name <name>         최초 관리자 표시 이름. 미지정 시 이메일 @ 앞부분을 사용.
-  --internal-cidrs "a,b"      internal ALB ingress 허용 대역(콤마 구분). 미지정 시 VPC CIDR.
-  --skip-spa                  SPA 빌드/업로드 생략(인프라만 갱신할 때)
+  --frontend-mode <mode>      플랫폼 웹 배포 모드(기본 public). 두 모드 모두 콘솔 주소는
+                              https://console.<domain>.
+                                public : CloudFront + S3, API Gateway Regional
+                                private: 사내 전용 — internal ALB + 컨테이너(nginx), Private API(VPC 엔드포인트).
+                                         사무실 PC 접속에는 사내망-VPC 연결과 DNS 포워딩이 필요합니다
+                                         (PLATFORM-ENGINEERING.md 5.2).
+                              다른 값으로 다시 실행하면 모드가 전환됩니다.
+  --internal-cidrs "a,b"      internal ALB(및 private 모드 콘솔·VPC 엔드포인트) ingress 허용 대역
+                              (콤마 구분). 미지정 시 VPC CIDR.
+  --skip-spa                  SPA 빌드/업로드 생략(인프라만 갱신할 때). private 모드에서는 이전에
+                              준비된 콘솔 이미지 내용(infra/console/site)을 그대로 사용한다.
 
 예:
   ./scripts/deploy.sh --stage prod --domain apps.example.com --admin-email admin@example.com
   ./scripts/deploy.sh --stage dev  --domain apps-dev.example.com --region us-east-1
+  ./scripts/deploy.sh --stage prod --domain apps.example.com --frontend-mode private \
+      --internal-cidrs "10.0.0.0/8"
 USAGE
 }
 
@@ -69,6 +85,7 @@ while [[ $# -gt 0 ]]; do
     --admin-email)    ADMIN_EMAIL="${2:-}"; shift 2 ;;
     --admin-name)     ADMIN_NAME="${2:-}"; shift 2 ;;
     --internal-cidrs) INTERNAL_CIDRS="${2:-}"; shift 2 ;;
+    --frontend-mode)  FRONTEND_MODE="${2:-}"; shift 2 ;;
     --skip-spa)       SKIP_SPA="true"; shift ;;
     -h|--help)        usage; exit 0 ;;
     *) echo "알 수 없는 인자: $1" >&2; usage; exit 2 ;;
@@ -77,6 +94,11 @@ done
 
 if [[ "${STAGE}" != "dev" && "${STAGE}" != "prod" ]]; then
   echo "오류: --stage 는 dev 또는 prod 여야 합니다." >&2
+  usage; exit 2
+fi
+
+if [[ "${FRONTEND_MODE}" != "public" && "${FRONTEND_MODE}" != "private" ]]; then
+  echo "오류: --frontend-mode 는 public 또는 private 여야 합니다." >&2
   usage; exit 2
 fi
 
@@ -89,6 +111,7 @@ fi
 PREFIX="apphub-${STAGE}"
 NETWORK_STACK="${PREFIX}-network"
 PLATFORM_STACK="${PREFIX}-platform"
+CONSOLE_SITE_DIR="${INFRA_DIR}/console/site"
 
 log()  { echo "[deploy] $*"; }
 step() { echo; echo "===== $* ====="; }
@@ -99,7 +122,7 @@ step() { echo; echo "===== $* ====="; }
 #   -c region=...     : --region. CDK 표준 CDK_DEFAULT_REGION 대신 명시 주입(자격증명 리전에 안 휘둘림).
 #   -c allowedIngressCidrs=... : --internal-cidrs (선택).
 #   -c hostedZoneId=... / -c account=... : 사전 점검 뒤(자동 조회/자격증명 확인 후) 아래에서 추가.
-CDK_CTX=(-c "stage=${STAGE}" -c "domain=${APPS_DOMAIN}" -c "region=${REGION}")
+CDK_CTX=(-c "stage=${STAGE}" -c "domain=${APPS_DOMAIN}" -c "region=${REGION}" -c "frontendMode=${FRONTEND_MODE}")
 if [[ -n "${INTERNAL_CIDRS}" ]]; then
   CDK_CTX+=(-c "allowedIngressCidrs=${INTERNAL_CIDRS}")
 fi
@@ -195,6 +218,23 @@ if ! aws route53 get-hosted-zone --id "${HOSTED_ZONE_ID}" >/dev/null 2>&1; then
 fi
 log "hosted zone 존재 확인 OK"
 
+# 플랫폼 웹 배포 모드(D19) 사전 점검.
+log "플랫폼 웹 배포 모드: ${FRONTEND_MODE} (콘솔 주소 https://console.${APPS_DOMAIN})"
+if [[ "${FRONTEND_MODE}" == "private" ]]; then
+  if [[ "${SKIP_SPA}" == "true" && ! -f "${CONSOLE_SITE_DIR}/index.html" ]]; then
+    echo "오류: private 모드에서 --skip-spa 를 쓰려면 이전에 준비된 콘솔 내용(${CONSOLE_SITE_DIR}/index.html)이 있어야 합니다." >&2
+    echo "      --skip-spa 없이 다시 실행하세요." >&2
+    exit 1
+  fi
+  if [[ ! -d "${FRONTEND_DIR}" && "${SKIP_SPA}" != "true" ]]; then
+    echo "오류: private 모드는 콘솔 이미지에 SPA를 담아야 하는데 frontend/ 디렉토리가 없습니다." >&2
+    exit 1
+  fi
+  if [[ -z "${INTERNAL_CIDRS}" ]]; then
+    log "참고: --internal-cidrs 미지정 — 콘솔·VPC 엔드포인트는 VPC 대역에서만 접근됩니다(사무실 대역을 지정하세요)."
+  fi
+fi
+
 # ── 2. cdk bootstrap (이미 되어 있으면 통과) ─────────────────────────────────
 step "2/5 cdk bootstrap"
 if aws cloudformation describe-stacks --stack-name CDKToolkit --region "${REGION}" >/dev/null 2>&1; then
@@ -227,6 +267,53 @@ if [[ -n "${MISSING_ASSET}" ]]; then
 fi
 log "Lambda 자산 7종 동기화 OK (api + provision-task/delete-task + waker/wake-restore/sleep-transition + deploy-notify)"
 
+# ── 2c. (private 모드) 콘솔 이미지 내용 준비 — cdk deploy 앞 (D19) ─────────────
+# private 모드의 콘솔은 CDK DockerImageAsset(infra/console/)으로 cdk deploy 중 빌드·push된다.
+#  이미지에 SPA 정적 빌드 + Kiro zip을 담으므로 cdk deploy **전에** infra/console/site/ 를 채운다.
+#  config.json은 이미지에 넣지 않는다(컨테이너 시작 시 env로 생성 — 스택 출력과의 순환 방지).
+#  멱등: 내용이 같으면 자산 해시가 같아 이미지 재빌드·ECS 재배포가 일어나지 않는다.
+#   - SPA: rsync --delete --checksum(내용 기준).
+#   - Kiro zip: zip은 파일 시각을 담아 매번 바이트가 달라지므로, 항목 목록+내용이 같으면 기존 zip을 유지.
+step "2c/5 콘솔 이미지 내용 준비 (frontend-mode=${FRONTEND_MODE})"
+same_zip_content() {
+  [[ -f "$1" && -f "$2" ]] || return 1
+  [[ "$(unzip -Z1 "$1" | LC_ALL=C sort; unzip -p "$1" | shasum -a 256)" == \
+     "$(unzip -Z1 "$2" | LC_ALL=C sort; unzip -p "$2" | shasum -a 256)" ]]
+}
+if [[ "${FRONTEND_MODE}" != "private" ]]; then
+  log "public 모드 — 콘솔 이미지 없음(SPA는 4단계에서 S3 업로드)"
+elif [[ "${SKIP_SPA}" == "true" ]]; then
+  log "--skip-spa — 기존 콘솔 내용(${CONSOLE_SITE_DIR}) 그대로 사용"
+else
+  log "SPA 빌드 (frontend/)"
+  ( cd "${FRONTEND_DIR}" && pnpm install --frozen-lockfile && pnpm build ) \
+    || { echo "오류: SPA 빌드 실패. 중단합니다." >&2; exit 1; }
+  if [[ ! -f "${FRONTEND_DIR}/dist/index.html" ]]; then
+    echo "오류: SPA 빌드 산출물(frontend/dist/index.html)이 없습니다." >&2; exit 1
+  fi
+  mkdir -p "${CONSOLE_SITE_DIR}"
+  rsync -a --delete --checksum \
+    --exclude '.gitkeep' --exclude 'config.json' --exclude 'kiro-config/' \
+    "${FRONTEND_DIR}/dist/" "${CONSOLE_SITE_DIR}/"
+  log "SPA → ${CONSOLE_SITE_DIR} 동기화 OK"
+
+  KIRO_TMP="$(mktemp -d -t apphub-kiro-XXXXXX)"
+  if bash "${ROOT_DIR}/scripts/build-kiro-bundle.sh" --out-dir "${KIRO_TMP}" >/dev/null; then
+    mkdir -p "${CONSOLE_SITE_DIR}/kiro-config"
+    for z in kiro-config-mac.zip kiro-config-windows.zip; do
+      if same_zip_content "${KIRO_TMP}/${z}" "${CONSOLE_SITE_DIR}/kiro-config/${z}"; then
+        log "Kiro ${z} 변경 없음 — 기존 파일 유지"
+      else
+        cp "${KIRO_TMP}/${z}" "${CONSOLE_SITE_DIR}/kiro-config/${z}"
+        log "Kiro ${z} 갱신"
+      fi
+    done
+  else
+    log "경고: Kiro 설정 zip 생성 실패 — 콘솔의 'Kiro 설정 다운로드'가 동작하지 않을 수 있습니다(배포는 계속)."
+  fi
+  rm -rf "${KIRO_TMP}"
+fi
+
 # ── 3. cdk deploy (network → platform, CFN이 멱등 보장) ──────────────────────
 # 실패(스택 rollback 포함)는 반드시 스크립트 전체 non-zero exit로 전파한다.
 #  --require-approval never 로 무인 진행하되, cdk가 non-zero로 끝나면(롤백/검증 실패 등)
@@ -246,21 +333,20 @@ stack_output() {
     --query "Stacks[0].Outputs[?OutputKey=='${key}'].OutputValue" --output text 2>/dev/null
 }
 
-USER_POOL_ID="$(stack_output "${PLATFORM_STACK}" UserPoolId)"
-USER_POOL_CLIENT_ID="$(stack_output "${PLATFORM_STACK}" UserPoolClientId)"
-API_URL="$(stack_output "${PLATFORM_STACK}" ApiUrl)"
-SPA_BUCKET="$(stack_output "${PLATFORM_STACK}" SpaBucketName)"
-CF_DOMAIN="$(stack_output "${PLATFORM_STACK}" CloudFrontDomain)"
-CF_DIST_ID="$(stack_output "${PLATFORM_STACK}" CloudFrontDistributionId)"
-ASSETS_BUCKET="$(stack_output "${PLATFORM_STACK}" AssetsBucketName)"
-
-# Cognito Hosted UI 도메인은 Output이 아니라 SSM(user-pool-domain)에 있다(단일 원본).
-#  config.json의 cognitoDomain(옵션)에 넣어 프론트가 Hosted UI code grant를 쓸 수 있게 한다.
-ssm_param() {
-  aws ssm get-parameter --name "$1" --region "${REGION}" \
-    --query "Parameter.Value" --output text 2>/dev/null || true
-}
-COGNITO_DOMAIN="$(ssm_param "/apphub/${STAGE}/platform/user-pool-domain")"
+# Output이 없으면 aws CLI가 "None"을 출력한다 → 빈 문자열로 정규화.
+out_or_empty() { local v; v="$(stack_output "$1" "$2")"; [[ "${v}" == "None" ]] && v=""; echo "${v}"; }
+USER_POOL_ID="$(out_or_empty "${PLATFORM_STACK}" UserPoolId)"
+USER_POOL_CLIENT_ID="$(out_or_empty "${PLATFORM_STACK}" UserPoolClientId)"
+# D19: ApiUrl/CognitoIdpEndpoint는 모드별 실제 호출 주소(private = VPC 엔드포인트 전용 호스트명).
+API_URL="$(out_or_empty "${PLATFORM_STACK}" ApiUrl)"
+COGNITO_IDP_ENDPOINT="$(out_or_empty "${PLATFORM_STACK}" CognitoIdpEndpoint)"
+CONSOLE_URL="$(out_or_empty "${PLATFORM_STACK}" ConsoleUrl)"
+[[ -z "${CONSOLE_URL}" ]] && CONSOLE_URL="https://console.${APPS_DOMAIN}"
+# SPA 버킷은 두 모드 공통(QA M-1 — private 모드에선 비어 있고 sync 생략). CloudFront는 public 모드만.
+SPA_BUCKET="$(out_or_empty "${PLATFORM_STACK}" SpaBucketName)"
+CF_DOMAIN="$(out_or_empty "${PLATFORM_STACK}" CloudFrontDomain)"
+CF_DIST_ID="$(out_or_empty "${PLATFORM_STACK}" CloudFrontDistributionId)"
+ASSETS_BUCKET="$(out_or_empty "${PLATFORM_STACK}" AssetsBucketName)"
 
 # ── 3b. provisioner 자산 업로드 (D-M4-05 미해결 자산 주입) ────────────────────
 # 앱 파이프라인 CodeBuild가 요구하는 자산을 플랫폼 자산 버킷의 고정 키로 업로드한다:
@@ -300,6 +386,7 @@ else
     --exclude='**/dist' \
     --exclude='.git' \
     --exclude='**/cdk.out' \
+    --exclude='infra/console/site' \
     infra backend package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.base.json
   aws s3 cp "${CDK_TARBALL}" "s3://${ASSETS_BUCKET}/cdk-source/cdk-src.tgz" --region "${REGION}"
   rm -f "${CDK_TARBALL}"
@@ -318,7 +405,11 @@ fi
 #  사용자에게 수동 재실행 방법을 안내한다(배포 exit 코드는 성공 유지).
 step "3c/5 Kiro 설정 zip 자동 업로드 (build-kiro-bundle.sh --upload)"
 KIRO_UPLOAD_OK="false"
-if [[ -z "${ASSETS_BUCKET}" ]]; then
+if [[ "${FRONTEND_MODE}" == "private" ]]; then
+  # private 모드: zip은 콘솔 이미지(nginx /kiro-config/*)에 이미 담겼다(2c). CloudFront가 없어 업로드 불필요.
+  [[ -f "${CONSOLE_SITE_DIR}/kiro-config/kiro-config-mac.zip" ]] && KIRO_UPLOAD_OK="true"
+  log "private 모드 — Kiro zip은 콘솔 이미지에 포함(업로드 생략)"
+elif [[ -z "${ASSETS_BUCKET}" ]]; then
   log "경고: AssetsBucketName Output 없음 — Kiro 설정 zip 업로드 건너뜀."
 elif bash "${ROOT_DIR}/scripts/build-kiro-bundle.sh" --upload --stage "${STAGE}" --region "${REGION}" --assets-bucket "${ASSETS_BUCKET}"; then
   KIRO_UPLOAD_OK="true"
@@ -351,7 +442,7 @@ else
 fi
 
 # ── 4. 최초 관리자(존재하면 통과) + SPA 업로드 ───────────────────────────────
-step "4/5 최초 관리자 + SPA 업로드"
+step "4/5 최초 관리자 + SPA 업로드(public 모드)"
 
 # 4a. 최초 관리자 — admin-get-user로 존재 확인 후 없을 때만 생성 (멱등)
 if [[ -z "${ADMIN_EMAIL}" ]]; then
@@ -395,7 +486,9 @@ fi
 # 4b. SPA 업로드 (frontend/ — M6 SPA). aws s3 sync --delete 는 자체 멱등.
 #  프론트는 런타임 config.json으로 Cognito/API 값을 주입받는다(D-M6-03). 그래서 빌드 산출물
 #  (frontend/dist)에 stack-outputs로 만든 config.json을 함께 넣고 통째로 sync 한다.
-if [[ "${SKIP_SPA}" == "true" ]]; then
+if [[ "${FRONTEND_MODE}" == "private" ]]; then
+  log "private 모드 — SPA는 콘솔 컨테이너 이미지로 배포됨(S3 업로드 없음, config.json은 컨테이너가 생성)"
+elif [[ "${SKIP_SPA}" == "true" ]]; then
   log "--skip-spa — SPA 업로드 건너뜀"
 elif [[ -z "${SPA_BUCKET}" ]]; then
   log "SPA 버킷 출력 없음 — SPA 업로드 건너뜀"
@@ -406,14 +499,16 @@ else
   ( cd "${FRONTEND_DIR}" && pnpm install --frozen-lockfile && pnpm build )
   SPA_DIST="${FRONTEND_DIR}/dist"
   if [[ -d "${SPA_DIST}" ]]; then
-    # config.json 생성 — frontend/src/lib/config.ts(RuntimeConfig) 스키마를 따른다.
+    # config.json 생성 — frontend/src/lib/config.ts(RuntimeConfig) 스키마(계약 delta §9.1)를 따른다.
     #  apiUrl/userPoolId/userPoolClientId가 모두 있으면 실서비스(mock=false), 아니면 목 모드로 둔다.
+    #  D21: 로그인은 cognito-idp 직접 호출 → cognitoIdpEndpoint. cognitoDomain(Hosted UI)은 더 이상 넣지 않는다.
+    #  private 모드 콘솔 컨테이너(infra/console/40-apphub-config.sh)가 만드는 형식과 동일하다.
     log "config.json 생성 → ${SPA_DIST}/config.json"
     CONFIG_OUT="${SPA_DIST}/config.json" \
     CFG_API_URL="${API_URL}" \
     CFG_USER_POOL_ID="${USER_POOL_ID}" \
     CFG_USER_POOL_CLIENT_ID="${USER_POOL_CLIENT_ID}" \
-    CFG_COGNITO_DOMAIN="${COGNITO_DOMAIN}" \
+    CFG_COGNITO_IDP_ENDPOINT="${COGNITO_IDP_ENDPOINT}" \
     CFG_REGION="${REGION}" \
     CFG_STAGE="${STAGE}" \
     CFG_APPS_DOMAIN="${APPS_DOMAIN}" \
@@ -423,18 +518,17 @@ else
       const apiUrl = s("CFG_API_URL");
       const userPoolId = s("CFG_USER_POOL_ID");
       const userPoolClientId = s("CFG_USER_POOL_CLIENT_ID");
-      const cognitoDomain = s("CFG_COGNITO_DOMAIN");
-      const appsDomain = s("CFG_APPS_DOMAIN");
+      const region = s("CFG_REGION");
       const cfg = {
         apiUrl,
         userPoolId,
         userPoolClientId,
-        region: s("CFG_REGION"),
+        region,
+        cognitoIdpEndpoint: s("CFG_COGNITO_IDP_ENDPOINT") || `https://cognito-idp.${region}.amazonaws.com/`,
+        appsDomain: s("CFG_APPS_DOMAIN"),
         stage: s("CFG_STAGE"),
         mock: !(apiUrl && userPoolId && userPoolClientId),
       };
-      if (cognitoDomain) cfg.cognitoDomain = cognitoDomain;
-      if (appsDomain) cfg.appsDomain = appsDomain;
       fs.writeFileSync(process.env.CONFIG_OUT, JSON.stringify(cfg, null, 2) + "\n");
     '
     if [[ -z "${API_URL}" || -z "${USER_POOL_ID}" || -z "${USER_POOL_CLIENT_ID}" ]]; then
@@ -456,21 +550,29 @@ fi
 step "5/5 완료"
 echo
 echo "AppHub(${STAGE}) 설치 완료."
-[[ -n "${CF_DOMAIN}" ]] && echo "  웹 URL          : https://${CF_DOMAIN}"
+echo "  콘솔 주소       : ${CONSOLE_URL}"
+echo "  웹 배포 모드    : ${FRONTEND_MODE}"
 echo "  앱 도메인       : *.${APPS_DOMAIN}"
 echo "  User Pool       : ${USER_POOL_ID:-<n/a>}"
-if [[ -n "${CF_DOMAIN}" ]]; then
-  if [[ "${KIRO_UPLOAD_OK}" == "true" ]]; then
-    echo "  Kiro 설정(Mac)     : https://${CF_DOMAIN}/kiro-config/kiro-config-mac.zip (자동 업로드됨)"
-    echo "  Kiro 설정(Windows) : https://${CF_DOMAIN}/kiro-config/kiro-config-windows.zip (자동 업로드됨)"
+if [[ "${KIRO_UPLOAD_OK}" == "true" ]]; then
+  echo "  Kiro 설정(Mac)     : ${CONSOLE_URL}/kiro-config/kiro-config-mac.zip"
+  echo "  Kiro 설정(Windows) : ${CONSOLE_URL}/kiro-config/kiro-config-windows.zip"
+else
+  echo "  Kiro 설정(Mac)     : ${CONSOLE_URL}/kiro-config/kiro-config-mac.zip"
+  echo "  Kiro 설정(Windows) : ${CONSOLE_URL}/kiro-config/kiro-config-windows.zip"
+  if [[ "${FRONTEND_MODE}" == "private" ]]; then
+    echo "                       (경고: Kiro zip이 콘솔 이미지에 없습니다 — deploy.sh를 --skip-spa 없이 다시 실행하세요)"
   else
-    echo "  Kiro 설정(Mac)     : https://${CF_DOMAIN}/kiro-config/kiro-config-mac.zip"
-    echo "  Kiro 설정(Windows) : https://${CF_DOMAIN}/kiro-config/kiro-config-windows.zip"
     echo "                       (경고: 자동 업로드 실패 — 'bash scripts/build-kiro-bundle.sh --upload --stage ${STAGE} --region ${REGION}' 수동 실행 필요)"
   fi
 fi
+if [[ "${FRONTEND_MODE}" == "public" ]]; then
+  echo "  (참고) 콘솔 인증서 발급·DNS 전파에 수 분이 걸릴 수 있습니다."
+else
+  echo "  (참고) private 모드 콘솔은 사내망에서만 열립니다 — 사내망-VPC 연결과 '${APPS_DOMAIN}' DNS 포워딩이"
+  echo "         필요합니다(PLATFORM-ENGINEERING.md 5.2). 앱 '로그인한 사람만 접근'은 공용 로그인 도메인을 경유합니다."
+fi
 echo
 echo "다음 단계:"
-echo "  1) 관리자 화면에서 VPC 등록(서로 다른 AZ 서브넷 2개 + 이미지 pull 경로)."
-echo "  2) 소스 provider(CodeCommit/GitHub/GitLab) 활성화."
-echo "  3) 컴퓨팅 프리셋·권한 템플릿 정의."
+echo "  1) 콘솔에 관리자 계정으로 로그인 → 소스 provider(CodeCommit/GitHub/GitLab) 활성화."
+echo "  2) 컴퓨팅 프리셋·권한 템플릿 정의."

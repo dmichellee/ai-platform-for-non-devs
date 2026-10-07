@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   assertNoOpenCidr,
   loadConfig,
+  parseFrontendMode,
   parseStage,
   resourcePrefix,
   type ConfigInputs,
@@ -117,5 +118,21 @@ describe("config 로더 — 공통 규약", () => {
     expect(parseStage("prod")).toBe("prod");
     expect(() => parseStage("staging")).toThrow();
     expect(() => parseStage(undefined)).toThrow();
+  });
+});
+
+describe("config 로더 — D19 frontendMode", () => {
+  it("미지정이면 public(기본)", () => {
+    expect(loadConfig("dev", FULL).frontendMode).toBe("public");
+    expect(parseFrontendMode(undefined)).toBe("public");
+    expect(parseFrontendMode("")).toBe("public");
+  });
+  it("public|private 주입값을 반영한다", () => {
+    expect(loadConfig("dev", { ...FULL, frontendMode: "private" }).frontendMode).toBe("private");
+    expect(parseFrontendMode("private")).toBe("private");
+    expect(parseFrontendMode("public")).toBe("public");
+  });
+  it("알 수 없는 값은 throw(조용한 오설치 방지)", () => {
+    expect(() => parseFrontendMode("internal")).toThrow(/frontendMode/);
   });
 });

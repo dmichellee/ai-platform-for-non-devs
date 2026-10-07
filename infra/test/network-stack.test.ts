@@ -189,7 +189,7 @@ describe("network 스택", () => {
       });
     });
 
-    it("공유 Waker Target Group(type=lambda)이 존재한다", () => {
+    it("Waker Target Group(type=lambda)이 존재한다", () => {
       template.hasResourceProperties("AWS::ElasticLoadBalancingV2::TargetGroup", {
         TargetType: "lambda",
       });
@@ -366,6 +366,94 @@ describe("network 스택", () => {
       template.hasResourceProperties("AWS::SSM::Parameter", {
         Name: "/apphub/dev/network/sleep-transition-fn-arn",
       });
+    });
+  });
+
+  describe("D20 — ALB별 SSM 키 n=0 + ALB별 Waker TG (계약 §1.1~§1.3)", () => {
+    const KEYS = ["alb-arn", "alb-full-name", "alb-dns", "alb-canonical-zone-id", "https-listener-arn", "waker-tg-arn"];
+    const ssmValue = (name: string): unknown => {
+      const params = template.findResources("AWS::SSM::Parameter", { Properties: { Name: name } });
+      const list = Object.values(params);
+      expect(list.length, `SSM ${name} 이 정확히 1개 있어야 함`).toBe(1);
+      return (list[0].Properties as Record<string, unknown>)["Value"];
+    };
+
+    it("n=0 internet/internal 각각 6개 키를 `/network/alb/{slug}/0/*`로 발행한다", () => {
+      for (const slug of ["internet", "internal"]) {
+        for (const key of KEYS) ssmValue(`/apphub/dev/network/alb/${slug}/0/${key}`);
+      }
+    });
+
+    it("기존 scheme 고정 키는 호환 유지되고 값이 신규 키와 같다", () => {
+      const pairs: Array<[string, string]> = [
+        ["internet-alb-arn", "alb/internet/0/alb-arn"],
+        ["internal-alb-arn", "alb/internal/0/alb-arn"],
+        ["internet-alb-dns", "alb/internet/0/alb-dns"],
+        ["internal-alb-canonical-zone-id", "alb/internal/0/alb-canonical-zone-id"],
+        ["internet-alb-full-name", "alb/internet/0/alb-full-name"],
+        ["internet-https-listener-arn", "alb/internet/0/https-listener-arn"],
+        ["internal-https-listener-arn", "alb/internal/0/https-listener-arn"],
+        // 계약 §1.2: legacy waker-tg-arn == alb/internet/0/waker-tg-arn
+        ["waker-tg-arn", "alb/internet/0/waker-tg-arn"],
+      ];
+      for (const [legacy, next] of pairs) {
+        expect(ssmValue(`/apphub/dev/network/${next}`)).toEqual(ssmValue(`/apphub/dev/network/${legacy}`));
+      }
+    });
+
+    it("Waker TG는 2개(ALB마다 1개): 기존 apphub-dev-waker-tg(논리 ID 불변) + 신규 apphub-dev-waker-internal-0", () => {
+      const tgs = template.findResources("AWS::ElasticLoadBalancingV2::TargetGroup");
+      const byName = new Map(
+        Object.entries(tgs).map(([id, r]) => [String((r.Properties as Record<string, unknown>)["Name"]), id]),
+      );
+      expect(Object.keys(tgs).length).toBe(2);
+      // 기존 리소스 교체 금지 — 논리 ID 접두어 "WakerTg"(CDK 해시 suffix) 유지.
+      expect(byName.get("apphub-dev-waker-tg")).toMatch(/^WakerTg[0-9A-F]{8}$/);
+      expect(byName.get("apphub-dev-waker-internal-0")).toBeDefined();
+      for (const r of Object.values(tgs)) {
+        expect((r.Properties as Record<string, unknown>)["TargetType"]).toBe("lambda");
+      }
+    });
+
+    it("internal n=0 waker-tg-arn은 internal 전용 TG를 가리킨다(internet TG와 다름 — 버그 B)", () => {
+      const tgs = template.findResources("AWS::ElasticLoadBalancingV2::TargetGroup");
+      const internalTgId = Object.entries(tgs).find(
+        ([, r]) => (r.Properties as Record<string, unknown>)["Name"] === "apphub-dev-waker-internal-0",
+      )![0];
+      expect(ssmValue("/apphub/dev/network/alb/internal/0/waker-tg-arn")).toEqual({ Ref: internalTgId });
+      expect(ssmValue("/apphub/dev/network/alb/internet/0/waker-tg-arn")).not.toEqual({ Ref: internalTgId });
+    });
+
+    it("두 Waker TG 모두 Waker Lambda invoke 권한(elasticloadbalancing) 이후에 생성된다", () => {
+      // LambdaTarget은 같은 principal 권한을 1개로 합친다(grantInvoke 캐시) — 두 TG가 모두 그 권한에 의존.
+      const perms = Object.entries(template.findResources("AWS::Lambda::Permission")).filter(
+        ([, p]) => (p.Properties as Record<string, unknown>)["Principal"] === "elasticloadbalancing.amazonaws.com",
+      );
+      expect(perms.length).toBeGreaterThanOrEqual(1);
+      const permIds = perms.map(([id]) => id);
+      for (const tg of Object.values(template.findResources("AWS::ElasticLoadBalancingV2::TargetGroup"))) {
+        const deps = (tg as { DependsOn?: string[] }).DependsOn ?? [];
+        expect(deps.some((d) => permIds.includes(d))).toBe(true);
+      }
+    });
+
+    it("public-subnet-id-{i}/az-{i}/count + vpc-cidr 를 발행한다(증설 internet ALB·private 콘솔 소비)", () => {
+      for (const i of [0, 1]) {
+        ssmValue(`/apphub/dev/network/public-subnet-id-${i}`);
+        ssmValue(`/apphub/dev/network/public-subnet-az-${i}`);
+      }
+      expect(ssmValue("/apphub/dev/network/public-subnet-count")).toBe("2");
+      ssmValue("/apphub/dev/network/vpc-cidr");
+    });
+
+    it("InternalWakerTargetGroupArn Output", () => {
+      const outputs = (template.toJSON() as { Outputs?: Record<string, unknown> }).Outputs ?? {};
+      expect(Object.keys(outputs)).toContain("InternalWakerTargetGroupArn");
+    });
+
+    it("복원/잠자기 ModifyRule 범위가 플랫폼 ALB 접두어(listener-rule/app/apphub-dev-*/*)로 증설 ALB까지 포함(§7)", () => {
+      const raw = JSON.stringify(Object.values(template.findResources("AWS::IAM::Policy")));
+      expect(raw).toContain("listener-rule/app/apphub-dev-*/*");
     });
   });
 

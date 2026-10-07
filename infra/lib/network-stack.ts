@@ -22,6 +22,7 @@ import {
 } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import { StageConfig, resourcePrefix } from "../lib/config";
+import { albParamName, wakerTgName, type AlbSsmKey, type SchemeSlug } from "./alb-keys";
 
 /**
  * network-stack — 앱들이 **공유**하는 트래픽 인프라 (apphub-conventions 2장, DESIGN.md 3.1).
@@ -33,7 +34,8 @@ import { StageConfig, resourcePrefix } from "../lib/config";
  *  - Route53: 기존 public hosted zone 참조 + internal용 private hosted zone
  *  - HTTPS 리스너(idle timeout 300초 — SSE 대비, DESIGN.md 3.5), HTTP→HTTPS 리다이렉트
  *  - 공유 ECS 클러스터 1개(D18) — stage당 1개. 앱 runtime 스택은 이 위에 서비스만 만든다.
- *  - Waker Lambda + 복원 Lambda + 공유 Waker Target Group
+ *  - Waker Lambda + 복원 Lambda + ALB별 Waker Target Group(n=0 2개, D20 계약 §1.2)
+ *  - ALB별 SSM 키 n=0 발행(`/network/alb/{slug}/0/*`, D20 계약 §1.1 — 기존 scheme 고정 키는 호환 유지)
  *
  * D17 (PLATFORM-ENGINEERING.md 2장): 플랫폼 소유 SG ingress에 0.0.0.0/0·::/0 금지.
  *  유일한 예외 = internet-facing 공유 ALB SG (사용자 앱 인터넷 공개 목적).
@@ -67,7 +69,10 @@ export class NetworkStack extends Stack {
   readonly wakerFunction: lambda.Function;
   readonly wakeRestoreFunction: lambda.Function;
   readonly sleepTransitionFunction: lambda.Function;
+  /** n=0 internet ALB 전용 Waker TG(기존 `apphub-{stage}-waker-tg` — 교체 금지, 계약 §1.2). */
   readonly wakerTargetGroup: elbv2.ApplicationTargetGroup;
+  /** n=0 internal ALB 전용 Waker TG(`apphub-{stage}-waker-internal-0`, 버그 B 수정 — TG는 ALB 1대에만 연결 가능). */
+  readonly internalWakerTargetGroup: elbv2.ApplicationTargetGroup;
 
   constructor(scope: Construct, id: string, props: NetworkStackProps) {
     super(scope, id, props);
@@ -307,13 +312,24 @@ export class NetworkStack extends Stack {
     });
     sleepRule.addTarget(new events_targets.LambdaFunction(sleepTransitionFunction));
 
-    // 공유 Waker Target Group — 잠자는 앱의 리스너 규칙이 이 TG로 forward 전환된다.
+    // Waker Target Group — ALB마다 1개(계약 §1.2, 버그 B). Target Group은 ALB 1대에만 연결될 수 있어
+    //  TG 1개를 두 ALB가 공유하면 두 번째 ALB의 잠자기 전환(ModifyRule forward→Waker TG)이 실패한다.
+    //  - internet n=0: 기존 `WakerTg`(`${prefix}-waker-tg`) 리소스를 **그대로** 둔다(논리 ID·이름 불변 —
+    //    잠든 앱 규칙이 이미 참조 중일 수 있어 교체·삭제 금지). legacy `waker-tg-arn` 키와 같은 값.
+    //  - internal n=0: 신규 `${prefix}-waker-internal-0`.
+    //  두 TG 모두 타깃 = 공유 Waker Lambda(LambdaTarget이 elasticloadbalancing invoke 권한을 부여).
     const wakerTargetGroup = new elbv2.ApplicationTargetGroup(this, "WakerTg", {
-      targetGroupName: `${prefix}-waker-tg`,
+      targetGroupName: wakerTgName(prefix, "internet", 0),
       targetType: elbv2.TargetType.LAMBDA,
       targets: [new elbv2_targets.LambdaTarget(wakerFunction)],
     });
     this.wakerTargetGroup = wakerTargetGroup;
+    const internalWakerTargetGroup = new elbv2.ApplicationTargetGroup(this, "WakerTgInternal0", {
+      targetGroupName: wakerTgName(prefix, "internal", 0),
+      targetType: elbv2.TargetType.LAMBDA,
+      targets: [new elbv2_targets.LambdaTarget(wakerFunction)],
+    });
+    this.internalWakerTargetGroup = internalWakerTargetGroup;
 
     // ── HTTPS 리스너 + HTTP→HTTPS 리다이렉트 ────────────────────────────────
     // 기본 동작: 매칭 규칙 없는 호스트는 404 고정 응답(앱 규칙은 app-runtime이 추가).
@@ -349,9 +365,53 @@ export class NetworkStack extends Stack {
       parameterName: `/apphub/${config.stage}/network/private-subnet-count`,
       stringValue: String(vpc.privateSubnets.length),
     });
+    // D20(계약 §1.3): 증설 internet-facing ALB를 public subnet에 배치하려면 public subnet ID·AZ가 필요하다.
+    //  private과 동일한 0-indexed 개별 파라미터 + 개수.
+    vpc.publicSubnets.forEach((subnet, i) => {
+      new ssm.StringParameter(this, `SsmPublicSubnet${i}`, {
+        parameterName: `/apphub/${config.stage}/network/public-subnet-id-${i}`,
+        stringValue: subnet.subnetId,
+      });
+      new ssm.StringParameter(this, `SsmPublicSubnetAz${i}`, {
+        parameterName: `/apphub/${config.stage}/network/public-subnet-az-${i}`,
+        stringValue: subnet.availabilityZone,
+      });
+    });
+    new ssm.StringParameter(this, "SsmPublicSubnetCount", {
+      parameterName: `/apphub/${config.stage}/network/public-subnet-count`,
+      stringValue: String(vpc.publicSubnets.length),
+    });
+
+    // D20(계약 §1.1): n=0 ALB 2대를 ALB별 키 체계로도 발행한다(`/network/alb/{slug}/0/*`).
+    //  기존 scheme 고정 키(internet-alb-arn 등)는 호환 유지(값 동일) — 아래 publishSsm.
+    const publishAlbKeys = (
+      slug: SchemeSlug,
+      alb: elbv2.ApplicationLoadBalancer,
+      listener: elbv2.ApplicationListener,
+      wakerTg: elbv2.ApplicationTargetGroup,
+    ): void => {
+      const values: Record<AlbSsmKey, string> = {
+        "alb-arn": alb.loadBalancerArn,
+        "alb-full-name": alb.loadBalancerFullName,
+        "alb-dns": alb.loadBalancerDnsName,
+        "alb-canonical-zone-id": alb.loadBalancerCanonicalHostedZoneId,
+        "https-listener-arn": listener.listenerArn,
+        "waker-tg-arn": wakerTg.targetGroupArn,
+      };
+      for (const [key, value] of Object.entries(values)) {
+        new ssm.StringParameter(this, `SsmAlb-${slug}-0-${key}`, {
+          parameterName: albParamName(config.stage, slug, 0, key as AlbSsmKey),
+          stringValue: value,
+        });
+      }
+    };
+    publishAlbKeys("internet", internetFacingAlb, internetHttpsListener, wakerTargetGroup);
+    publishAlbKeys("internal", internalAlb, internalHttpsListener, internalWakerTargetGroup);
 
     this.publishSsm(config.stage, {
       "vpc-id": vpc.vpcId,
+      // D19 private 모드: platform 스택의 콘솔 ALB·VPC 엔드포인트 SG가 --internal-cidrs 미지정 시 VPC CIDR로 대체.
+      "vpc-cidr": vpc.vpcCidrBlock,
       // 공유 ECS 클러스터(D18) — app-runtime이 fromClusterAttributes로 임포트.
       "cluster-name": cluster.clusterName,
       "cluster-arn": cluster.clusterArn,
@@ -400,6 +460,7 @@ export class NetworkStack extends Stack {
     this.output("WakeRestoreFunctionArn", wakeRestoreFunction.functionArn);
     this.output("SleepTransitionFunctionArn", sleepTransitionFunction.functionArn);
     this.output("WakerTargetGroupArn", wakerTargetGroup.targetGroupArn);
+    this.output("InternalWakerTargetGroupArn", internalWakerTargetGroup.targetGroupArn);
 
     void route53_targets; // internet-facing 앱 alias 레코드는 app-runtime에서 사용.
   }
@@ -459,10 +520,13 @@ export class NetworkStack extends Stack {
     // 공유 클러스터(D18) 하위 앱 서비스 ARN: service/{cluster}/{service} = ${prefix}-cluster/${prefix}-app-*.
     //  (이전엔 클러스터명=서비스명 가정으로 ${prefix}-app-*/${prefix}-app-* 였음 — D18로 경로 변경)
     const appServiceArn = this.formatArn({ service: "ecs", resource: "service", resourceName: `${prefix}-cluster/${prefix}-app-*` });
+    // 리스너 규칙 ARN: listener-rule/app/{albName}/{albId}/{listenerId}/{ruleId}.
+    //  ALB 이름 접두어 `${prefix}-`로 한정 — n=0 2대(`${prefix}-internet-alb`/`-internal-alb`)와
+    //  증설 ALB(`${prefix}-{slug}-alb-{n}`, D20 계약 §7)를 모두 포함하고 타 ALB는 제외한다.
     const listenerRuleArn = this.formatArn({
       service: "elasticloadbalancing",
       resource: "listener-rule/app",
-      resourceName: "*",
+      resourceName: `${prefix}-*/*`,
       arnFormat: ArnFormat.SLASH_RESOURCE_NAME,
     });
 

@@ -12,10 +12,11 @@ from typing import Any
 
 import pytest
 from app.data.apps import get_app
-from app.data.deployments import put_deployment
+from app.data.deployments import list_deployments, put_deployment
 from app.data.subdomains import reserve_subdomain
 from app.handler import handler
 from app.integrations import clients as integ_clients
+from app.orchestration import deploy_notify as dn
 
 from .conftest import (
     SsmStub,
@@ -69,6 +70,8 @@ def _ssm_network() -> SsmStub:
             f"/apphub/{STAGE}/network/internal-https-listener-arn": "arn:listener:internal",
             f"/apphub/{STAGE}/network/internet-https-listener-arn": "arn:listener:internet",
             f"/apphub/{STAGE}/network/waker-tg-arn": "arn:tg:waker",
+            # D20: ALB별 Waker TG(n=0 internal 은 신규 TG — legacy 폴백 없음, 계약 §1.2).
+            f"/apphub/{STAGE}/network/alb/internal/0/waker-tg-arn": "arn:tg:waker",
             f"/apphub/{STAGE}/network/apps-domain": "apps.example.com",
         }
     )
@@ -126,6 +129,94 @@ def test_deploy_pipeline_missing_friendly_error(ddb_table, stub_clients) -> None
     assert out["error"]["code"] == "INVALID_STATE"
 
 
+# ── 접수 ↔ deploy-notify 경합(실행 즉시 실패로 종결 이벤트가 접수 기록보다 먼저 옴) ─────────
+
+_SOURCE_FAILED = {"actionExecutionDetails": [{"stageName": "Source", "status": "Failed"}]}
+
+
+def _pipeline_event(app_id: str, state: str, execution_id: str = "exec-99") -> dict[str, Any]:
+    return {
+        "detail-type": "CodePipeline Pipeline Execution State Change",
+        "detail": {"pipeline": f"apphub-{STAGE}-app-{app_id}", "state": state, "execution-id": execution_id},
+    }
+
+
+def _stage_event(app_id: str, stage_name: str, execution_id: str = "exec-99") -> dict[str, Any]:
+    return {
+        "detail-type": "CodePipeline Stage Execution State Change",
+        "detail": {
+            "pipeline": f"apphub-{STAGE}-app-{app_id}",
+            "stage": stage_name,
+            "state": "STARTED",
+            "execution-id": execution_id,
+        },
+    }
+
+
+def _deploy(app_id: str) -> dict[str, Any]:
+    return parse_result(handler(make_event("POST", f"/apps/{app_id}/deploy", user_id=OWNER, groups=["user"])))
+
+
+def test_deploy_race_terminal_event_first_single_manual_failed(ddb_table, stub_clients) -> None:
+    """종결 이벤트(FAILED)가 먼저 와 notify 가 auto FAILED 를 만든 뒤 접수 기록 → 레코드 1건 manual FAILED."""
+    seed_app(ddb_table, "dpl00010", OWNER, status="ACTIVE")
+    pipe = _codepipeline()
+    pipe.set_response("list_action_executions", _SOURCE_FAILED)
+    first = dn.handle_event(_pipeline_event("dpl00010", "FAILED"))
+    assert first["created"] is True
+
+    out = _deploy("dpl00010")
+    assert out["status"] == 201
+    data = out["data"]
+    assert data["trigger"] == "manual"
+    assert data["status"] == "FAILED"  # 종결 유지(역행 금지) — PENDING 으로 되돌리지 않음
+    assert data["failureCategory"] == "SOURCE_UNAVAILABLE"
+    assert data["pipelineExecutionId"] == "exec-99"
+    assert "note" in data
+    deps = list_deployments("dpl00010", 20)
+    assert len(deps) == 1
+    assert deps[0]["trigger"] == "manual"
+    assert deps[0]["status"] == "FAILED"
+    # 늦게 온 Source STARTED 도 새 레코드를 만들지 않는다.
+    assert dn.handle_event(_stage_event("dpl00010", "Source"))["reason"] == "terminal-FAILED-preserved"
+    assert len(list_deployments("dpl00010", 20)) == 1
+
+
+def test_deploy_race_source_started_first_adopted_as_manual(ddb_table, stub_clients) -> None:
+    """Source STARTED 가 먼저 와 auto PENDING 이 생긴 뒤 접수 → 1건 manual PENDING, 이후 SUCCEEDED."""
+    seed_app(ddb_table, "dpl00011", OWNER, status="ACTIVE")
+    _codepipeline()
+    assert dn.handle_event(_stage_event("dpl00011", "Source"))["created"] is True
+    out = _deploy("dpl00011")
+    assert out["data"]["trigger"] == "manual"
+    assert out["data"]["status"] == "PENDING"
+    dn.handle_event(_stage_event("dpl00011", "Deploy"))
+    dn.handle_event(_pipeline_event("dpl00011", "SUCCEEDED"))
+    deps = list_deployments("dpl00011", 20)
+    assert len(deps) == 1
+    assert deps[0]["trigger"] == "manual"
+    assert deps[0]["status"] == "SUCCEEDED"
+
+
+def test_deploy_normal_order_single_record_no_regression(ddb_table, stub_clients) -> None:
+    """정상 순서: 접수(manual PENDING, 클레임) → 스테이지/종결 이벤트 → 1건 manual SUCCEEDED."""
+    seed_app(ddb_table, "dpl00012", OWNER, status="ACTIVE")
+    _codepipeline()
+    out = _deploy("dpl00012")
+    assert out["data"]["status"] == "PENDING"
+    assert "created" not in dn.handle_event(_stage_event("dpl00012", "Source"))
+    dn.handle_event(_stage_event("dpl00012", "ValidateBuild"))
+    res = dn.handle_event(_pipeline_event("dpl00012", "SUCCEEDED"))
+    assert res["status"] == "SUCCEEDED"
+    assert "created" not in res
+    deps = list_deployments("dpl00012", 20)
+    assert len(deps) == 1
+    assert deps[0]["trigger"] == "manual"
+    assert deps[0]["deploymentId"] == out["data"]["deploymentId"]
+    claims = [i for i in ddb_table.scan()["Items"] if i["SK"].startswith("DEPLOYEXEC#")]
+    assert [c["SK"] for c in claims] == ["DEPLOYEXEC#exec-99"]
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 작업 2 — 롤백 (POST /apps/{id}/rollback)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -158,6 +249,94 @@ def test_rollback_starts_runtime_build_with_image_tag(ddb_table, stub_clients) -
     assert ov["APP_STACK_KIND"] == "runtime"
     assert ov["IMAGE_TAG"] == "sha123"
     assert ov["APP_ID"] == "rbk00001"
+    assert ov["DEPLOY_TRIGGER"] == "rollback"
+
+
+def _rollback_build_event(app_id: str, status: str, trigger: str | None = "rollback") -> dict[str, Any]:
+    env = [
+        {"name": "APP_ID", "value": app_id},
+        {"name": "APP_STACK_KIND", "value": "runtime"},
+        {"name": "IMAGE_TAG", "value": "sha123"},
+    ]
+    if trigger is not None:
+        env.append({"name": "DEPLOY_TRIGGER", "value": trigger})
+    return {
+        "detail-type": "CodeBuild Build State Change",
+        "detail": {
+            "build-status": status,
+            "project-name": f"apphub-{STAGE}-provisioner",
+            "build-id": "arn:aws:codebuild:ap-northeast-2:111122223333:build/build-77",
+            "additional-information": {"environment": {"environment-variables": env}},
+        },
+    }
+
+
+def _rollback(app_id: str, dep_id: str) -> dict[str, Any]:
+    return parse_result(
+        handler(
+            make_event(
+                "POST", f"/apps/{app_id}/rollback", user_id=OWNER, groups=["user"],
+                body={"deploymentId": dep_id},
+            )
+        )
+    )
+
+
+def test_rollback_race_build_failed_event_first_single_record(ddb_table, stub_clients, monkeypatch) -> None:
+    """StartBuild 직후 빌드 FAILED 이벤트가 접수 기록보다 먼저 처리 → 레코드 1건 rollback FAILED."""
+    from app.domain import redeploy as redeploy_mod
+
+    seed_app(ddb_table, "rbk00010", OWNER, status="ACTIVE")
+    dep_id = put_deployment(
+        app_id="rbk00010", trigger="auto", status="SUCCEEDED", commit_sha="sha123", commit_message="v1"
+    )["deploymentId"]
+    _ecr(exists=True)
+    _codebuild()
+    _ssm_platform()
+    real_start = redeploy_mod.start_provisioner_build
+
+    def start_then_event(project: str, env: dict[str, str]) -> str:
+        build_id = real_start(project, env)
+        created = dn.handle_event(_rollback_build_event("rbk00010", "FAILED", env["DEPLOY_TRIGGER"]))
+        assert created["created"] is True
+        return build_id
+
+    monkeypatch.setattr(redeploy_mod, "start_provisioner_build", start_then_event)
+    out = _rollback("rbk00010", dep_id)
+    assert out["status"] == 200
+    assert out["data"]["trigger"] == "rollback"
+    assert out["data"]["status"] == "FAILED"
+    assert out["data"]["failureCategory"] == "DEPLOY_FAILED"
+    assert out["data"]["commitMessage"] == "v1"  # 접수 쪽이 비어 있던 커밋 메시지를 보정
+    rollbacks = [d for d in list_deployments("rbk00010", 20) if d.get("buildId") == "build-77"]
+    assert len(rollbacks) == 1
+    assert len(list_deployments("rbk00010", 20)) == 2  # 원래 성공 배포 + 롤백 1건
+
+
+def test_rollback_normal_order_event_advances_existing(ddb_table, stub_clients) -> None:
+    """정상 순서: 접수(PENDING, 클레임) → 빌드 이벤트(DEPLOY_TRIGGER 있음) → 새로 만들지 않고 전진."""
+    seed_app(ddb_table, "rbk00011", OWNER, status="ACTIVE")
+    dep_id = _seed_succeeded_deployment("rbk00011", "sha123")
+    _ecr(exists=True)
+    _codebuild()
+    _ssm_platform()
+    assert _rollback("rbk00011", dep_id)["data"]["status"] == "PENDING"
+    res = dn.handle_event(_rollback_build_event("rbk00011", "FAILED"))
+    assert "created" not in res
+    assert res["status"] == "FAILED"
+    rollbacks = [d for d in list_deployments("rbk00011", 20) if d["trigger"] == "rollback"]
+    assert len(rollbacks) == 1
+    assert rollbacks[0]["status"] == "FAILED"
+
+
+def test_build_event_without_trigger_env_and_no_record_skipped(ddb_table, stub_clients) -> None:
+    """DEPLOY_TRIGGER 없는 빌드(이전 버전에서 시작 등)는 trigger 판단 불가 → 레코드 만들지 않음."""
+    seed_app(ddb_table, "rbk00012", OWNER, status="ACTIVE")
+    res = dn.handle_event(_rollback_build_event("rbk00012", "FAILED", trigger=None))
+    assert res["reason"] == "no-record-skipped"
+    assert list_deployments("rbk00012", 20) == []
+    res = dn.handle_event(_rollback_build_event("rbk00012", "FAILED", trigger="manual"))
+    assert res["reason"] == "no-record-skipped"
 
 
 def test_rollback_unknown_deployment_404(ddb_table, stub_clients) -> None:

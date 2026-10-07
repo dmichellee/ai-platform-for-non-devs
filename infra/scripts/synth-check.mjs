@@ -11,13 +11,23 @@ import { fileURLToPath } from "node:url";
 //  CI synth는 실제 배포가 아니므로 결정적 더미 값을 넣는다(deploy.sh가 넣는 실제 값과 무관).
 const SYNTH_ACCOUNT = "123456789012";
 const SYNTH_REGION = "ap-northeast-2";
-const args = [
-  "cdk", "synth",
+const base = [
+  "cdk", "synth", "--quiet",
   "-c", "stage=dev",
-  "-c", "domain=apps-dev.example.test",
-  "-c", "hostedZoneId=Z0SYNTHCHECK00000",
   "-c", `account=${SYNTH_ACCOUNT}`,
   "-c", `region=${SYNTH_REGION}`,
+];
+const platformCtx = [
+  "-c", "domain=apps-dev.example.test",
+  "-c", "hostedZoneId=Z0SYNTHCHECK00000",
+];
+// 엔트리(bin/apphub.ts)의 모드별 합성을 모두 확인한다:
+//  플랫폼 public(기본) / 플랫폼 private(D19) / ALB 증설(D20, domain 불필요).
+const variants = [
+  { name: "platform(public)", args: [...base, ...platformCtx] },
+  { name: "platform(private)", args: [...base, ...platformCtx, "-c", "frontendMode=private"] },
+  { name: "alb-shard(internet-1)", args: [...base, "-c", "albShard=true", "-c", "albScheme=internet", "-c", "albIndex=1"] },
+  { name: "alb-shard(internal-2)", args: [...base, "-c", "albShard=true", "-c", "albScheme=internal", "-c", "albIndex=2"] },
 ];
 
 // VPC(maxAzs)는 계정 AZ를 context provider로 lookup 한다. CI엔 자격증명/캐시가 없어(그리고 자격증명이
@@ -33,14 +43,18 @@ const azVal = [`${SYNTH_REGION}a`, `${SYNTH_REGION}b`];
 const hadCtxFile = existsSync(ctxFile);
 const originalCtx = hadCtxFile ? readFileSync(ctxFile, "utf8") : null;
 
-let res;
+const results = [];
 try {
   const merged = hadCtxFile ? JSON.parse(originalCtx) : {};
   // 기존 실계정 캐시는 건드리지 않고 더미 계정 AZ만 추가한다(원복으로 완전 복구).
   merged[azKey] = azVal;
   writeFileSync(ctxFile, JSON.stringify(merged, null, 2));
 
-  res = spawnSync("npx", args, { encoding: "utf8", cwd: infraDir });
+  for (const v of variants) {
+    const r = spawnSync("npx", v.args, { encoding: "utf8", cwd: infraDir });
+    results.push({ name: v.name, res: r });
+    if (r.status !== 0) break;
+  }
 } finally {
   // 원복: 파일이 원래 있었으면 원본 내용으로, 없었으면 삭제.
   if (hadCtxFile) {
@@ -50,14 +64,17 @@ try {
   }
 }
 
-const out = `${res.stdout ?? ""}${res.stderr ?? ""}`;
-process.stdout.write(out);
-
-if (res.status === 0) {
-  process.exit(0);
+let failed = 0;
+for (const { name, res } of results) {
+  const out = `${res.stdout ?? ""}${res.stderr ?? ""}`;
+  process.stdout.write(`\n[synth:ci] ── ${name} ──\n${out}`);
+  if (res.status === 0) {
+    console.log(`[synth:ci] ${name} OK`);
+  } else if (/This app contains no stacks/.test(out)) {
+    console.log(`[synth:ci] ${name}: 빈 App — 스택 없음은 정상. 성공 처리.`);
+  } else {
+    console.log(`[synth:ci] ${name} 실패(exit ${res.status})`);
+    failed = res.status ?? 1;
+  }
 }
-if (/This app contains no stacks/.test(out)) {
-  console.log("[synth:ci] 빈 App(M1 골격) — 스택 없음은 정상. 성공 처리.");
-  process.exit(0);
-}
-process.exit(res.status ?? 1);
+process.exit(failed);

@@ -17,6 +17,7 @@ import {
 } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import { resourcePrefix } from "../config";
+import { albParamName, schemeSlug, type AlbSsmKey } from "../alb-keys";
 import type { AppRuntimeParams } from "./app-params";
 
 /**
@@ -25,7 +26,7 @@ import type { AppRuntimeParams } from "./app-params";
  * 포함(전부 앱별 — 앱 삭제 = 이 스택 삭제로 완결):
  *  - ECS Fargate 태스크 정의(프리셋 cpu/mem 주입) + 서비스
  *  - Target Group(/health 헬스체크) + 공유 ALB 리스너 규칙(host 기반, priority 파라미터 주입)
- *  - Route53 레코드(scheme별 public/private zone alias)
+ *  - Route53 레코드(internal: private zone / internet-facing: public+private zone — 배정 ALB alias, D3)
  *  - 앱 태스크 역할(권한 템플릿 정책 주입) + 실행 역할
  *  - 로그 그룹(retention 30, 스택 삭제 시 함께)
  *  - EventBridge Scheduler 2개(가동 스케줄 시작/종료)
@@ -57,13 +58,23 @@ export class AppRuntime extends Construct {
     const netSsm = (key: string): string =>
       ssm.StringParameter.valueForStringParameter(this, `/apphub/${p.stage}/network/${key}`);
 
+    // 배정된 ALB(D20): scheme + albIndex로 `/network/alb/{slug}/{n}/*` 키를 읽는다(계약 §6).
+    //  n=0은 network 스택이, n≥1은 증설 스택(apphub-{stage}-alb-{slug}-{n})이 같은 키 체계로 발행한다.
+    //  SG는 증설 ALB도 network의 scheme별 SG를 재사용하므로 scheme 고정 키 그대로.
+    const albIndex = p.albIndex ?? 0;
+    const albSsm = (key: AlbSsmKey): string =>
+      ssm.StringParameter.valueForStringParameter(this, albParamName(p.stage, schemeSlug(p.scheme), albIndex, key));
+
     const vpcId = netSsm("vpc-id");
-    const albDns = netSsm(isInternal ? "internal-alb-dns" : "internet-alb-dns");
-    const albZoneId = netSsm(isInternal ? "internal-alb-canonical-zone-id" : "internet-alb-canonical-zone-id");
-    const listenerArn = netSsm(isInternal ? "internal-https-listener-arn" : "internet-https-listener-arn");
+    const albDns = albSsm("alb-dns");
+    const albZoneId = albSsm("alb-canonical-zone-id");
+    const listenerArn = albSsm("https-listener-arn");
+    // ALB full name은 요청 기반 스케일링·유휴 알람에서만 필요 → 필요할 때만 SSM 참조(불필요한 CFN 파라미터 방지).
+    const albFullName = (): string => albSsm("alb-full-name");
     const albSgId = netSsm(isInternal ? "internal-alb-sg-id" : "internet-alb-sg-id");
     const appTaskSgId = netSsm("app-task-sg-id");
-    const hostedZoneId = netSsm(isInternal ? "private-hosted-zone-id" : "public-hosted-zone-id");
+    const privateZoneId = netSsm("private-hosted-zone-id");
+    const publicZoneId = netSsm("public-hosted-zone-id");
     const appsDomain = ssm.StringParameter.valueForStringParameter(
       this,
       `/apphub/${p.stage}/network/apps-domain`,
@@ -244,11 +255,10 @@ export class AppRuntime extends Construct {
         //  synth 실패(QA F-3). ALBRequestCountPerTarget predefined metric + resourceLabel을 명시한
         //  TargetTrackingScalingPolicy를 직접 구성해 attach 정적검증을 우회하면서 실제 요청기반 스케일링을 얻는다.
         //  resourceLabel = "{ALB full-name}/{TG full-name}" (ALB full-name은 network SSM, TG는 이 construct).
-        const albFullName = netSsm(isInternal ? "internal-alb-full-name" : "internet-alb-full-name");
         new appscaling.TargetTrackingScalingPolicy(this, "ReqScaling", {
           scalingTarget: scaling,
           predefinedMetric: appscaling.PredefinedMetric.ALB_REQUEST_COUNT_PER_TARGET,
-          resourceLabel: `${albFullName}/${this.targetGroup.targetGroupFullName}`,
+          resourceLabel: `${albFullName()}/${this.targetGroup.targetGroupFullName}`,
           targetValue: p.scaleThreshold,
         });
       }
@@ -307,22 +317,37 @@ export class AppRuntime extends Construct {
       ];
     }
 
-    // ── Route53 레코드 (scheme별 zone alias) ────────────────────────────────
-    // ALB 실체를 fromLookup 없이 DNS + canonical zone id(둘 다 network SSM)로 alias 대상 구성.
+    // ── Route53 레코드 (D3 — 배정된 ALB alias) ───────────────────────────────
+    // ALB 실체를 fromLookup 없이 DNS + canonical zone id(둘 다 ALB별 SSM)로 alias 대상 구성.
     //  route53_targets.LoadBalancerTarget은 ILoadBalancerV2 실체를 요구하므로,
-    //  IAliasRecordTarget을 직접 구현해 SSM 토큰 값만으로 A/AAAA alias를 만든다.
-    const zone = route53.HostedZone.fromHostedZoneAttributes(this, "Zone", {
-      hostedZoneId,
-      zoneName: appsDomain,
-    });
+    //  IAliasRecordTarget을 직접 구현해 SSM 토큰 값만으로 A alias를 만든다.
+    //  - internal 앱       : private zone 1개.
+    //  - internet-facing 앱: public zone + private zone 2개(버그 C). 사내 DNS가 {appsDomain}을 VPC
+    //    Resolver로 포워딩하면 private zone만 보이므로 양쪽에 같은 ALB alias를 둔다(PLATFORM-ENGINEERING 5.2).
+    //  논리 ID "AliasA"/"Zone"은 기존 레코드(scheme의 주 zone)를 그대로 유지(교체 방지). 추가분만 신규 ID.
     const albAliasTarget: route53.IAliasRecordTarget = {
       bind: () => ({ dnsName: albDns, hostedZoneId: albZoneId }),
     };
+    const zone = route53.HostedZone.fromHostedZoneAttributes(this, "Zone", {
+      hostedZoneId: isInternal ? privateZoneId : publicZoneId,
+      zoneName: appsDomain,
+    });
     new route53.ARecord(this, "AliasA", {
       zone,
       recordName: p.subdomain,
       target: route53.RecordTarget.fromAlias(albAliasTarget),
     });
+    if (!isInternal) {
+      const privateZone = route53.HostedZone.fromHostedZoneAttributes(this, "PrivateZone", {
+        hostedZoneId: privateZoneId,
+        zoneName: appsDomain,
+      });
+      new route53.ARecord(this, "AliasAPrivate", {
+        zone: privateZone,
+        recordName: p.subdomain,
+        target: route53.RecordTarget.fromAlias(albAliasTarget),
+      });
+    }
     void route53_targets;
 
     // ── EventBridge Scheduler 2개 (가동 스케줄 — DESIGN 3.5) ─────────────────
@@ -411,13 +436,12 @@ export class AppRuntime extends Construct {
     //  sleep-transition Lambda를 호출한다(alarmName에서 appId 파싱, D-M5-03). 앱 삭제 = 이 알람 삭제.
     //  지표: 앱 TG의 RequestCountPerTarget(TG+ALB 차원). ALB full name은 network SSM에서 읽는다.
     if (p.sleepMode !== "always-on") {
-      const albFullName = netSsm(isInternal ? "internal-alb-full-name" : "internet-alb-full-name");
       const idleMetric = new cw.Metric({
         namespace: "AWS/ApplicationELB",
         metricName: "RequestCountPerTarget",
         dimensionsMap: {
           TargetGroup: this.targetGroup.targetGroupFullName,
-          LoadBalancer: albFullName,
+          LoadBalancer: albFullName(),
         },
         statistic: "Sum",
         period: Duration.minutes(5),

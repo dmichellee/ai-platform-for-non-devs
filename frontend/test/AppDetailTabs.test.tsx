@@ -65,8 +65,11 @@ const MIXED_DEPS: Deployment[] = [
 ];
 
 function metricsWith(points: number): AppMetrics {
-  const mk = (base: number): { t: number; v: number }[] =>
-    Array.from({ length: points }, (_, i) => ({ t: 1_700_000_000_000 + i * 60_000, v: base + (i % 5) }));
+  const mk = (base: number): { t: string; v: number }[] =>
+    Array.from({ length: points }, (_, i) => ({
+      t: new Date(1_700_000_000_000 + i * 60_000).toISOString(),
+      v: base + (i % 5),
+    }));
   return { range: "1h", series: { requests: mk(100), cpu: mk(40), memory: mk(55) } };
 }
 const EMPTY_METRICS: AppMetrics = { range: "1h", series: { requests: [], cpu: [], memory: [] } };

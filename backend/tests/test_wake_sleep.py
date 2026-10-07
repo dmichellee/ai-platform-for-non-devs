@@ -31,6 +31,8 @@ def _ssm() -> SsmStub:
         {
             f"/apphub/{STAGE}/network/internal-https-listener-arn": LISTENER,
             f"/apphub/{STAGE}/network/waker-tg-arn": WAKER_TG,
+            # D20: ALB별 Waker TG(n=0 internal 은 신규 TG — legacy 폴백 없음, 계약 §1.2).
+            f"/apphub/{STAGE}/network/alb/internal/0/waker-tg-arn": WAKER_TG,
             f"/apphub/{STAGE}/network/apps-domain": "apps.example.com",
         }
     )

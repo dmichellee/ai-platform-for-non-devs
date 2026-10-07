@@ -10,9 +10,9 @@ from __future__ import annotations
 from typing import Any
 
 from ..data.apps import get_app, set_runtime_state
-from ..integrations.ssm import listener_arn_for_scheme, network_param
+from ..integrations.ssm import network_param
 from . import stage
-from .listener_rule import transition_listener_rule
+from .listener_rule import app_alb_routing, transition_listener_rule
 from .target_group import find_app_target_group_arn
 
 
@@ -65,15 +65,15 @@ def handle_task_state_change(event: dict[str, Any]) -> dict[str, Any]:
     app_tg_arn = find_app_target_group_arn(st, app_id)
     if not app_tg_arn:
         return {"appId": app_id, "reason": "app-tg-not-found"}
-    listener_arn = listener_arn_for_scheme(st, app["scheme"])
-    waker_tg_arn = network_param(st, "waker-tg-arn")
+    # App.albIndex 기준 ALB(D20) — listener·waker TG 는 `/network/alb/{slug}/{n}/*`.
+    routing = app_alb_routing(st, app, need_waker=False)
     domain = network_param(st, "apps-domain")
     host = f"{app['subdomain']}.{domain}"
     res = transition_listener_rule(
-        listener_arn=listener_arn,
+        listener_arn=routing["listenerArn"],
         host=host,
         app_target_group_arn=app_tg_arn,
-        waker_target_group_arn=waker_tg_arn,
+        waker_target_group_arn=routing["wakerTgArn"],
         to="app",
     )
     if not res.get("ruleNotFound") and app.get("runtimeState") != "RUNNING":

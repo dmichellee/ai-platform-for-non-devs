@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import pytest
 from app.data.deployments import list_deployments
 from app.handler import handler
 from botocore.exceptions import ClientError

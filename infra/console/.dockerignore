@@ -1,0 +1,4 @@
+.gitignore
+.dockerignore
+site/.gitkeep
+site/config.json

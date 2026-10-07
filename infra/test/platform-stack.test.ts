@@ -90,27 +90,23 @@ describe("platform 스택", () => {
       });
     });
 
-    it("SPA 클라이언트 콜백/로그아웃 URL이 CloudFront 도메인(origin 루트)을 참조한다", () => {
-      // redirect_mismatch 회귀 방지: SPA client(GenerateSecret:false)의 Callback/Logout URL은
-      //  프론트 AuthContext가 보내는 redirect_uri(`window.location.origin`, origin 루트)와 1바이트까지
-      //  일치해야 한다. CloudFront 도메인은 같은 스택 참조이므로 Fn::Join 조각에 나타난다.
+    it("[D21] SPA 클라이언트는 USER_PASSWORD_AUTH 허용 + Hosted UI OAuth 비활성 + 토큰 폐기 활성", () => {
+      // 자체 로그인 화면이 cognito-idp를 직접 호출(InitiateAuth USER_PASSWORD_AUTH/REFRESH_TOKEN_AUTH,
+      //  RevokeToken). OAuth 플로우·콜백 URL은 플랫폼 로그인에 쓰지 않는다(D21).
       const clients = template.findResources("AWS::Cognito::UserPoolClient");
       const spa = Object.values(clients).find(
         (c) => (c.Properties as Record<string, unknown>)["GenerateSecret"] === false,
       );
       expect(spa, "SPA client(GenerateSecret:false)가 존재해야 함").toBeDefined();
       const props = spa!.Properties as Record<string, unknown>;
-      const callbackJson = JSON.stringify(props["CallbackURLs"]);
-      const logoutJson = JSON.stringify(props["LogoutURLs"]);
-      // CloudFront distribution DomainName 참조(GetAtt) 조각이 콜백/로그아웃 URL에 포함된다.
-      expect(callbackJson).toContain("DomainName");
-      expect(logoutJson).toContain("DomainName");
-      // origin 루트여야 한다 — `/callback`이나 `/oauth2/idpresponse` 같은 경로가 붙으면 안 된다.
-      expect(callbackJson).not.toContain("/callback");
-      expect(callbackJson).not.toContain("/oauth2/idpresponse");
-      // dev는 로컬 개발 origin(http://localhost:5173)도 트레일링슬래시 없이 허용한다.
-      expect(callbackJson).toContain("http://localhost:5173");
-      expect(callbackJson).not.toContain("http://localhost:5173/");
+      expect(props["ExplicitAuthFlows"]).toEqual(
+        expect.arrayContaining(["ALLOW_USER_PASSWORD_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"]),
+      );
+      expect(props["AllowedOAuthFlowsUserPoolClient"]).toBe(false);
+      expect(props["AllowedOAuthFlows"]).toBeUndefined();
+      expect(props["CallbackURLs"]).toBeUndefined();
+      expect(props["LogoutURLs"]).toBeUndefined();
+      expect(props["EnableTokenRevocation"]).toBe(true);
     });
 
     it("ALB 인증용 app-auth 클라이언트는 SPA와 별개(시크릿 O, /oauth2/idpresponse 콜백)", () => {
@@ -211,7 +207,7 @@ describe("platform 스택", () => {
         }
       });
 
-      it("UNAUTHORIZED GatewayResponse의 Allow-Origin은 CloudFront 도메인(GetAtt)을 참조한다", () => {
+      it("UNAUTHORIZED GatewayResponse의 Allow-Origin은 콘솔 주소(https://console.{appsDomain})다 (D19)", () => {
         const responses = template.findResources("AWS::ApiGateway::GatewayResponse");
         const unauthorized = Object.values(responses).find(
           (r) => (r.Properties as Record<string, unknown>)["ResponseType"] === "UNAUTHORIZED",
@@ -220,11 +216,9 @@ describe("platform 스택", () => {
         const params = (unauthorized!.Properties as Record<string, Record<string, unknown>>)[
           "ResponseParameters"
         ];
-        // spaOriginUrl == `https://${distribution.distributionDomainName}` 이므로 도메인 참조가 join 조각에 온다.
-        const originJson = JSON.stringify(
-          params["gatewayresponse.header.Access-Control-Allow-Origin"],
+        expect(params["gatewayresponse.header.Access-Control-Allow-Origin"]).toBe(
+          "'https://console.apps-dev.example.test'",
         );
-        expect(originJson).toContain("DomainName");
       });
     });
   });
@@ -346,6 +340,16 @@ describe("platform 스택", () => {
         "DeployNotifyElbDescribe", // deploy-notify: ELB Describe (리소스 레벨 미지원 read-only, 잠든 앱 재정합)
         "AppTaskDefRead", // API: ecs:DescribeTaskDefinition (리소스 레벨 미지원 read-only, 재배포 커밋 폴백)
       ]);
+      // CDK 내장 커스텀 리소스(SID 없음) 예외 — D19 public 모드 us-east-1 콘솔 인증서(DnsValidatedCertificate).
+      //  acm:RequestCertificate는 생성 시점이라 리소스 레벨 미지원, 대상 인증서 ARN도 사전에 알 수 없다.
+      //  액션 집합이 정확히 이 범위 안일 때만 허용(다른 액션이 섞이면 실패).
+      const allowedStarActionSets: ReadonlyArray<ReadonlySet<string>> = [
+        new Set(["acm:RequestCertificate", "acm:DescribeCertificate", "acm:DeleteCertificate", "acm:AddTagsToCertificate"]),
+        new Set(["route53:GetChange"]),
+      ];
+      const actionsOf = (a: unknown): string[] => (Array.isArray(a) ? a.map(String) : [String(a)]);
+      const isAllowedCdkInternal = (a: unknown): boolean =>
+        allowedStarActionSets.some((set) => actionsOf(a).every((x) => set.has(x)));
       let star = 0;
       let starWithCondition = 0;
       const unexpected: string[] = [];
@@ -353,7 +357,7 @@ describe("platform 스택", () => {
         const doc = (
           pol.Properties as {
             PolicyDocument?: {
-              Statement?: Array<{ Sid?: string; Resource?: unknown; Condition?: unknown }>;
+              Statement?: Array<{ Sid?: string; Action?: unknown; Resource?: unknown; Condition?: unknown }>;
             };
           }
         ).PolicyDocument;
@@ -361,7 +365,8 @@ describe("platform 스택", () => {
           if (isStar(st.Resource)) {
             star++;
             if (st.Condition) starWithCondition++;
-            if (!(typeof st.Sid === "string" && allowedStarSids.has(st.Sid))) {
+            const sidOk = typeof st.Sid === "string" && allowedStarSids.has(st.Sid);
+            if (!sidOk && !(st.Sid === undefined && isAllowedCdkInternal(st.Action))) {
               unexpected.push(String(st.Sid ?? "<no-sid>"));
             }
           }
@@ -640,7 +645,8 @@ describe("platform 스택", () => {
       expect(JSON.stringify(ssmSt[0].Resource)).toContain("parameter/apphub/dev/network/*");
       const mr = stmtsBySid("DeployNotifyElbModifyRule");
       expect(mr.length).toBe(1);
-      expect(JSON.stringify(mr[0].Resource)).toContain("listener-rule/app/*");
+      // D20 계약 §7: 플랫폼 ALB(n=0 + 증설 `apphub-dev-{slug}-alb-{n}`) 접두어로 한정.
+      expect(JSON.stringify(mr[0].Resource)).toContain("listener-rule/app/apphub-dev-*/*");
       const cg = stmtsBySid("DeployNotifyCognitoDescribeClient");
       expect(cg.length).toBe(1);
       expect(asArray(cg[0].Action)).toEqual(["cognito-idp:DescribeUserPoolClient"]);

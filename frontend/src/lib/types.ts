@@ -52,7 +52,7 @@ export interface App {
   presetId: string;
   permissionTemplateId: string;
   scheme: Scheme;
-  vpcId: string;
+  // vpcId 없음 — VPC 선택 기능 폐기(플랫폼 VPC 단일 배치). 백엔드 응답에 없다(계약).
   autoDeployEnabled: boolean;
   sleepMode: SleepMode;
   schedule?: Schedule;
@@ -66,6 +66,7 @@ export interface App {
   failureDetail?: string; // 기술 상세 — admin 응답에만 포함(user 응답에는 없음)
   albArn?: string; // 내부용, 화면 미노출
   rulePriority?: number; // 내부용
+  albIndex?: number; // 내부용, 화면 미노출 — 배정된 ALB 번호(없으면 0으로 간주). delta §8
   cognitoProtect: boolean;
   createdAt: string;
   updatedAt: string;
@@ -81,6 +82,7 @@ export interface Deployment {
   failureCategory?: FailureCategory;
   pipelineExecutionId?: string;
   logsLocation?: string;
+  buildId?: string; // rollback(재배포) 접수 시 기록 — 내부 추적용, 화면 미노출
   createdAt: string;
   updatedAt: string;
   note?: string; // POST deploy/rollback 응답에만
@@ -152,11 +154,27 @@ export interface AdminSettings {
   updatedAt?: string;
 }
 
+// GET /admin/alb-registry 항목 — delta §8 (D20 ALB 증설).
+// ACTIVE: 운영 중 ALB. PROVISIONING: 증설 대기(albArn·vpcId 없음, ruleCount 0 또는 없음).
+export type AlbStatus = "ACTIVE" | "PROVISIONING";
+export type SchemeSlug = "internet" | "internal";
+
 export interface AlbRegistry {
-  albArn: string;
+  albArn?: string; // PROVISIONING 항목에는 없다
   scheme: Scheme;
-  vpcId: string;
+  schemeSlug: SchemeSlug;
+  index: number; // 0 = 기본 ALB, 1 이상 = 증설
+  status: AlbStatus;
   ruleCount: number;
+  ruleLimit: number; // 90 (ALB_RULE_LIMIT)
+  vpcId?: string;
+}
+
+// POST /admin/apps/{id}/stop 응답 — 계약: {appId, runtimeState:"SLEEPING", stopped}.
+export interface AdminStopResult {
+  appId: string;
+  runtimeState: "SLEEPING";
+  stopped: boolean;
 }
 
 export interface PlatformUser {
@@ -178,7 +196,7 @@ export interface LogEvent {
 export type MetricRange = "1h" | "6h" | "24h" | "7d";
 
 export interface MetricPoint {
-  t: number; // epoch ms (버킷 시작 시각)
+  t: string; // ISO8601 UTC("2026-07-15T10:05:00Z") — 버킷 시작 시각(계약). 시간 오름차순.
   v: number; // requests=요청 수(정수), cpu/memory=사용률 백분율(0~100)
 }
 
@@ -221,8 +239,7 @@ export interface CreateAppRequest {
   presetId: string;
   permissionTemplateId: string;
   scheme: Scheme;
-  // 네트워크(VPC)는 플랫폼이 자동 배치한다. 계약상 optional — 미전송 또는 "platform" 고정.
-  vpcId?: string;
+  // vpcId 는 보내지 않는다 — 네트워크는 플랫폼이 자동 배치(계약: 서버는 받아도 무시).
   autoDeployEnabled?: boolean;
   sleepMode: SleepMode;
   schedule?: Schedule;

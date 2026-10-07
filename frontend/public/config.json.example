@@ -1,12 +1,13 @@
 {
-  "_comment": "deploy.sh가 stack-outputs(platform)로 이 파일을 생성해 SPA 버킷에 config.json 으로 업로드한다. mock=false면 실서비스.",
+  "_comment": "deploy.sh가 stack-outputs(platform)로 이 파일을 생성해 SPA에 config.json 으로 올린다(public: S3, private: 콘솔 nginx가 env로 생성). mock=false면 실서비스.",
   "apiUrl": "https://REPLACE.execute-api.ap-northeast-2.amazonaws.com/dev",
   "userPoolId": "ap-northeast-2_REPLACE",
   "userPoolClientId": "REPLACE_SPA_CLIENT_ID",
-  "cognitoDomain": "apphub-dev-ACCOUNT.auth.ap-northeast-2.amazoncognito.com",
   "region": "ap-northeast-2",
+  "_cognitoIdpEndpoint_comment": "platform Output CognitoIdpEndpoint. public 모드는 공용 주소, private 모드는 cognito-idp VPC 엔드포인트 주소. 생략하면 https://cognito-idp.{region}.amazonaws.com/ 로 폴백. (cognitoDomain 은 더 이상 쓰지 않음 — 있어도 무시)",
+  "cognitoIdpEndpoint": "https://cognito-idp.ap-northeast-2.amazonaws.com/",
+  "appsDomain": "apps-dev.example.com",
   "stage": "dev",
-  "_kiroConfigUrl_comment": "선택. 없으면 SPA가 기본 경로 /kiro-config/kiro-config.zip 로 폴백한다. platform Output KiroConfigUrlPath 값을 그대로 넣으면 됨(CloudFront 같은 오리진 서빙).",
-  "kiroConfigUrl": "/kiro-config/kiro-config.zip",
+  "_kiroConfigUrl_comment": "선택. 없으면 SPA가 기본 경로 /kiro-config/kiro-config-mac.zip, /kiro-config/kiro-config-windows.zip 로 폴백한다.",
   "mock": false
 }

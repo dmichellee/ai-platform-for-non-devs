@@ -7,6 +7,7 @@ import { ApiError, type ApiClient } from "../lib/api.js";
 import { computeOwnerPrefix, type UserSession } from "../auth/tokens.js";
 import type {
   AdminSettings,
+  AdminStopResult,
   AlbRegistry,
   App,
   AppMetrics,
@@ -93,8 +94,6 @@ export class MockApiClient implements ApiClient {
       presetId: b.presetId,
       permissionTemplateId: b.permissionTemplateId,
       scheme: b.scheme,
-      // 네트워크는 플랫폼 자동 배치 — 프론트가 vpcId 를 안 보내거나 "platform" 을 보내도 서버가 기본값 처리.
-      vpcId: b.vpcId ?? "platform",
       autoDeployEnabled: b.autoDeployEnabled ?? true,
       sleepMode: b.sleepMode,
       ...(b.schedule ? { schedule: b.schedule } : {}),
@@ -517,15 +516,16 @@ export class MockApiClient implements ApiClient {
     return clone(this.alb);
   }
   // POST /admin/apps/{id}/stop — 강제 중지(재우기). ACTIVE 앱만 잠재울 수 있다.
-  async adminStopApp(appId: string): Promise<App> {
+  async adminStopApp(appId: string): Promise<AdminStopResult> {
     await delay();
     const app = this.findApp(appId);
     if (app.status !== "ACTIVE") {
       throw new ApiError("INVALID_STATE", "준비된 앱만 재울 수 있어요.", 409);
     }
+    const stopped = app.runtimeState !== "SLEEPING";
     app.runtimeState = "SLEEPING";
     app.updatedAt = new Date().toISOString();
-    return clone(app);
+    return { appId, runtimeState: "SLEEPING", stopped };
   }
   // DELETE /admin/apps/{id} — 관리자에 의한 타인 앱 삭제(소유자 검사 없음). 상태 기계는 deleteApp 과 동일.
   async adminDeleteApp(appId: string): Promise<{ appId: string; status: "DELETING" }> {

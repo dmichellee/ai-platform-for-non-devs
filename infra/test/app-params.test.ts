@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { App } from "aws-cdk-lib";
-import { secretParams } from "../lib/constructs/app-params";
+import { ctxAlbIndex, secretParams } from "../lib/constructs/app-params";
 
 /**
  * L2 — app-runtime 컨텍스트 loader의 시크릿 키(D8, deploy.yml 계약).
@@ -48,5 +48,19 @@ describe("secretParams — secretArn / secretKeysB64", () => {
   it("폐기된 secretArns 컨텍스트는 무시한다", () => {
     const app = new App({ context: { secretArns: b64({ API_KEY: ARN }) } });
     expect(secretParams(app)).toEqual({ secretKeys: [] });
+  });
+});
+
+describe("ctxAlbIndex — D20 albIndex 컨텍스트(계약 §5·§6)", () => {
+  it("미지정이면 0(기존 앱)", () => {
+    expect(ctxAlbIndex(new App())).toBe(0);
+  });
+  it("정수 문자열을 숫자로", () => {
+    expect(ctxAlbIndex(new App({ context: { albIndex: "2" } }))).toBe(2);
+  });
+  it("음수·비정수·문자는 실패(잘못된 ALB에 규칙을 붙이지 않음)", () => {
+    for (const v of ["-1", "1.5", "abc"]) {
+      expect(() => ctxAlbIndex(new App({ context: { albIndex: v } }))).toThrow(/albIndex/);
+    }
   });
 });

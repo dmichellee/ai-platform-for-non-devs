@@ -9,15 +9,17 @@ import { base64UrlEncode } from "../src/auth/tokens.js";
 import type { RuntimeConfig } from "../src/lib/config.js";
 
 /**
- * AuthContext 세션 갱신/만료 (문제 1) — 실서비스 config(mock=false)에서
- * refresh_token으로 조용히 갱신하고, 실패 시 세션 종료 + 로그인(/login) 이동 + 안내를 남긴다.
+ * AuthContext 세션 갱신/만료 (문제 1 / D21) — 실서비스 config(mock=false)에서
+ * refresh_token으로 조용히 갱신(cognito-idp InitiateAuth REFRESH_TOKEN_AUTH)하고,
+ * 실패 시 세션 종료 + 로그인(/login) 이동 + 안내를 남긴다.
  */
 
 const REAL_CONFIG: RuntimeConfig = {
   apiUrl: "https://api.test",
   userPoolId: "pool-1",
   userPoolClientId: "client-1",
-  cognitoDomain: "auth.test.example.com",
+  region: "ap-northeast-2",
+  cognitoIdpEndpoint: "https://idp.test.example.com/",
   stage: "test",
   mock: false,
 };
@@ -68,13 +70,16 @@ function Capture(): JSX.Element {
   return <div data-session={session ? "yes" : "no"}>{notice ?? ""}</div>;
 }
 
-/** 갱신된 idToken을 돌려주는 Cognito token endpoint 응답(호출마다 새 Response — body 1회 소비 제약). */
+/** 갱신된 IdToken을 돌려주는 InitiateAuth(REFRESH_TOKEN_AUTH) 응답(호출마다 새 Response — body 1회 소비 제약). */
 function tokenEndpointOk(): Response {
   const fresh = makeIdToken("user-0001", Math.floor(Date.now() / 1000) + 3600);
-  return new Response(JSON.stringify({ id_token: fresh, token_type: "Bearer", expires_in: 3600 }), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-  });
+  return new Response(
+    JSON.stringify({
+      AuthenticationResult: { IdToken: fresh, AccessToken: "acc", ExpiresIn: 3600, TokenType: "Bearer" },
+      ChallengeParameters: {},
+    }),
+    { status: 200, headers: { "Content-Type": "application/x-amz-json-1.1" } },
+  );
 }
 
 /**
@@ -100,7 +105,7 @@ describe("AuthContext — 세션 갱신/만료", () => {
     vi.clearAllMocks();
   });
 
-  it("handleUnauthorized가 refresh 성공 시 새 토큰을 돌려주고 grant_type=refresh_token으로 요청한다", async () => {
+  it("handleUnauthorized가 refresh 성공 시 새 토큰을 돌려주고 InitiateAuth REFRESH_TOKEN_AUTH로 요청한다", async () => {
     seedExpiredSessionWithRefresh();
     fetchMock.mockImplementation(async () => tokenEndpointOk());
     render(
@@ -116,18 +121,32 @@ describe("AuthContext — 세션 갱신/만료", () => {
     });
 
     expect(token).toBeTruthy();
-    // Cognito token endpoint에 grant_type=refresh_token으로 요청했는지
+    // 로그인 API 주소로 REFRESH_TOKEN_AUTH 요청을 보냈는지 (Hosted UI /oauth2/token 미사용)
     const [url, init] = fetchMock.mock.calls[0];
-    expect(String(url)).toContain(`https://${REAL_CONFIG.cognitoDomain}/oauth2/token`);
-    expect(String(init.body)).toContain("grant_type=refresh_token");
-    expect(String(init.body)).toContain("refresh_token=refresh-XYZ");
+    expect(String(url)).toBe(REAL_CONFIG.cognitoIdpEndpoint);
+    expect(String(url)).not.toContain("/oauth2/");
+    expect(init.method).toBe("POST");
+    expect(init.headers["X-Amz-Target"]).toBe("AWSCognitoIdentityProviderService.InitiateAuth");
+    expect(init.headers["Content-Type"]).toBe("application/x-amz-json-1.1");
+    expect(JSON.parse(String(init.body))).toEqual({
+      AuthFlow: "REFRESH_TOKEN_AUTH",
+      ClientId: "client-1",
+      AuthParameters: { REFRESH_TOKEN: "refresh-XYZ" },
+    });
+    // 응답에 RefreshToken이 없으면 기존 refresh_token을 유지한다
+    const saved = JSON.parse(localStorage.getItem("apphub-session")!);
+    expect(saved.refreshToken).toBe("refresh-XYZ");
   });
 
-  it("refresh 실패(400)면 세션을 지우고 로그인 화면(/login)으로 보내며 만료 안내를 남긴다", async () => {
+  it("refresh 실패(400 NotAuthorizedException)면 세션을 지우고 로그인 화면(/login)으로 보내며 만료 안내를 남긴다", async () => {
     seedExpiredSessionWithRefresh();
     // 부트 복구도, 이후 handleUnauthorized도 모두 실패(400).
     fetchMock.mockImplementation(
-      async () => new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 }),
+      async () =>
+        new Response(
+          JSON.stringify({ __type: "NotAuthorizedException", message: "Refresh Token has been revoked" }),
+          { status: 400 },
+        ),
     );
     render(
       <AuthProvider config={REAL_CONFIG}>
@@ -182,5 +201,20 @@ describe("AuthContext — 세션 갱신/만료", () => {
       await Promise.all([probe.unauthorized(), probe.unauthorized(), probe.unauthorized()]);
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("cognitoIdpEndpoint가 없으면 region으로 공용 로그인 API 주소를 만든다", async () => {
+    seedExpiredSessionWithRefresh();
+    fetchMock.mockImplementation(async () => tokenEndpointOk());
+    const { cognitoIdpEndpoint: _omit, ...noEndpoint } = REAL_CONFIG;
+    render(
+      <AuthProvider config={noEndpoint}>
+        <Capture />
+      </AuthProvider>,
+    );
+    await waitFor(() => expect(ready).toBe(true));
+    expect(String(fetchMock.mock.calls[0]![0])).toBe(
+      "https://cognito-idp.ap-northeast-2.amazonaws.com/",
+    );
   });
 });

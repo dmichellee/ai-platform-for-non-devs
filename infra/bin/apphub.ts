@@ -1,17 +1,22 @@
 #!/usr/bin/env node
 import { App } from "aws-cdk-lib";
-import { loadConfig, parseStage, resourcePrefix, type ConfigInputs } from "../lib/config";
+import { loadConfig, parseFrontendMode, parseStage, resourcePrefix, type ConfigInputs } from "../lib/config";
 import { NetworkStack } from "../lib/network-stack";
 import { PlatformStack } from "../lib/platform-stack";
+import { AlbShardStack } from "../lib/alb-shard-stack";
+import { albShardStackName, assertAlbIndex, schemeSlug } from "../lib/alb-keys";
 import { AppPipelineStack, AppRuntimeStack } from "../lib/app-stacks";
 import { loadPipelineParams, loadRuntimeParams } from "../lib/constructs/app-params";
 
 /**
  * AppHub CDK 엔트리.
  *
- * 두 가지 모드:
- *  (1) 플랫폼 모드 (기본): `cdk synth -c stage=dev|prod`
+ * 세 가지 모드:
+ *  (1) 플랫폼 모드 (기본): `cdk synth -c stage=dev|prod -c domain=... [-c frontendMode=public|private]`
  *      → network + platform 스택 인스턴스화(관리자 deploy.sh가 배포).
+ *  (3) ALB 증설 모드(D20): `-c albShard=true -c albScheme=internet|internal -c albIndex=n(≥1)`
+ *      → `apphub-{stage}-alb-{scheme}-{n}` AlbShardStack만 synth(provisioner APP_STACK_KIND=alb).
+ *      domain 불필요 — network SSM에서 읽는다.
  *  (2) 앱 스택 모드: 컨텍스트에 `appId`가 있으면 앱별 독립 스택만 synth/deploy.
  *      → provisioner CodeBuild가 앱 파라미터를 -c 로 넘겨 실행:
  *        `cdk deploy apphub-{stage}-app-{appId}-{pipeline|runtime} -c appId=... -c appStackKind=...`
@@ -31,7 +36,22 @@ const stage = parseStage(app.node.tryGetContext("stage") ?? "dev");
 const prefix = resourcePrefix(stage);
 const appId = app.node.tryGetContext("appId") as string | undefined;
 
-if (appId) {
+const albShard = String(app.node.tryGetContext("albShard") ?? "").toLowerCase() === "true";
+
+if (albShard) {
+  // ── (3) ALB 증설 모드 (D20) ───────────────────────────────────────────────
+  const rawScheme = ctxOpt(app, "albScheme");
+  if (!rawScheme) throw new Error("ALB 증설 모드에는 -c albScheme=internet|internal 이 필요합니다.");
+  const slug = schemeSlug(rawScheme);
+  const index = assertAlbIndex(Number(ctxOpt(app, "albIndex") ?? "NaN"), { min: 1 });
+  const env = { account: resolveAccount(app), region: resolveRegion(app) };
+  new AlbShardStack(app, albShardStackName(prefix, slug, index), {
+    env,
+    stage,
+    schemeSlug: slug,
+    albIndex: index,
+  });
+} else if (appId) {
   // ── (2) 앱 스택 모드 ──────────────────────────────────────────────────────
   //  앱 스택은 domain/hostedZone을 쓰지 않는다(construct가 network SSM에서 읽음).
   //  따라서 loadConfig(domain 필수)를 호출하지 않는다 — provisioner/buildspec은 domain을
@@ -55,8 +75,11 @@ if (appId) {
   //  network/platform은 domain/hostedZone이 필요하다 → loadConfig가 주입값을 검증.
   const config = loadConfig(stage, buildConfigInputs(app));
   const env = { account: config.account, region: config.region };
-  new NetworkStack(app, `${prefix}-network`, { stage, config, env });
-  new PlatformStack(app, `${prefix}-platform`, { stage, config, env });
+  const network = new NetworkStack(app, `${prefix}-network`, { stage, config, env });
+  const platform = new PlatformStack(app, `${prefix}-platform`, { stage, config, env });
+  // platform은 network가 발행한 SSM(역할명·VPC·인증서 등)을 배포 시점에 읽는다 → 배포 순서를 명시
+  //  (Export 없는 순서 의존 — 값 변경 잠금 없음).
+  platform.addDependency(network);
 }
 
 app.synth();
@@ -84,6 +107,7 @@ function buildConfigInputs(cdkApp: App): ConfigInputs {
     account: resolveAccount(cdkApp),
     region: resolveRegion(cdkApp),
     allowedIngressCidrs,
+    frontendMode: parseFrontendMode(ctxOpt(cdkApp, "frontendMode")),
   };
 }
 

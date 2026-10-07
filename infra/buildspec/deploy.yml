@@ -94,11 +94,14 @@ phases:
         const perm = getItem({ PK: { S: "CONFIG" }, SK: { S: `PERM#${app.permissionTemplateId ?? ""}` } });
         const str = (v) => (v == null ? "" : String(v));
         const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : Number(v) || 0);
+        // D20(계약 §3.3·§5): 배정 ALB 인덱스. 없으면(기존 앱) 0.
+        const albIndex = Number.isInteger(num(app.albIndex)) && num(app.albIndex) >= 0 ? num(app.albIndex) : 0;
         // 스칼라 컨텍스트(app-params.ts ctxString/ctxNumber/ctxBool 소비).
         const scalars = {
           appId,
           subdomain: str(app.subdomain),
           scheme: str(app.scheme),
+          albIndex,
           imageTag: str(process.env.IMAGE_TAG),
           rulePriority: num(app.rulePriority),
           cpu: num(preset.cpu), memory: num(preset.memory),
@@ -149,6 +152,7 @@ phases:
           -c appStackKind=runtime \
           -c subdomain="${CTX_subdomain}" \
           -c scheme="${CTX_scheme}" \
+          -c albIndex="${CTX_albIndex}" \
           -c imageTag="${CTX_imageTag}" \
           -c rulePriority="${CTX_rulePriority}" \
           -c cpu="${CTX_cpu}" -c memory="${CTX_memory}" \

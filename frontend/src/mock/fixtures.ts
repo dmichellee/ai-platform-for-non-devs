@@ -34,7 +34,6 @@ export const mockApps: App[] = [
     presetId: "preset-medium",
     permissionTemplateId: "perm-ai",
     scheme: "internal",
-    vpcId: "vpc-01",
     autoDeployEnabled: true,
     sleepMode: "on-demand",
     envVars: { GREETING: "안녕하세요" },
@@ -57,7 +56,6 @@ export const mockApps: App[] = [
     presetId: "preset-small",
     permissionTemplateId: "perm-basic",
     scheme: "internal",
-    vpcId: "vpc-01",
     autoDeployEnabled: false,
     sleepMode: "schedule",
     schedule: { startTime: "09:00", stopTime: "19:00", days: [1, 2, 3, 4, 5], timezone: "Asia/Seoul" },
@@ -81,7 +79,6 @@ export const mockApps: App[] = [
     presetId: "preset-medium",
     permissionTemplateId: "perm-ai",
     scheme: "internal",
-    vpcId: "vpc-01",
     autoDeployEnabled: true,
     sleepMode: "on-demand",
     envVars: {},
@@ -104,7 +101,6 @@ export const mockApps: App[] = [
     presetId: "preset-small",
     permissionTemplateId: "perm-basic",
     scheme: "internal",
-    vpcId: "vpc-01",
     autoDeployEnabled: true,
     sleepMode: "always-on",
     envVars: {},
@@ -130,7 +126,6 @@ export const mockApps: App[] = [
     presetId: "preset-large",
     permissionTemplateId: "perm-basic",
     scheme: "internet-facing",
-    vpcId: "vpc-01",
     autoDeployEnabled: true,
     sleepMode: "always-on",
     envVars: {},
@@ -291,9 +286,36 @@ export const mockSettings: AdminSettings = {
   updatedAt: iso(1000 * 60 * 60 * 24 * 2),
 };
 
+// delta §8 — ACTIVE ALB(index 오름차순) + 증설 대기(PROVISIONING, albArn 없음).
 export const mockAlbRegistry: AlbRegistry[] = [
-  { albArn: "arn:mock:alb/internet-1", scheme: "internet-facing", vpcId: "vpc-01", ruleCount: 3 },
-  { albArn: "arn:mock:alb/internal-1", scheme: "internal", vpcId: "vpc-01", ruleCount: 41 },
+  {
+    albArn: "arn:aws:elasticloadbalancing:ap-northeast-2:111122223333:loadbalancer/app/apphub-dev-internet-alb/0a1b2c3d4e5f6a7b",
+    scheme: "internet-facing",
+    schemeSlug: "internet",
+    index: 0,
+    status: "ACTIVE",
+    ruleCount: 3,
+    ruleLimit: 90,
+    vpcId: "vpc-0a1b2c3d",
+  },
+  {
+    albArn: "arn:aws:elasticloadbalancing:ap-northeast-2:111122223333:loadbalancer/app/apphub-dev-internal-alb/1b2c3d4e5f6a7b8c",
+    scheme: "internal",
+    schemeSlug: "internal",
+    index: 0,
+    status: "ACTIVE",
+    ruleCount: 84,
+    ruleLimit: 90,
+    vpcId: "vpc-0a1b2c3d",
+  },
+  {
+    scheme: "internal",
+    schemeSlug: "internal",
+    index: 1,
+    status: "PROVISIONING",
+    ruleCount: 0,
+    ruleLimit: 90,
+  },
 ];
 
 export const mockUsers: PlatformUser[] = [
@@ -317,7 +339,7 @@ function series(points: number, stepMs: number, seed: number, base: number, amp:
   const end = now;
   const start = end - (points - 1) * stepMs;
   return Array.from({ length: points }, (_, i) => {
-    const t = start + i * stepMs;
+    const t = new Date(start + i * stepMs).toISOString().replace(/\.\d{3}Z$/, "Z");
     const wave = Math.sin((i + seed) / 4) * amp + Math.sin((i + seed) / 1.7) * (amp / 3);
     const drift = Math.cos((i + seed) / 9) * (amp / 2);
     const v = Math.max(0, Math.min(max, Math.round(base + wave + drift)));
