@@ -39,6 +39,35 @@ export function failureGuidance(cat?: FailureCategory): string {
   return FAILURE_GUIDANCE[cat];
 }
 
+// ── 실패 배포의 실패 칸(DEPLOY_STEPS key) — QA F-L1 ──
+// FAILED 레코드는 도달 단계를 따로 담지 않으므로 failureCategory 로 실패 칸을 정한다.
+// HEALTHCHECK_FAILED 는 빌드 단계의 스모크 테스트에서 배포 전에 잡히므로(DESIGN 3.2) "검사·빌드".
+// INTERNAL_ERROR/미상은 배포 로그 API 의 stage(VALIDATING→검사·빌드, DEPLOYING→배포)로,
+// 그것도 없으면 첫 칸("가져오기").
+export const FAILURE_STEP: Partial<Record<FailureCategory, string>> = {
+  SOURCE_UNAVAILABLE: "fetch",
+  DOCKERFILE_MISSING: "build",
+  DOCKERFILE_INVALID: "build",
+  BUILD_FAILED: "build",
+  HEALTHCHECK_FAILED: "build",
+  DEPLOY_FAILED: "deploy",
+};
+
+const STAGE_STEP: Record<"VALIDATING" | "DEPLOYING", string> = {
+  VALIDATING: "build",
+  DEPLOYING: "deploy",
+};
+
+/** 실패 칸의 DEPLOY_STEPS 인덱스. 이전 칸들은 완료로 그린다. */
+export function failedStepIndex(
+  cat?: FailureCategory,
+  stage?: "VALIDATING" | "DEPLOYING",
+): number {
+  const key = (cat && FAILURE_STEP[cat]) ?? (stage && STAGE_STEP[stage]);
+  const idx = key ? DEPLOY_STEPS.findIndex((s) => s.key === key) : -1;
+  return idx < 0 ? 0 : idx;
+}
+
 // ── runtimeState → 한국어 라벨 + 배지 톤 (design-system tokens.md 상태 색 매핑) ──
 export type BadgeTone = "running" | "sleeping" | "waking" | "fail" | "pending";
 

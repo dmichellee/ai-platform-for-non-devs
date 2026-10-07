@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { screen, fireEvent, waitFor } from "@testing-library/react";
+import { screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { DeploymentDetail } from "../src/screens/user/DeploymentDetail.js";
 import { renderWithProviders, seedSession, setHash } from "./harness.js";
 import { MockApiClient } from "../src/mock/mockApi.js";
-import { FAILURE_GUIDANCE } from "../src/lib/labels.js";
+import { FAILURE_GUIDANCE, failedStepIndex } from "../src/lib/labels.js";
+import type { DeploymentLogs, FailureCategory } from "../src/lib/types.js";
 import { mockDeployments } from "../src/mock/fixtures.js";
 
 describe("배포 상세 — 실패 유형 → 안내 문구", () => {
@@ -75,5 +76,77 @@ describe("배포 상세 — 되돌리기(롤백)", () => {
       .at(-1)!;
     fireEvent.click(confirmBtn);
     await waitFor(() => expect(rollbackSpy).toHaveBeenCalledWith("a1b2c3d4", dep.deploymentId));
+  });
+});
+
+// QA F-L1 — 실패 배포의 실패 칸은 failureCategory(→ 배포 로그 stage → 첫 칸)로 정하고, 이전 칸은 완료.
+describe("배포 상세 — 실패 칸 위치", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    seedSession("user");
+  });
+
+  const STEP_LABELS = ["가져오기", "검사·빌드", "배포", "확인"];
+
+  async function renderFailed(
+    failureCategory: FailureCategory | undefined,
+    stage: DeploymentLogs["stage"],
+  ): Promise<string[]> {
+    const base = mockDeployments["99887766"]![0]!;
+    const client = new MockApiClient();
+    const { failureCategory: _omit, ...rest } = base;
+    vi.spyOn(client, "listDeployments").mockResolvedValue([
+      { ...rest, status: "FAILED", ...(failureCategory ? { failureCategory } : {}) },
+    ]);
+    vi.spyOn(client, "getDeploymentLogs").mockResolvedValue({
+      events: [{ timestamp: 1, message: "x" }],
+      source: "validate-build",
+      ...(stage ? { stage } : {}),
+    });
+    setHash(`/apps/99887766/deployments/${encodeURIComponent(base.deploymentId)}`);
+    renderWithProviders(
+      <DeploymentDetail appId="99887766" deploymentId={base.deploymentId} />,
+      client,
+    );
+    await screen.findByText("배포 진행 상황");
+    await screen.findByRole("log");
+    const steps = within(screen.getByLabelText("배포 단계"));
+    return STEP_LABELS.map((l) => steps.getByText(l).className.replace("dstep", "").trim());
+  }
+
+  it.each<[FailureCategory, string[]]>([
+    ["SOURCE_UNAVAILABLE", ["failed", "", "", ""]],
+    ["DOCKERFILE_MISSING", ["done", "failed", "", ""]],
+    ["DOCKERFILE_INVALID", ["done", "failed", "", ""]],
+    ["BUILD_FAILED", ["done", "failed", "", ""]],
+    ["HEALTHCHECK_FAILED", ["done", "failed", "", ""]],
+    ["DEPLOY_FAILED", ["done", "done", "failed", ""]],
+  ])("%s → 실패 칸 위치", async (cat, expected) => {
+    // stage 는 분류와 어긋나게 줘도 분류가 우선한다.
+    expect(await renderFailed(cat, cat === "DEPLOY_FAILED" ? "VALIDATING" : "DEPLOYING")).toEqual(
+      expected,
+    );
+  });
+
+  it("INTERNAL_ERROR 는 배포 로그 stage 로 실패 칸을 정한다", async () => {
+    expect(await renderFailed("INTERNAL_ERROR", "DEPLOYING")).toEqual(["done", "done", "failed", ""]);
+  });
+
+  it("분류 없음 + stage VALIDATING → 검사·빌드", async () => {
+    expect(await renderFailed(undefined, "VALIDATING")).toEqual(["done", "failed", "", ""]);
+  });
+
+  it("분류도 stage 도 없으면 첫 칸", async () => {
+    expect(await renderFailed(undefined, undefined)).toEqual(["failed", "", "", ""]);
+  });
+});
+
+describe("failedStepIndex", () => {
+  it("분류 > stage > 첫 칸 순으로 정한다", () => {
+    expect(failedStepIndex("BUILD_FAILED", "DEPLOYING")).toBe(1);
+    expect(failedStepIndex("DEPLOY_FAILED")).toBe(2);
+    expect(failedStepIndex("INTERNAL_ERROR", "VALIDATING")).toBe(1);
+    expect(failedStepIndex("INTERNAL_ERROR")).toBe(0);
+    expect(failedStepIndex(undefined, undefined)).toBe(0);
   });
 });

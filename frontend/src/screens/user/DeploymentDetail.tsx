@@ -5,7 +5,7 @@
  * (GET /apps/{id}/deployments/{deploymentId}/logs). 실패 안내의 "아래 로그 마지막 부분"이 이 영역이다.
  * 진행 중인 배포면 배포 기록과 로그를 5초마다 다시 불러온다.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Check, ChevronDown, Copy, RotateCcw, ScrollText } from "lucide-react";
 import {
   BackLink,
@@ -26,6 +26,7 @@ import {
   DEPLOYMENT_LOG_EMPTY,
   DEPLOYMENT_LOG_SOURCE_LABEL,
   DEPLOY_STEPS,
+  failedStepIndex,
   failureGuidance,
 } from "../../lib/labels.js";
 
@@ -58,9 +59,15 @@ export function DeploymentDetail({
 
   const userInitial = sessionInitial(session);
   const failed = dep?.status === "FAILED";
-  // 현재 칸 = status 를 reaches 에 포함하는 단계. FAILED 는 어느 칸에도 없어 -1 → 아래에서
-  // 첫 칸을 실패로 표시한다(실패 레코드는 도달 단계를 따로 담지 않음).
-  const currentIdx = dep ? DEPLOY_STEPS.findIndex((s) => s.reaches.includes(dep.status)) : -1;
+  // 배포 로그 응답의 stage — failureCategory 로 실패 칸을 못 정할 때의 폴백(QA F-L1).
+  const [logStage, setLogStage] = useState<DeploymentLogs["stage"]>();
+  // 진행 중: 현재 칸 = status 를 reaches 에 포함하는 단계.
+  // 실패: 레코드가 도달 단계를 담지 않으므로 failureCategory(→ 로그 stage → 첫 칸)로 실패 칸을 정한다.
+  const currentIdx = !dep
+    ? -1
+    : failed
+      ? failedStepIndex(dep.failureCategory, logStage)
+      : DEPLOY_STEPS.findIndex((s) => s.reaches.includes(dep.status));
 
   return (
     <div className="wrap">
@@ -102,7 +109,7 @@ export function DeploymentDetail({
               const state = failed
                 ? i < currentIdx
                   ? "done"
-                  : i === Math.max(currentIdx, 0)
+                  : i === currentIdx
                     ? "failed"
                     : ""
                 : i < currentIdx
@@ -141,6 +148,7 @@ export function DeploymentDetail({
             deploymentId={deploymentId}
             status={dep.status}
             failed={failed}
+            onStage={setLogStage}
           />
         </>
       )}
@@ -191,11 +199,13 @@ function DeploymentLogPanel({
   deploymentId,
   status,
   failed,
+  onStage,
 }: {
   appId: string;
   deploymentId: string;
   status: Deployment["status"];
   failed: boolean;
+  onStage: (stage: DeploymentLogs["stage"]) => void;
 }): JSX.Element {
   const api = useApi();
   const inProgress = isDeploymentInProgress(status);
@@ -212,6 +222,8 @@ function DeploymentLogPanel({
   const nextToken = olderToken === null ? head.data?.nextToken : olderToken;
 
   const events = useMemo(() => mergeNewestFirst(head.data?.events ?? [], older), [head.data, older]);
+  const stage = head.data?.stage;
+  useEffect(() => onStage(stage), [stage, onStage]);
   const sourceLabel = head.data ? DEPLOYMENT_LOG_SOURCE_LABEL[head.data.source] : "배포 단계 로그";
 
   const loadMore = async (): Promise<void> => {
