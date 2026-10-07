@@ -50,6 +50,15 @@ def table_name() -> str:
     return _req("TABLE_NAME")
 
 
+def frontend_mode() -> str:
+    """플랫폼 웹 배포 모드(D19) — env FRONTEND_MODE(`public`|`private`). 미주입·미상 값은 `public`.
+
+    private 모드에서는 앱 로그인 보호(cognitoProtect)를 쓸 수 없다(D16 — Hosted UI PrivateLink 미지원).
+    요청 시점에 읽는다(테스트에서 monkeypatch 로 전환).
+    """
+    return "private" if (os.environ.get("FRONTEND_MODE") or "").strip().lower() == "private" else "public"
+
+
 def load_config() -> AppConfig:
     return AppConfig(
         table_name=_req("TABLE_NAME"),

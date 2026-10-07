@@ -1,5 +1,6 @@
 import * as path from "node:path";
 import {
+  ArnFormat,
   Duration,
   RemovalPolicy,
   Stack,
@@ -11,6 +12,7 @@ import {
   aws_iam as iam,
   aws_logs as logs,
   aws_s3 as s3,
+  aws_ssm as ssm,
 } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import { resourcePrefix } from "../config";
@@ -202,6 +204,60 @@ export class AppPipeline extends Construct {
     );
     // 플랫폼 CDK 소스 tarball(CDK_SOURCE_S3_URI)을 자산 버킷에서 받는다(D-M5-06). GetObject만.
     this.grantAssetRead(this.deployBuild, p.cdkSourceS3Uri, "ReadCdkSourceAsset");
+
+    // ── QA N2(2026-10-08) — 잠든 앱 배포 전 규칙 복귀 (DESIGN 3.5 (c)) ─────────────
+    //  deploy.yml이 cdk deploy **전에** runtimeState=SLEEPING이면 AWS CLI로 배정 ALB 리스너 규칙의 forward만
+    //  앱 TG로 되돌린다(authenticate-cognito 유지). 필요한 호출: SSM https-listener-arn 조회 →
+    //  describe-rules(host 매칭) / describe-target-groups(이름 규약) → modify-rule. runtimeState 조회는
+    //  위 ReadAppParamsFromDdb(GetItem)로 충분.
+    // (a) network SSM 읽기(`/network/alb/{slug}/{n}/https-listener-arn` 등) — network 공유값 경로 한정.
+    this.deployBuild.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "PreDeployReadNetworkSsm",
+        actions: ["ssm:GetParameter"],
+        resources: [
+          stack.formatArn({ service: "ssm", resource: "parameter", resourceName: `apphub/${p.stage}/network/*` }),
+        ],
+      }),
+    );
+    // (b) ELB Describe 계열 — 리소스 레벨 미지원(read-only) → Resource:"*" (정당 예외, conventions 7장).
+    this.deployBuild.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "PreDeployElbDescribe",
+        actions: [
+          "elasticloadbalancing:DescribeRules",
+          "elasticloadbalancing:DescribeTargetGroups",
+          "elasticloadbalancing:DescribeListeners",
+        ],
+        resources: ["*"],
+      }),
+    );
+    // (c) ModifyRule — 플랫폼 ALB(이름 접두어 `${prefix}-`, n=0 + 증설 D20) 하위 리스너 규칙만.
+    this.deployBuild.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "PreDeployElbModifyRule",
+        actions: ["elasticloadbalancing:ModifyRule"],
+        resources: [
+          stack.formatArn({
+            service: "elasticloadbalancing",
+            resource: "listener-rule/app",
+            resourceName: `${prefix}-*/*`,
+            arnFormat: ArnFormat.SLASH_RESOURCE_NAME,
+          }),
+        ],
+      }),
+    );
+    // (d) authenticate-cognito가 있는 규칙의 ModifyRule은 호출자 권한으로 클라이언트를 검증한다(QA H3).
+    //     플랫폼 User Pool ARN(platform SSM `user-pool-arn`, 배포 시점 resolve)으로 한정.
+    this.deployBuild.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "PreDeployCognitoDescribeClient",
+        actions: ["cognito-idp:DescribeUserPoolClient"],
+        resources: [
+          ssm.StringParameter.valueForStringParameter(this, `/apphub/${p.stage}/platform/user-pool-arn`),
+        ],
+      }),
+    );
 
     // ── 소스 액션 (provider별 분기) ──────────────────────────────────────────
     const sourceOutput = new codepipeline.Artifact("Source");

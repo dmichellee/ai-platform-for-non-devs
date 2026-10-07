@@ -111,6 +111,13 @@ describe("platform — frontendMode=public (기본)", () => {
     const raw = JSON.stringify(t.findResources("AWS::ApiGateway::Method"));
     expect(raw).toContain("https://console.apps-dev.example.test");
   });
+
+  it("[D16] API Lambda env FRONTEND_MODE=public", () => {
+    t.hasResourceProperties("AWS::Lambda::Function", {
+      FunctionName: "apphub-dev-api",
+      Environment: { Variables: Match.objectLike({ FRONTEND_MODE: "public" }) },
+    });
+  });
 });
 
 describe("platform — frontendMode=private", () => {
@@ -232,6 +239,8 @@ describe("platform — frontendMode=private", () => {
     expect(JSON.stringify(env["APPHUB_COGNITO_IDP_ENDPOINT"])).toContain("DnsEntries");
     expect(env["APPHUB_APPS_DOMAIN"]).toBe("apps-dev.example.test");
     expect(env["APPHUB_STAGE"]).toBe("dev");
+    // D16(2026-10-08): config.json frontendMode 원천 — 프론트가 private에서 로그인 보호 토글 비활성.
+    expect(env["APPHUB_FRONTEND_MODE"]).toBe("private");
     expect(env["APPHUB_REGION"]).toBe("ap-northeast-2");
     expect(env["APPHUB_USER_POOL_ID"]).toBeDefined();
     expect(env["APPHUB_USER_POOL_CLIENT_ID"]).toBeDefined();
@@ -289,12 +298,21 @@ describe("platform — frontendMode=private", () => {
     expect(spa["AllowedOAuthFlowsUserPoolClient"]).toBe(false);
   });
 
-  it("D16 앱 보호용 Cognito 도메인 + app-auth 클라이언트는 유지", () => {
+  it("D16 앱 보호용 Cognito 도메인(Hosted UI)은 유지, 공유 app-auth 클라이언트는 없다(앱별 클라이언트는 runtime 소유)", () => {
     t.resourceCountIs("AWS::Cognito::UserPoolDomain", 1);
-    const appAuth = Object.values(t.findResources("AWS::Cognito::UserPoolClient"))
+    const secretClients = Object.values(t.findResources("AWS::Cognito::UserPoolClient"))
       .map((c) => c.Properties as Record<string, unknown>)
-      .find((c) => c["GenerateSecret"] === true)!;
-    expect(JSON.stringify(appAuth["CallbackURLs"])).toContain("/oauth2/idpresponse");
+      .filter((c) => c["GenerateSecret"] === true);
+    expect(secretClients).toEqual([]);
+    expect(ssmNames(t)).not.toContain("/apphub/dev/platform/app-auth-client-id");
+    expect(ssmNames(t)).toContain("/apphub/dev/platform/user-pool-domain");
+  });
+
+  it("[D16] API Lambda env FRONTEND_MODE=private (백엔드가 cognitoProtect=true 거부)", () => {
+    t.hasResourceProperties("AWS::Lambda::Function", {
+      FunctionName: "apphub-dev-api",
+      Environment: { Variables: Match.objectLike({ FRONTEND_MODE: "private" }) },
+    });
   });
 });
 

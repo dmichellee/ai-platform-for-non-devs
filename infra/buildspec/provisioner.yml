@@ -15,10 +15,16 @@
 # 동작: 플랫폼 CDK 코드를 S3에서 받아 kind별 스택을 cdk deploy.
 #   - pipeline: `apphub-{stage}-app-{APP_ID}-pipeline` 생성/갱신(무거운 빌드/이미지는 앱 파이프라인이 담당).
 #   - runtime : `apphub-{stage}-app-{APP_ID}-runtime` — 롤백/시크릿 변경 재배포(DESIGN 9, D8). 재빌드 없이
-#     IMAGE_TAG(커밋 SHA) 이미지로 runtime 스택만 재배포한다. app 파라미터 조립은 deploy.yml과 동일
-#     패턴(DDB 재귀 언마샬, albIndex 포함 — 계약 §5).
+#     IMAGE_TAG(커밋 SHA) 이미지로 runtime 스택만 재배포한다. app 파라미터 조립·잠든 앱 규칙 복귀는
+#     deploy.yml과 같은 공용 헬퍼(cdk-src/infra/buildspec/helpers/{runtime-ctx,prepare-sleeping-app}.cjs —
+#     CDK 소스 tarball 에 포함)를 쓴다. -c deployId=${CODEBUILD_BUILD_ID}(QA D-1).
+#     실패 시 FAILURE_CATEGORY=DEPLOY_FAILED 를 파일로 남기고 post_build 에서 재export.
 #   - alb     : `apphub-{stage}-alb-{ALB_SCHEME}-{ALB_INDEX}` — ALB 증설 스택(D20). DDB 조회 없음.
 version: 0.2
+
+env:
+  exported-variables:
+    - FAILURE_CATEGORY
 
 phases:
   install:
@@ -75,8 +81,9 @@ phases:
           fi
           echo "최초 배포 여부(IS_INITIAL)=${IS_INITIAL}"
         fi
-      # 컨텍스트 조립 스크립트를 파일로 만든 뒤(kind별로) 실행한다. DDB App 레코드에서 읽는다
-      #  (단일 원본은 buildspec-contract 4장). alb kind는 DDB를 읽지 않는다.
+      # pipeline kind 컨텍스트 조립 스크립트를 파일로 만든 뒤 실행한다. DDB App 레코드에서 읽는다
+      #  (단일 원본은 buildspec-contract 4장). runtime kind 는 build 단계에서 공용 헬퍼로 조립한다.
+      #  alb kind는 DDB를 읽지 않는다.
       # 주의(heredoc): sh 의 <<'NODE' 종결자는 반드시 줄 시작(들여쓰기 0)에 있어야 한다.
       #  → heredoc은 if 블록 밖에서 파일 생성만 하고, 실행은 아래 kind 분기에서 한다.
       - |
@@ -98,92 +105,50 @@ phases:
         emit("autoDeployEnabled", B(app.autoDeployEnabled));
         if (app.connectionArn && app.connectionArn.S) emit("connectionArn", app.connectionArn.S);
         NODE
-      # runtime(롤백·시크릿 변경)은 app-runtime 파라미터 전체를 조립한다(deploy.yml과 동일 재귀 언마샬).
-      #  DDB AttributeValue(S/N/BOOL/NULL/M/L/SS/NS)를 재귀 언마샬(u)해 app-params.ts loader 키
-      #  (schedule/envVars/secretArn/secretKeysB64/permissionPolicyB64/albIndex)에 맞춰 emit.
-      #  IMAGE_TAG는 StartBuild env override로 온 커밋 SHA(재빌드 없이 그 이미지로 재배포).
-      #  IS_INITIAL은 위 단계에서 이미 판정됨(버그 F).
-      - |
-        cat > /tmp/app-ctx.js <<'NODE'
-        const { execSync } = require("node:child_process");
-        const region = process.env.AWS_DEFAULT_REGION;
-        const table = process.env.TABLE_NAME;
-        const appId = process.env.APP_ID;
-        const u = (av) => {
-          if (av == null || typeof av !== "object") return av;
-          if ("S" in av) return av.S;
-          if ("N" in av) return Number(av.N);
-          if ("BOOL" in av) return av.BOOL;
-          if ("NULL" in av) return null;
-          if ("M" in av) { const o = {}; for (const [k, v] of Object.entries(av.M)) o[k] = u(v); return o; }
-          if ("L" in av) return av.L.map(u);
-          if ("SS" in av) return av.SS;
-          if ("NS" in av) return av.NS.map(Number);
-          return av;
-        };
-        const getItem = (key) => {
-          const raw = JSON.parse(execSync(
-            `aws dynamodb get-item --region ${region} --table-name ${table} --key '${JSON.stringify(key)}' --output json`
-          ).toString() || "{}").Item;
-          if (!raw) return {};
-          const o = {}; for (const [k, v] of Object.entries(raw)) o[k] = u(v); return o;
-        };
-        const app = getItem({ PK: { S: `APP#${appId}` }, SK: { S: "META" } });
-        const preset = getItem({ PK: { S: "CONFIG" }, SK: { S: `PRESET#${app.presetId ?? ""}` } });
-        const perm = getItem({ PK: { S: "CONFIG" }, SK: { S: `PERM#${app.permissionTemplateId ?? ""}` } });
-        const str = (v) => (v == null ? "" : String(v));
-        const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : Number(v) || 0);
-        // D20(계약 §3.3·§5): 배정 ALB 인덱스. 없으면(기존 앱) 0.
-        const albIndex = Number.isInteger(num(app.albIndex)) && num(app.albIndex) >= 0 ? num(app.albIndex) : 0;
-        const scalars = {
-          appId,
-          subdomain: str(app.subdomain),
-          scheme: str(app.scheme),
-          albIndex,
-          imageTag: str(process.env.IMAGE_TAG),
-          rulePriority: num(app.rulePriority),
-          cpu: num(preset.cpu), memory: num(preset.memory),
-          minCount: num(preset.minCount), maxCount: num(preset.maxCount),
-          scaleMetric: str(preset.scaleMetric) || "cpu",
-          scaleThreshold: num(preset.scaleThreshold) || 70,
-          sleepMode: str(app.sleepMode) || "always-on",
-          cognitoProtect: app.cognitoProtect === true || str(app.cognitoProtect) === "true",
-          isInitialDeploy: process.env.IS_INITIAL === "true",
-        };
-        const emit = (k, v) => process.stdout.write(`export CTX_${k}=${JSON.stringify(str(v))}\n`);
-        for (const [k, v] of Object.entries(scalars)) emit(k, v);
-        const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64");
-        const emitJson = (k, o) => process.stdout.write(`export CTX_${k}=${b64(o)}\n`);
-        if (scalars.sleepMode === "schedule" && app.schedule && typeof app.schedule === "object") {
-          emitJson("scheduleB64", app.schedule);
-        }
-        if (app.envVars && typeof app.envVars === "object" && Object.keys(app.envVars).length > 0) {
-          emitJson("envVarsB64", app.envVars);
-        }
-        // 시크릿(D8, 앱당 1개 JSON): secretArn(완전 ARN, 값 아님) + secretKeys(주입 대상 KEY 목록).
-        //  secretKeys 가 비면 둘 다 생략(시크릿 미주입). 각 KEY → ECS valueFrom `<arn>:KEY::`(app-runtime).
-        const secretKeys = Array.isArray(app.secretKeys) ? app.secretKeys.map(String) : [];
-        if (typeof app.secretArn === "string" && app.secretArn && secretKeys.length > 0) {
-          emit("secretArn", app.secretArn);
-          emitJson("secretKeysB64", secretKeys);
-        }
-        if (perm.policyDocument && typeof perm.policyDocument === "object") {
-          emitJson("permissionPolicyB64", perm.policyDocument);
-        }
-        NODE
       - |
         if [ "${APP_STACK_KIND}" = "pipeline" ]; then
           node /tmp/pipe-ctx.js > /tmp/pipe-ctx.env
           cat /tmp/pipe-ctx.env
           . /tmp/pipe-ctx.env
-        elif [ "${APP_STACK_KIND}" = "runtime" ]; then
-          node /tmp/app-ctx.js > /tmp/app-ctx.env
-          cat /tmp/app-ctx.env
-          . /tmp/app-ctx.env
         fi
 
   build:
     commands:
+      # runtime(롤백·시크릿 변경) 준비 — 실패 가능 단계라 build 에 둔다(build 실패는 post_build 로 이어져
+      #  FAILURE_CATEGORY 를 파일에서 복원할 수 있다). deploy.yml 과 **같은 공용 헬퍼**를 쓴다(중복 제거):
+      #  (1) helpers/runtime-ctx.cjs — DDB 재귀 언마샬 컨텍스트 조립(계약 §4·§5, albIndex 포함).
+      #      이중 안전장치(QA M3): 프리셋/권한 템플릿 아이템이 없으면 cpu=0·권한 소실로 진행하지 않고 실패.
+      #      IMAGE_TAG 는 StartBuild env override(커밋 SHA), IS_INITIAL 은 pre_build 에서 판정(버그 F).
+      #  (2) helpers/prepare-sleeping-app.cjs — 잠든 앱이면 cdk deploy 전 규칙 forward 만 앱 TG 로 복귀(QA N2).
+      - |
+        if [ "${APP_STACK_KIND}" = "runtime" ]; then
+          set +e
+          node cdk-src/infra/buildspec/helpers/runtime-ctx.cjs > /tmp/app-ctx.env
+          CTX_RC=$?
+          set -e
+          if [ "${CTX_RC}" != "0" ]; then
+            echo "DEPLOY_FAILED" > "${CODEBUILD_SRC_DIR:-/tmp}/.apphub-failure-category"
+            echo "배포 컨텍스트 조립 실패(위 [apphub] 메시지 참고) — 배포하지 않습니다." >&2
+            exit 1
+          fi
+          cat /tmp/app-ctx.env
+        fi
+      - |
+        if [ "${APP_STACK_KIND}" = "runtime" ]; then
+          . /tmp/app-ctx.env
+        fi
+      - |
+        if [ "${APP_STACK_KIND}" = "runtime" ]; then
+          set +e
+          node cdk-src/infra/buildspec/helpers/prepare-sleeping-app.cjs
+          PREP_RC=$?
+          set -e
+          if [ "${PREP_RC}" != "0" ]; then
+            echo "DEPLOY_FAILED" > "${CODEBUILD_SRC_DIR:-/tmp}/.apphub-failure-category"
+            echo "잠든 앱 배포 준비 실패 — 배포하지 않습니다(앱은 잠든 상태 유지)." >&2
+            exit 1
+          fi
+        fi
       - |
         cd cdk-src/infra
         if [ "${APP_STACK_KIND}" = "alb" ]; then
@@ -208,10 +173,14 @@ phases:
         else
           # runtime 롤백/시크릿 변경: 재빌드 없이 IMAGE_TAG 이미지로 runtime 스택 재배포(DESIGN 9).
           #  deploy.yml Deploy 스테이지와 동일 컨텍스트(app-params.ts 소비). 실패 시 CFN 롤백.
+          #  deployId(D8, QA D-1): 빌드 ID → 태스크 정의 dockerLabels apphub.deployId(매번 새 리비전 → 태스크 교체,
+          #  값만 바뀐 시크릿도 반영).
           if [ -z "${CTX_imageTag}" ]; then
+            echo "DEPLOY_FAILED" > "${CODEBUILD_SRC_DIR:-/tmp}/.apphub-failure-category"
             echo "롤백 대상 이미지 태그(IMAGE_TAG)가 비어 있습니다." >&2
             exit 1
           fi
+          set +e
           cdk deploy "${STACK_NAME}" --require-approval never --region "${AWS_DEFAULT_REGION}" \
             -c stage="${STAGE}" \
             -c appId="${CTX_appId}" \
@@ -220,6 +189,7 @@ phases:
             -c scheme="${CTX_scheme}" \
             -c albIndex="${CTX_albIndex}" \
             -c imageTag="${CTX_imageTag}" \
+            -c deployId="${CODEBUILD_BUILD_ID}" \
             -c rulePriority="${CTX_rulePriority}" \
             -c cpu="${CTX_cpu}" -c memory="${CTX_memory}" \
             -c minCount="${CTX_minCount}" -c maxCount="${CTX_maxCount}" \
@@ -232,10 +202,20 @@ phases:
             ${CTX_secretArn:+-c secretArn="${CTX_secretArn}"} \
             ${CTX_secretKeysB64:+-c secretKeysB64="${CTX_secretKeysB64}"} \
             ${CTX_permissionPolicyB64:+-c permissionPolicyB64="${CTX_permissionPolicyB64}"}
+          DEPLOY_RC=$?
+          set -e
+          if [ "${DEPLOY_RC}" != "0" ]; then
+            echo "DEPLOY_FAILED" > "${CODEBUILD_SRC_DIR:-/tmp}/.apphub-failure-category"
+            echo "cdk deploy 실패 — CloudFormation 롤백으로 이전 버전 유지" >&2
+            exit 1
+          fi
         fi
 
   post_build:
     commands:
+      # 실패 분류 복원(runtime kind): build 단계의 `exit 1`은 셸을 종료시켜 export 값이 사라진다 → 파일에서 재export.
+      #  deploy-notify 는 runtime 빌드 실패를 DEPLOY_FAILED 로 분류하며, 이 값은 빌드 기록에서의 진단용이다.
+      - export FAILURE_CATEGORY="$(cat "${CODEBUILD_SRC_DIR:-/tmp}/.apphub-failure-category" 2>/dev/null || true)"
       # 주의: 따옴표 안이라도 `: ` 가 있으면 YAML 이 매핑으로 파싱해 CodeBuild 가
       #  YAML_FILE_ERROR("Expected Commands[0] to be of string type")로 거부한다 → 전체를 작은따옴표로 감싼다.
       - 'echo "provisioner 완료 - ${STACK_NAME}"'

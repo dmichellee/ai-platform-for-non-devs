@@ -8,14 +8,18 @@
 #        (여기서 조회해 컨텍스트로 조립 → app 스택 모드 synth/deploy)
 #  드리프트 방지(DESIGN 3.5): isInitialDeploy는 스택 존재 여부로 판정(최초=true → desiredCount 지정,
 #        갱신=false → 미지정 = 현재 desiredCount 유지).
-#  잠자는 앱(runtimeState=SLEEPING) 배포(QA H2): 배포 전에 깨우지 않는다. 잠든 채로 새 버전을 반영하고,
-#        배포 성공 이벤트를 받은 deploy-notify 가 sleep_app(force) 으로 desiredCount=0 + 리스너 규칙
-#        forward→Waker TG 를 멱등 재적용한다(배포가 규칙을 앱 TG 로 되돌려도 503 고착 없음 — 다음 접속 시
-#        Waker 가 깨운다). 근거·대안 비교는 buildspec-contract.md §8.
-#  실패 시: FAILURE_CATEGORY=DEPLOY_FAILED (CloudFormation 자동 롤백 → 이전 버전 유지).
+#  잠자는 앱(runtimeState=SLEEPING) 배포(QA H2·N2, 2026-10-08): 깨우지 않는다(desiredCount 0 유지). cdk deploy
+#        직전에 리스너 규칙 forward 만 앱 TG 로 되돌리고(ECS 갱신이 LB 미연결 TG 를 거부하므로 — N2,
+#        authenticate-cognito 유지), 배포가 끝나면(성공·실패) deploy-notify 가 sleep_app 으로 forward→Waker TG 를
+#        멱등 재적용한다. 공용 헬퍼 helpers/prepare-sleeping-app.cjs. 근거·대안 비교는 buildspec-contract.md §8.
+#  컨텍스트 조립: 공용 헬퍼 helpers/runtime-ctx.cjs(provisioner.yml runtime 과 같은 코드). 프리셋/권한 템플릿이
+#        없으면 실패(QA M3 이중 안전장치).
+#  deployId(D8, QA D-1): -c deployId=${CODEBUILD_BUILD_ID} → 태스크 정의 dockerLabels apphub.deployId(매 배포 새 리비전).
+#  실패 시: FAILURE_CATEGORY=DEPLOY_FAILED — 실패 지점에서 파일로 남기고 post_build 에서 재export
+#        (CloudFormation 자동 롤백 → 이전 버전 유지).
 #
-# 환경변수(프로젝트 주입): STAGE, APP_ID, AWS_ACCOUNT_ID, AWS_DEFAULT_REGION
-#  + CDK_SOURCE_DIR(플랫폼 CDK 코드 위치; provisioner가 주입) 또는 이 레포에 동봉된 infra.
+# 환경변수(프로젝트 주입): STAGE, APP_ID, AWS_ACCOUNT_ID, AWS_DEFAULT_REGION, CDK_SOURCE_S3_URI
+#  공용 헬퍼(cdk-src/infra/buildspec/helpers/*.cjs)는 CDK 소스 tarball(scripts/deploy.sh 3b, infra 포함)에 들어 있다.
 version: 0.2
 
 env:
@@ -55,94 +59,43 @@ phases:
           export IS_INITIAL="true"
         fi
       - echo "최초 배포 여부(IS_INITIAL)=${IS_INITIAL}"
-      # 앱 레코드 + 프리셋/권한 템플릿 조회 → 컨텍스트 파라미터 조립(env 파일로).
-      #  DDB get-item 결과는 AttributeValue 형태({"S":..},{"N":..},{"M":..},{"L":..},{"BOOL":..})다.
-      #  스칼라(S/N)만 읽던 이전 버전은 schedule/envVars/secretKeys/permissionPolicy(전부 Map/List)를
-      #  통째로 누락해 스케줄러 미생성·env/시크릿 미주입(런타임 조용한 손실)을 유발했다(QA F-1/F-2/M-4).
-      #  → AttributeValue를 **재귀 언마샬**(unmarshall)하는 헬퍼 u()로 순수 JS 값으로 변환한 뒤,
-      #    app-params.ts loader가 기대하는 키(schedule/envVars/secretArn/secretKeysB64/permissionPolicyB64)에
-      #    정확히 맞춰 base64 JSON으로 emit하고 cdk deploy에 조건부 -c 로 전달한다.
-      - |
-        node - <<'NODE' > /tmp/app-ctx.env
-        const { execSync } = require("node:child_process");
-        const region = process.env.AWS_DEFAULT_REGION;
-        const table = process.env.TABLE_NAME;
-        const appId = process.env.APP_ID;
-        // DDB AttributeValue → 순수 JS 값 재귀 언마샬(S/N/BOOL/NULL/M/L/SS/NS 지원).
-        const u = (av) => {
-          if (av == null || typeof av !== "object") return av;
-          if ("S" in av) return av.S;
-          if ("N" in av) return Number(av.N);
-          if ("BOOL" in av) return av.BOOL;
-          if ("NULL" in av) return null;
-          if ("M" in av) { const o = {}; for (const [k, v] of Object.entries(av.M)) o[k] = u(v); return o; }
-          if ("L" in av) return av.L.map(u);
-          if ("SS" in av) return av.SS;
-          if ("NS" in av) return av.NS.map(Number);
-          return av;
-        };
-        // 아이템 전체를 언마샬해 순수 객체로 얻는다(없으면 {}).
-        const getItem = (key) => {
-          const raw = JSON.parse(execSync(
-            `aws dynamodb get-item --region ${region} --table-name ${table} --key '${JSON.stringify(key)}' --output json`
-          ).toString() || "{}").Item;
-          if (!raw) return {};
-          const o = {}; for (const [k, v] of Object.entries(raw)) o[k] = u(v); return o;
-        };
-        const app = getItem({ PK: { S: `APP#${appId}` }, SK: { S: "META" } });
-        const preset = getItem({ PK: { S: "CONFIG" }, SK: { S: `PRESET#${app.presetId ?? ""}` } });
-        const perm = getItem({ PK: { S: "CONFIG" }, SK: { S: `PERM#${app.permissionTemplateId ?? ""}` } });
-        const str = (v) => (v == null ? "" : String(v));
-        const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : Number(v) || 0);
-        // D20(계약 §3.3·§5): 배정 ALB 인덱스. 없으면(기존 앱) 0.
-        const albIndex = Number.isInteger(num(app.albIndex)) && num(app.albIndex) >= 0 ? num(app.albIndex) : 0;
-        // 스칼라 컨텍스트(app-params.ts ctxString/ctxNumber/ctxBool 소비).
-        const scalars = {
-          appId,
-          subdomain: str(app.subdomain),
-          scheme: str(app.scheme),
-          albIndex,
-          imageTag: str(process.env.IMAGE_TAG),
-          rulePriority: num(app.rulePriority),
-          cpu: num(preset.cpu), memory: num(preset.memory),
-          minCount: num(preset.minCount), maxCount: num(preset.maxCount),
-          scaleMetric: str(preset.scaleMetric) || "cpu",
-          scaleThreshold: num(preset.scaleThreshold) || 70,
-          sleepMode: str(app.sleepMode) || "always-on",
-          cognitoProtect: app.cognitoProtect === true || str(app.cognitoProtect) === "true",
-          isInitialDeploy: process.env.IS_INITIAL === "true",
-        };
-        const emit = (k, v) => process.stdout.write(`export CTX_${k}=${JSON.stringify(str(v))}\n`);
-        for (const [k, v] of Object.entries(scalars)) emit(k, v);
-        // JSON 컨텍스트(Map/List) — base64 JSON으로(셸 인용 안전, ctxJsonOpt가 base64 자동 판별).
-        //  app-params.ts loader 키와 1:1: schedule / envVars / secretArn / secretKeysB64 / permissionPolicyB64.
-        const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64");
-        const emitJson = (k, o) => process.stdout.write(`export CTX_${k}=${b64(o)}\n`);
-        // schedule: sleepMode=schedule일 때만 유효({startTime,stopTime,days,timezone}). 없으면 미emit.
-        if (scalars.sleepMode === "schedule" && app.schedule && typeof app.schedule === "object") {
-          emitJson("scheduleB64", app.schedule);
-        }
-        // envVars: 평문 문자열맵. 값이 있을 때만 emit(빈 객체는 기본값과 동일).
-        if (app.envVars && typeof app.envVars === "object" && Object.keys(app.envVars).length > 0) {
-          emitJson("envVarsB64", app.envVars);
-        }
-        // 시크릿(D8, 앱당 1개 JSON): secretArn(완전 ARN, 값 아님) + secretKeys(주입 대상 KEY 목록).
-        //  secretKeys 가 비면 둘 다 생략(시크릿 미주입). 각 KEY → ECS valueFrom `<arn>:KEY::`(app-runtime).
-        const secretKeys = Array.isArray(app.secretKeys) ? app.secretKeys.map(String) : [];
-        if (typeof app.secretArn === "string" && app.secretArn && secretKeys.length > 0) {
-          emit("secretArn", app.secretArn);
-          emitJson("secretKeysB64", secretKeys);
-        }
-        // permissionPolicy: IAM 정책 문서(Map). 태스크 역할 인라인 정책. 있을 때만 emit.
-        if (perm.policyDocument && typeof perm.policyDocument === "object") {
-          emitJson("permissionPolicyB64", perm.policyDocument);
-        }
-        NODE
-      - cat /tmp/app-ctx.env
-      - . /tmp/app-ctx.env
 
   build:
     commands:
+      # 아래 3단계는 실패 가능하므로 build 단계에 둔다 — build 실패는 post_build 로 이어져 FAILURE_CATEGORY 를
+      #  복원할 수 있다(pre_build 실패는 post_build 를 거치지 않는다).
+      #  실패 시 `exit 1` 이 셸을 끝내 export 값이 사라지므로 **반드시 파일로 남긴다**(validate-build.yml 과 같은 패턴).
+      # (1) 앱 레코드 + 프리셋/권한 템플릿 조회 → 컨텍스트 조립(공용 헬퍼, provisioner.yml runtime 과 동일 코드).
+      #  DDB AttributeValue 재귀 언마샬 → app-params.ts loader 키(schedule/envVars/secretArn/secretKeysB64/
+      #  permissionPolicyB64/albIndex)로 emit(QA F-1/F-2/M-4).
+      #  이중 안전장치(QA M3): 프리셋/권한 템플릿 아이템이 없으면 cpu=0·권한 소실로 진행하지 않고 실패.
+      - |
+        set +e
+        node cdk-src/infra/buildspec/helpers/runtime-ctx.cjs > /tmp/app-ctx.env
+        CTX_RC=$?
+        set -e
+        if [ "${CTX_RC}" != "0" ]; then
+          echo "DEPLOY_FAILED" > "${CODEBUILD_SRC_DIR}/.apphub-failure-category"
+          echo "배포 컨텍스트 조립 실패(위 [apphub] 메시지 참고) — 배포하지 않습니다." >&2
+          exit 1
+        fi
+      - cat /tmp/app-ctx.env
+      - . /tmp/app-ctx.env
+      # (2) 잠든 앱 배포 전 규칙 복귀(QA N2): runtime 스택이 있고 runtimeState=SLEEPING 이면 리스너 규칙의
+      #  forward 만 앱 TG 로 되돌린다(authenticate-cognito 유지, desiredCount 0 유지). 배포 후(성공·실패)
+      #  재수면은 deploy-notify 가 한다. AWS 호출 실패면 중단(근거: buildspec-contract §8).
+      - |
+        set +e
+        node cdk-src/infra/buildspec/helpers/prepare-sleeping-app.cjs
+        PREP_RC=$?
+        set -e
+        if [ "${PREP_RC}" != "0" ]; then
+          echo "DEPLOY_FAILED" > "${CODEBUILD_SRC_DIR}/.apphub-failure-category"
+          echo "잠든 앱 배포 준비 실패 — 배포하지 않습니다(앱은 잠든 상태 유지)." >&2
+          exit 1
+        fi
+      # (3) cdk deploy. deployId(D8/D-1): 매 배포 고유값(빌드 ID)을 태스크 정의 docker 라벨 apphub.deployId 로
+      #  넣어 항상 새 리비전 → 태스크 교체(값만 바뀐 시크릿도 반영).
       - |
         set +e
         cd cdk-src/infra
@@ -154,6 +107,7 @@ phases:
           -c scheme="${CTX_scheme}" \
           -c albIndex="${CTX_albIndex}" \
           -c imageTag="${CTX_imageTag}" \
+          -c deployId="${CODEBUILD_BUILD_ID}" \
           -c rulePriority="${CTX_rulePriority}" \
           -c cpu="${CTX_cpu}" -c memory="${CTX_memory}" \
           -c minCount="${CTX_minCount}" -c maxCount="${CTX_maxCount}" \
@@ -169,12 +123,15 @@ phases:
         DEPLOY_RC=$?
         set -e
         if [ "${DEPLOY_RC}" != "0" ]; then
-          export FAILURE_CATEGORY="DEPLOY_FAILED"
+          echo "DEPLOY_FAILED" > "${CODEBUILD_SRC_DIR}/.apphub-failure-category"
           echo "cdk deploy 실패 — CloudFormation 롤백으로 이전 버전 유지" >&2
           exit 1
         fi
 
   post_build:
     commands:
+      # 실패 분류 복원: build 단계의 `exit 1`은 셸을 종료시켜 export 값이 사라진다 → 파일에서 다시 export.
+      #  (CodeBuild 는 post_build 를 새 셸에서 실행하고, exported-variables 는 post_build 종료 시점 값을 내보낸다.)
+      - export FAILURE_CATEGORY="$(cat "${CODEBUILD_SRC_DIR}/.apphub-failure-category" 2>/dev/null || true)"
       # 주의: 따옴표 안이라도 `: ` 가 있으면 YAML 매핑으로 파싱돼 CodeBuild YAML_FILE_ERROR → 작은따옴표로 감싼다.
-      - 'echo "app-runtime 배포 완료 - ${RUNTIME_STACK} (이미지 ${IMAGE_TAG})"'
+      - 'echo "app-runtime 배포 종료 - ${RUNTIME_STACK} (이미지 ${IMAGE_TAG}, 실패분류 ${FAILURE_CATEGORY:-없음})"'

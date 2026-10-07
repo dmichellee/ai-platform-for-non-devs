@@ -155,19 +155,9 @@ export class PlatformStack extends Stack {
     userPool.addDomain("HostedUi", {
       cognitoDomain: { domainPrefix: hostedUiDomainPrefix },
     });
-    // ALB authenticate-cognito(D16)용 클라이언트 — SPA 클라이언트와 별개.
-    //  ALB는 client_secret이 있는 클라이언트 + 콜백 `https://{host}/oauth2/idpresponse`를 요구한다.
-    //  앱 서브도메인은 앱마다 다르므로 와일드카드 콜백을 허용 목록에 넣는다(*.appsDomain).
-    const appAuthClient = userPool.addClient("AppAuthClient", {
-      userPoolClientName: `${prefix}-app-auth`,
-      generateSecret: true, // ALB authenticate-cognito 요구
-      authFlows: { userSrp: true },
-      oAuth: {
-        flows: { authorizationCodeGrant: true },
-        scopes: [cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL],
-        callbackUrls: [`https://*.${config.appsDomain}/oauth2/idpresponse`],
-      },
-    });
+    // D16(2026-10-08, QA N1): ALB authenticate-cognito용 클라이언트는 **앱마다** app-runtime 스택이 만든다
+    //  (콜백 = 정확한 `https://{subdomain}.{appsDomain}/oauth2/idpresponse` 1개 — Cognito는 와일드카드 콜백 미지원).
+    //  공유 `AppAuthClient`(와일드카드 콜백)와 SSM `app-auth-client-id`는 제거. Hosted UI 도메인(위)은 ALB 인증 필수라 유지.
 
     // ── 플랫폼 웹 호스팅 (D19) — public: 비공개 S3 + CloudFront(OAC) ──────────────
     //  public zone `console` A/AAAA alias → CloudFront, private zone `console` CNAME → CloudFront 도메인
@@ -242,7 +232,7 @@ export class PlatformStack extends Stack {
     //  RespondToAuthChallenge, ForgotPassword, RevokeToken). 따라서 USER_PASSWORD_AUTH를 허용하고
     //  OAuth(Hosted UI code grant) 플로우·콜백 URL은 비활성(disableOAuth). REFRESH_TOKEN_AUTH는 CDK가
     //  항상 포함한다. RevokeToken(로그아웃)을 위해 토큰 폐기를 명시적으로 켠다.
-    //  Cognito 도메인(Hosted UI)과 앱 보호용 app-auth 클라이언트(D16)는 위에서 그대로 유지한다.
+    //  Cognito 도메인(Hosted UI)은 위에서 그대로 유지한다(앱 보호용 클라이언트는 app-runtime 소유, D16).
     const localDevOrigins = config.stage === "prod" ? [] : ["http://localhost:5173"];
     const userPoolClient = userPool.addClient("SpaClient", {
       userPoolClientName: `${prefix}-spa`,
@@ -346,6 +336,9 @@ export class PlatformStack extends Stack {
         //  허용 origin은 콘솔 주소 `https://console.{appsDomain}`(D19 두 모드 공통). dev는 Vite dev 서버
         //  (localhost:5173)도 함께 허용.
         ALLOWED_ORIGINS: [consoleUrl, ...localDevOrigins].join(","),
+        // D16/D19: 플랫폼 웹 배포 모드(public|private). private면 백엔드가 cognitoProtect=true를 거부(400)
+        //  — Hosted UI가 PrivateLink 미지원이라 앱 로그인 보호 동작을 보장할 수 없다.
+        FRONTEND_MODE: frontendMode,
       },
       description: "Platform REST handler (M3 routing)",
     });
@@ -844,6 +837,8 @@ export class PlatformStack extends Stack {
           APPHUB_COGNITO_IDP_ENDPOINT: cognitoIdpEndpoint,
           APPHUB_APPS_DOMAIN: config.appsDomain,
           APPHUB_STAGE: config.stage,
+          // D16: SPA config.json `frontendMode` — 프론트가 private 모드에서 로그인 보호 토글을 비활성.
+          APPHUB_FRONTEND_MODE: frontendMode,
         },
       });
       const consoleTaskSg = new ec2.SecurityGroup(this, "ConsoleTaskSg", {
@@ -960,7 +955,7 @@ export class PlatformStack extends Stack {
     this.provisioner = provisioner;
 
     // provisioner 역할 IAM (buildspec-contract 7장, ARN 범위 — Resource:"*" 금지).
-    this.grantProvisionerPermissions(provisioner, config.stage, prefix, assetsBucket);
+    this.grantProvisionerPermissions(provisioner, config.stage, prefix, assetsBucket, userPool.userPoolArn);
 
     // 자산 버킷 참조 발행(Output+SSM). deploy.sh(3b)가 Output으로 버킷명을 읽어 고정 키로 업로드.
     this.output("AssetsBucketName", assetsBucket.bucketName);
@@ -1228,8 +1223,7 @@ export class PlatformStack extends Stack {
       "user-pool-id": userPool.userPoolId,
       "user-pool-arn": userPool.userPoolArn,
       "user-pool-client-id": userPoolClient.userPoolClientId,
-      // D16 ALB authenticate-cognito(app-runtime, M4)용:
-      "app-auth-client-id": appAuthClient.userPoolClientId,
+      // D16 ALB authenticate-cognito(app-runtime)용 Hosted UI 도메인. 앱 클라이언트는 app-runtime이 앱마다 생성.
       "user-pool-domain": `${hostedUiDomainPrefix}.auth.${this.region}.amazoncognito.com`,
       // D19: api-url = 모드별 실제 호출 URL(private는 VPC 엔드포인트 전용 호스트명).
       "api-url": effectiveApiUrl,
@@ -1343,6 +1337,7 @@ export class PlatformStack extends Stack {
     stage: StageConfig["stage"],
     prefix: string,
     assetsBucket: s3.Bucket,
+    userPoolArn: string,
   ): void {
     // (1) CloudFormation — 앱 스택(app-*) 생성/갱신/삭제만.
     provisioner.addToRolePolicy(
@@ -1512,6 +1507,28 @@ export class PlatformStack extends Stack {
         ],
         resources: ["*"], // SG는 배포 시점 생성 → ARN 미상. 아래 리전 조건으로 범위 한정.
         conditions: { StringEquals: { "aws:RequestedRegion": this.region } },
+      }),
+    );
+    // (8c) QA N2(2026-10-08) — 잠든 앱 배포 전 규칙 복귀. provisioner.yml(runtime kind)이 cdk deploy **전에**
+    //      AWS CLI로 SSM https-listener-arn 조회(ReadSharedSsm) → describe-rules/describe-target-groups
+    //      (ReadOnlyDescribeStar의 elasticloadbalancing:Describe*) → modify-rule(forward만 앱 TG로 교체)을 직접 호출한다.
+    //      runtimeState 조회는 AppTableRead(GetItem). 여기서는 빠진 두 가지만 추가:
+    //       - ModifyRule: 플랫폼 ALB 리스너 규칙(listener-rule/app/{prefix}-*/*) 한정. (AppEcsElbEcrDeploy의
+    //         listener-rule 범위는 앱 이름 접두어라 실제 규칙 ARN `listener-rule/app/{alb}/...`과 맞지 않는다.)
+    //       - DescribeUserPoolClient: authenticate-cognito가 있는 규칙의 ModifyRule은 호출자 권한으로 클라이언트를
+    //         검증한다(QA H3). 플랫폼 User Pool ARN 한정.
+    provisioner.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "PreDeployRuleRestore",
+        actions: ["elasticloadbalancing:ModifyRule"],
+        resources: [this.platformListenerRuleArn(prefix)],
+      }),
+    );
+    provisioner.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "PreDeployCognitoDescribeClient",
+        actions: ["cognito-idp:DescribeUserPoolClient"],
+        resources: [userPoolArn],
       }),
     );
     // (9) SSM 읽기 — app-runtime construct가 network/platform 공유값(SSM)을 읽어 배포한다.

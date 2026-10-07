@@ -6,6 +6,8 @@
  * 설정이 없거나(로컬/QA) mock=true 이면 목 모드로 동작한다 → 실제 백엔드 없이 전 화면 열람 가능.
  */
 
+export type FrontendMode = "public" | "private";
+
 export interface RuntimeConfig {
   apiUrl: string;
   userPoolId: string;
@@ -38,6 +40,11 @@ export interface RuntimeConfig {
    * 실제 접속 주소를 보여주는 데 쓴다. deploy.sh가 config.json에 넣는다.
    */
   appsDomain?: string;
+  /**
+   * 플랫폼 웹 배포 모드(D19) — deploy.sh가 config.json에 넣는다. 없으면 "public"으로 간주.
+   * "private"이면 앱 로그인 보호(cognitoProtect)를 켤 수 없다(D16 — 서버도 400 COGNITO_PROTECT_UNAVAILABLE).
+   */
+  frontendMode?: FrontendMode;
   /** true면 API를 목으로 처리하고 로그인도 우회한다. QA/데모용. */
   mock: boolean;
 }
@@ -51,6 +58,11 @@ export function resolveCognitoIdpEndpoint(cfg: RuntimeConfig): string | null {
   const region = cfg.region || (cfg.userPoolId.includes("_") ? cfg.userPoolId.split("_")[0] : "");
   if (!region) return null;
   return `https://cognito-idp.${region}.amazonaws.com/`;
+}
+
+/** 플랫폼 웹 배포 모드 — 설정이 없거나 알 수 없는 값이면 "public". */
+export function frontendMode(): FrontendMode {
+  return getCachedConfig()?.frontendMode === "private" ? "private" : "public";
 }
 
 /**
@@ -111,6 +123,7 @@ export async function loadConfig(): Promise<RuntimeConfig> {
     if (raw.kiroConfigUrlMac) cfg.kiroConfigUrlMac = raw.kiroConfigUrlMac;
     if (raw.kiroConfigUrlWindows) cfg.kiroConfigUrlWindows = raw.kiroConfigUrlWindows;
     if (raw.appsDomain) cfg.appsDomain = raw.appsDomain;
+    if (raw.frontendMode === "private" || raw.frontendMode === "public") cfg.frontendMode = raw.frontendMode;
     cached = cfg;
     return cfg;
   } catch {

@@ -1203,6 +1203,10 @@ textarea {
 .switch.on .knob {
   transform: translateX(18px);
 }
+.switch:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .switch-row {
   display: flex;
   align-items: center;

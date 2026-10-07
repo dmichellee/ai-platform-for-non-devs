@@ -10,6 +10,7 @@ import json
 import re
 from typing import Any
 
+from ..config import frontend_mode
 from ..http.errors import ApiError, errors
 
 _SCHEMES = ("internet-facing", "internal")
@@ -124,6 +125,15 @@ def _parse_schedule(body: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def _parse_cognito_protect_create(body: dict[str, Any], scheme: str) -> bool:
+    """생성 시 로그인 보호(D16). public: 기본 internet-facing 이면 켬. private(D19): 기본 끔, true 요청은 400."""
+    if frontend_mode() == "private":
+        if _bool(body, "cognitoProtect", False):
+            raise errors.cognito_protect_unavailable()
+        return False
+    return _bool(body, "cognitoProtect", scheme == "internet-facing")
+
+
 def parse_create_app(raw: str | None) -> dict[str, Any]:
     """앱 생성 요청 파싱·형식 검증."""
     body = parse_body(raw)
@@ -170,7 +180,7 @@ def parse_create_app(raw: str | None) -> dict[str, Any]:
         # 시크릿(평문 값)은 계약상 envVars 와 분리된 별도 필드. 핸들러가 Secrets Manager 로
         #  옮기고 App 에 secretArn/secretKeys 만 기록한다(값은 DDB/응답에 남기지 않음).
         "secrets": _parse_secrets(body),
-        "cognitoProtect": _bool(body, "cognitoProtect", scheme == "internet-facing"),
+        "cognitoProtect": _parse_cognito_protect_create(body, scheme),
     }
     if connection_id is not None:
         result["connectionId"] = connection_id
@@ -225,7 +235,10 @@ def parse_patch_app(raw: str | None) -> dict[str, Any]:
         # 명시 삭제 KEY 목록. 핸들러가 소비 후 제거.
         out["secretsRemove"] = _parse_secrets_remove(body)
     if "cognitoProtect" in body:
-        out["cognitoProtect"] = _bool(body, "cognitoProtect", False)
+        value = _bool(body, "cognitoProtect", False)
+        if value and frontend_mode() == "private":
+            raise errors.cognito_protect_unavailable()
+        out["cognitoProtect"] = value
     if len(out) == 0:
         raise errors.validation("변경할 내용이 없어요.")
     return out

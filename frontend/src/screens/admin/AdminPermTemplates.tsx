@@ -6,6 +6,7 @@ import { useState } from "react";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { ErrorNotice, Modal, SaveBanner, Skeleton, useSaveFeedback } from "../../components/common.js";
 import { useMutation, useQuery } from "../../lib/ApiProvider.js";
+import { ConfirmDeleteModal } from "./ConfirmDeleteModal.js";
 import type { PermissionTemplate } from "../../lib/types.js";
 
 export function AdminPermTemplates(): JSX.Element {
@@ -15,7 +16,7 @@ export function AdminPermTemplates(): JSX.Element {
   );
   const [editing, setEditing] = useState<PermissionTemplate | null>(null);
   const saved = useSaveFeedback();
-  const delMut = useMutation<string, void>((a, id) => a.adminDeletePermTemplate(id));
+  const [deleting, setDeleting] = useState<PermissionTemplate | null>(null);
 
   if (error) return <ErrorNotice error={error} />;
   if (loading) return <Skeleton height={44} count={3} />;
@@ -60,10 +61,7 @@ export function AdminPermTemplates(): JSX.Element {
                       type="button"
                       className="row-act"
                       aria-label="삭제"
-                      onClick={async () => {
-                        await delMut.run(t.permId).catch(() => undefined);
-                        reload();
-                      }}
+                      onClick={() => setDeleting(t)}
                     >
                       <Trash2 size={15} className="icon" />
                     </button>
@@ -74,6 +72,19 @@ export function AdminPermTemplates(): JSX.Element {
           })}
         </tbody>
       </table>
+
+      {deleting && (
+        <ConfirmDeleteModal
+          title="권한 템플릿을 삭제할까요?"
+          targetName={deleting.displayName}
+          onConfirm={(a) => a.adminDeletePermTemplate(deleting.permId)}
+          onClose={() => setDeleting(null)}
+          onDeleted={() => {
+            setDeleting(null);
+            reload();
+          }}
+        />
+      )}
 
       {editing && (
         <PermModal

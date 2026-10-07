@@ -22,6 +22,8 @@ ERROR_CODES = frozenset(
         "PERMISSION_TEMPLATE_NOT_FOUND",
         "PROVIDER_DISABLED",
         "INTERNET_FACING_NOT_ALLOWED",
+        "COGNITO_PROTECT_UNAVAILABLE",
+        "IN_USE",
         "INVALID_STATE",
         "CONFLICT",
         "CONNECTION_NOT_READY",
@@ -118,6 +120,20 @@ class _Errors:
             "INTERNET_FACING_NOT_ALLOWED",
             "회사 밖 접속은 현재 허용되어 있지 않아요. 관리자에게 문의해주세요.",
         )
+
+    @staticmethod
+    def cognito_protect_unavailable() -> ApiError:
+        """private 모드(D19)에서 로그인 보호(cognitoProtect=true) 요청 — Hosted UI 가 PrivateLink 미지원(D16)."""
+        return ApiError(
+            400,
+            "COGNITO_PROTECT_UNAVAILABLE",
+            "사내 전용 설치에서는 로그인 보호를 쓸 수 없어요. 로그인 보호를 끈 채로 진행해 주세요.",
+        )
+
+    @staticmethod
+    def in_use(msg: str) -> ApiError:
+        """사용 중인 프리셋·권한 템플릿 삭제 시도(QA M3). msg 는 사용 앱 수를 담은 한국어 안내."""
+        return ApiError(409, "IN_USE", msg)
 
     @staticmethod
     def invalid_state(msg: str) -> ApiError:

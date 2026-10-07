@@ -312,6 +312,22 @@ export class NetworkStack extends Stack {
     });
     sleepRule.addTarget(new events_targets.LambdaFunction(sleepTransitionFunction));
 
+    // ── 트리거: 유휴 알람 고착 보정 스윕(QA N5, DESIGN 3.5 2026-10-08) ─────────────
+    //  알람은 상태 *전이*에만 이벤트를 낸다 → CREATING 중 ALARM으로 바뀌어 건너뛴 앱은 다시 발화하지 않는다.
+    //  15분마다 sleep-transition을 `{"sweep": true}`로 호출해, sleepMode≠always-on·status=ACTIVE·
+    //  runtimeState=RUNNING이고 유휴 알람이 ALARM인 앱을 재운다(일반 sleep 경로와 동일 판정 — backend 소유).
+    //  공유 규칙 1개(앱별 아님) → 앱 삭제 시 network 잔여 리소스 없음.
+    const sweepRule = new events.Rule(this, "IdleSleepSweepRule", {
+      ruleName: `${prefix}-idle-sleep-sweep`,
+      description: "periodic sweep -> sleep apps whose idle alarm is stuck in ALARM (QA N5)",
+      schedule: events.Schedule.rate(Duration.minutes(15)),
+    });
+    sweepRule.addTarget(
+      new events_targets.LambdaFunction(sleepTransitionFunction, {
+        event: events.RuleTargetInput.fromObject({ sweep: true }),
+      }),
+    );
+
     // Waker Target Group — ALB마다 1개(계약 §1.2, 버그 B). Target Group은 ALB 1대에만 연결될 수 있어
     //  TG 1개를 두 ALB가 공유하면 두 번째 ALB의 잠자기 전환(ModifyRule forward→Waker TG)이 실패한다.
     //  - internet n=0: 기존 `WakerTg`(`${prefix}-waker-tg`) 리소스를 **그대로** 둔다(논리 ID·이름 불변 —
@@ -589,6 +605,15 @@ export class NetworkStack extends Stack {
     ssmRead(fns.sleep);
     ecsControl(fns.sleep);
     elbControl(fns.sleep);
+    // 스윕(QA N5): 유휴 알람 상태 조회. 앱 목록은 ddbRw의 Query(tableArn/index/* — GSI2 `status`)로 충분.
+    //  cloudwatch:DescribeAlarms는 리소스 레벨 권한으로 좁히지 않는다(read-only, 정당 예외 — conventions 7장).
+    fns.sleep.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "SweepDescribeAlarms",
+        actions: ["cloudwatch:DescribeAlarms"],
+        resources: ["*"],
+      }),
+    );
   }
 
   /** 공유 참조 SSM 파라미터 발행. 경로: /apphub/{stage}/network/{key} */

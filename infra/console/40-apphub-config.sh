@@ -34,6 +34,7 @@ cat > "${OUT}" <<JSON
   "cognitoIdpEndpoint": "$(esc "${IDP}")",
   "appsDomain": "$(esc "${APPHUB_APPS_DOMAIN:-}")",
   "stage": "$(esc "${APPHUB_STAGE:-}")",
+  "frontendMode": "$(esc "${APPHUB_FRONTEND_MODE:-private}")",
   "mock": ${MOCK}
 }
 JSON

@@ -281,6 +281,65 @@ describe("network 스택", () => {
       });
     });
 
+    it("[N5] 유휴 알람 고착 보정 스윕: rate(15 minutes) → sleep-transition, 입력 {sweep:true}", () => {
+      const fnId = Object.keys(
+        template.findResources("AWS::Lambda::Function", { Properties: { FunctionName: "apphub-dev-sleep-transition" } }),
+      )[0];
+      template.hasResourceProperties("AWS::Events::Rule", {
+        Name: "apphub-dev-idle-sleep-sweep",
+        ScheduleExpression: "rate(15 minutes)",
+        State: "ENABLED",
+        Targets: [
+          Match.objectLike({
+            Arn: { "Fn::GetAtt": [fnId, "Arn"] },
+            Input: JSON.stringify({ sweep: true }),
+          }),
+        ],
+      });
+    });
+
+    it("[N5] sleep-transition 역할에 cloudwatch:DescribeAlarms(*, 단독 statement) + GSI Query(index/*)", () => {
+      const fns = template.findResources("AWS::Lambda::Function", { Properties: { FunctionName: "apphub-dev-sleep-transition" } });
+      const roleId = (Object.values(fns)[0].Properties as { Role: { "Fn::GetAtt": [string, string] } }).Role["Fn::GetAtt"][0];
+      type Stmt = { Sid?: string; Action?: unknown; Resource?: unknown };
+      const stmts: Stmt[] = [];
+      for (const pol of Object.values(template.findResources("AWS::IAM::Policy"))) {
+        const props = pol.Properties as { Roles?: unknown; PolicyDocument?: { Statement?: Stmt[] } };
+        if (JSON.stringify(props.Roles) === JSON.stringify([{ Ref: roleId }])) stmts.push(...(props.PolicyDocument?.Statement ?? []));
+      }
+      const da = stmts.find((x) => x.Sid === "SweepDescribeAlarms");
+      expect(da, "SweepDescribeAlarms statement").toBeDefined();
+      expect(da!.Action).toBe("cloudwatch:DescribeAlarms");
+      expect(da!.Resource).toBe("*");
+      const ddb = stmts.find((x) => x.Sid === "AppTableRW");
+      expect(JSON.stringify(ddb!.Action)).toContain("dynamodb:Query");
+      expect(JSON.stringify(ddb!.Resource)).toContain("table/apphub-dev-main/index/*");
+    });
+
+    it("Resource:'*' statement는 허용 목록(ElbDescribe, SweepDescribeAlarms)만 — 우발적 * 금지", () => {
+      const allowed: Record<string, string[]> = {
+        ElbDescribe: [
+          "elasticloadbalancing:DescribeListeners",
+          "elasticloadbalancing:DescribeRules",
+          "elasticloadbalancing:DescribeTargetGroups",
+        ],
+        SweepDescribeAlarms: ["cloudwatch:DescribeAlarms"],
+      };
+      const unexpected: string[] = [];
+      for (const pol of Object.values(template.findResources("AWS::IAM::Policy"))) {
+        const doc = (pol.Properties as { PolicyDocument?: { Statement?: Array<{ Sid?: string; Action?: unknown; Resource?: unknown }> } })
+          .PolicyDocument;
+        for (const st of doc?.Statement ?? []) {
+          const r = st.Resource;
+          if (!(r === "*" || (Array.isArray(r) && r.length === 1 && r[0] === "*"))) continue;
+          const acts = (Array.isArray(st.Action) ? st.Action : [st.Action]).map(String).sort();
+          const sid = st.Sid ?? "<no-sid>";
+          if (!allowed[sid] || JSON.stringify(acts) !== JSON.stringify(allowed[sid])) unexpected.push(`${sid}:${acts.join(",")}`);
+        }
+      }
+      expect(unexpected, `허용 목록 밖 Resource:"*": ${unexpected.join(" | ")}`).toEqual([]);
+    });
+
     it("두 규칙이 각각 복원/잠자기 Lambda를 InvokePermission으로 호출한다", () => {
       // EventBridge → Lambda invoke 권한(Principal events.amazonaws.com) 2건 이상.
       const perms = template.findResources("AWS::Lambda::Permission");

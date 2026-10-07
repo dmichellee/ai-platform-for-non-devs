@@ -92,6 +92,12 @@ export interface AppRuntimeParams {
    * false(갱신)면 desiredCount 미지정(현재 값 유지 — 스케줄러/Waker 드리프트 방지, DESIGN 3.5).
    */
   readonly isInitialDeploy: boolean;
+  /**
+   * 배포 식별자(D8, QA D-1) — 선택. buildspec(deploy.yml·provisioner.yml runtime)이 `${CODEBUILD_BUILD_ID}`를
+   * `-c deployId=` 로 넘긴다. 있으면 컨테이너 docker 라벨 `apphub.deployId`로 넣어 매 배포 새 태스크 정의
+   * 리비전 → 태스크 교체(값만 바꾼 시크릿도 반영). 없으면 라벨 생략(기존 synth 결과 불변).
+   */
+  readonly deployId?: string;
 }
 
 /** 컨텍스트에서 문자열을 꺼낸다(필수). */
@@ -167,7 +173,14 @@ export function loadRuntimeParams(app: App, stage: Stage, appId: string): AppRun
     ...(schedule ? { schedule } : {}),
     cognitoProtect: ctxBool(app, "cognitoProtect", scheme === "internet-facing"),
     isInitialDeploy: ctxBool(app, "isInitialDeploy", true),
+    ...deployIdParam(app),
   };
+}
+
+/** `-c deployId=` (선택, D-1). 비어 있으면 미지정. */
+function deployIdParam(app: App): { deployId?: string } {
+  const deployId = ctxStringOpt(app, "deployId");
+  return deployId ? { deployId } : {};
 }
 
 /** `-c albIndex=` (선택, 기본 0). 0 이상의 정수가 아니면 실패(잘못된 ALB에 규칙을 붙이지 않도록). */

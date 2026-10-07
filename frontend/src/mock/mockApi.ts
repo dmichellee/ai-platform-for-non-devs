@@ -4,6 +4,7 @@
  * 실제 배포/실행 API는 호출하지 않는다(요구 제약).
  */
 import { ApiError, type ApiClient } from "../lib/api.js";
+import { frontendMode } from "../lib/config.js";
 import { computeOwnerPrefix, type UserSession } from "../auth/tokens.js";
 import type {
   AdminSettings,
@@ -55,6 +56,11 @@ export class MockApiClient implements ApiClient {
   private settings: AdminSettings = clone(fx.mockSettings);
   private users: PlatformUser[] = clone(fx.mockUsers);
   private alb: AlbRegistry[] = clone(fx.mockAlbRegistry);
+
+  /** 플랫폼 전체 앱(본인 + 타인) — 관리자 삭제 차단 판정용. */
+  private allApps(): App[] {
+    return [...this.apps, ...this.otherApps];
+  }
 
   private findApp(appId: string): App {
     const all = [...this.apps, ...this.otherApps];
@@ -131,6 +137,10 @@ export class MockApiClient implements ApiClient {
         "지금 배포가 진행 중이에요. 배포가 끝난 뒤 비밀 값을 다시 저장해 주세요.",
         409,
       );
+    }
+    // D16: 사내 전용 설치(private)에서는 로그인 보호를 켤 수 없다(이미 켜진 값 유지·끄기는 허용).
+    if (b.cognitoProtect === true && !app.cognitoProtect && frontendMode() === "private") {
+      throw new ApiError("COGNITO_PROTECT_UNAVAILABLE", "사내 전용 설치에서는 로그인 보호를 켤 수 없어요.", 400);
     }
     if (b.autoDeployEnabled !== undefined) app.autoDeployEnabled = b.autoDeployEnabled;
     if (b.sleepMode !== undefined) app.sleepMode = b.sleepMode;
@@ -454,6 +464,11 @@ export class MockApiClient implements ApiClient {
   }
   async adminDeletePreset(presetId: string): Promise<void> {
     await delay();
+    // M3: 사용 중인 프리셋은 삭제 불가 — 409 IN_USE.
+    const user = this.allApps().find((a) => a.presetId === presetId);
+    if (user) {
+      throw new ApiError("IN_USE", `이 프리셋을 사용 중인 앱('${user.name}')이 있어요. 그 앱을 먼저 삭제해주세요.`, 409);
+    }
     this.presets = this.presets.filter((x) => x.presetId !== presetId);
   }
   async adminListPermTemplates(): Promise<PermissionTemplate[]> {
@@ -486,6 +501,11 @@ export class MockApiClient implements ApiClient {
   }
   async adminDeletePermTemplate(permId: string): Promise<void> {
     await delay();
+    // M3: 사용 중인 권한 템플릿은 삭제 불가 — 409 IN_USE.
+    const user = this.allApps().find((a) => a.permissionTemplateId === permId);
+    if (user) {
+      throw new ApiError("IN_USE", `이 권한 템플릿을 사용 중인 앱('${user.name}')이 있어요. 그 앱을 먼저 삭제해주세요.`, 409);
+    }
     this.permTemplates = this.permTemplates.filter((x) => x.permId !== permId);
   }
   async adminListUsers(): Promise<PlatformUser[]> {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..auth.identity import require_admin
+from ..data.apps import count_apps_referencing
 from ..data.config_repo import (
     delete_permission_template,
     delete_preset,
@@ -76,6 +77,12 @@ def remove_preset(ctx: RouteContext) -> ProxyResult:
     preset_id = (ctx.params.get("presetId") or "").strip()
     if not preset_id:
         raise errors.validation("프리셋 식별자가 필요해요.")
+    # QA M3: 사용 중인 프리셋을 지우면 다음 배포가 cpu=0 으로 실패한다 → 거부(DELETING 앱 제외).
+    in_use = count_apps_referencing("presetId", preset_id)
+    if in_use > 0:
+        raise errors.in_use(
+            f"이 크기를 쓰는 앱이 {in_use}개 있어요. 그 앱을 먼저 삭제한 뒤 다시 시도해 주세요."
+        )
     delete_preset(preset_id)
     return no_content()
 
@@ -111,6 +118,12 @@ def remove_permission_template(ctx: RouteContext) -> ProxyResult:
     perm_id = (ctx.params.get("permId") or "").strip()
     if not perm_id:
         raise errors.validation("템플릿 식별자가 필요해요.")
+    # QA M3: 사용 중인 권한 템플릿을 지우면 다음 배포에서 앱 권한이 조용히 사라진다 → 거부.
+    in_use = count_apps_referencing("permissionTemplateId", perm_id)
+    if in_use > 0:
+        raise errors.in_use(
+            f"이 앱 유형을 쓰는 앱이 {in_use}개 있어요. 그 앱을 먼저 삭제한 뒤 다시 시도해 주세요."
+        )
     delete_permission_template(perm_id)
     return no_content()
 

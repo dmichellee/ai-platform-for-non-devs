@@ -62,19 +62,60 @@ def count_apps_by_owner(owner_id: str) -> int:
     return res.get("Count", 0)
 
 
+def _collect(op: Any, **params: Any) -> list[dict[str, Any]]:
+    """query/scan 을 LastEvaluatedKey 끝까지 따라가며 아이템을 모은다(1MB 페이지 한도 대응)."""
+    items: list[dict[str, Any]] = []
+    while True:
+        res = op(**params)
+        items.extend(res.get("Items", []))
+        last = res.get("LastEvaluatedKey")
+        if not last:
+            return items
+        params = {**params, "ExclusiveStartKey": last}
+
+
 def list_all_apps(status: str | None = None) -> list[dict[str, Any]]:
-    """관리자 전체 현황(GSI2: status). status 미지정 시 App 메타 아이템 스캔."""
+    """관리자 전체 현황(GSI2: status). status 미지정 시 App 메타 아이템 스캔. 전체 페이지를 모은다."""
     if status:
-        res = table().query(
+        items = _collect(
+            table().query,
             IndexName="GSI2",
             KeyConditionExpression=Key("status").eq(status) & Key("SK").eq(APP_META_SK),
         )
-        return [_to_app(i) for i in res.get("Items", [])]  # type: ignore[misc]
-    res = table().scan(
+        return [_to_app(i) for i in items]  # type: ignore[misc]
+    items = _collect(
+        table().scan,
         FilterExpression="entityType = :t AND SK = :sk",
         ExpressionAttributeValues={":t": "App", ":sk": APP_META_SK},
     )
-    return [_to_app(i) for i in res.get("Items", [])]  # type: ignore[misc]
+    return [_to_app(i) for i in items]  # type: ignore[misc]
+
+
+# 프리셋·권한 템플릿 참조 필드(App 레코드) — 사용 중 삭제 거부(QA M3)에서 쓴다.
+APP_CONFIG_REF_FIELDS = ("presetId", "permissionTemplateId")
+
+
+def count_apps_referencing(field: str, value: str) -> int:
+    """App.{field}==value 이고 status≠DELETING 인 앱 수(관리자 CONFIG 삭제 전 검사, QA M3).
+
+    관리자 저빈도 작업이라 App 메타 스캔(전체 페이지)으로 충분하다 — 전용 GSI 를 두지 않는다.
+    DELETING 앱은 곧 사라지고 더 이상 배포되지 않으므로 사용 중으로 보지 않는다.
+    """
+    if field not in APP_CONFIG_REF_FIELDS:
+        raise ValueError(f"count_apps_referencing: 지원하지 않는 필드 {field}")
+    items = _collect(
+        table().scan,
+        FilterExpression="entityType = :t AND SK = :sk AND #f = :v AND #s <> :deleting",
+        ExpressionAttributeNames={"#f": field, "#s": "status"},
+        ExpressionAttributeValues={
+            ":t": "App",
+            ":sk": APP_META_SK,
+            ":v": value,
+            ":deleting": "DELETING",
+        },
+        ProjectionExpression="PK",
+    )
+    return len(items)
 
 
 def update_app(app_id: str, patch: dict[str, Any]) -> dict[str, Any]:

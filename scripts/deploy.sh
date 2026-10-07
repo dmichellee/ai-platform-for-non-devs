@@ -512,6 +512,7 @@ else
     CFG_REGION="${REGION}" \
     CFG_STAGE="${STAGE}" \
     CFG_APPS_DOMAIN="${APPS_DOMAIN}" \
+    CFG_FRONTEND_MODE="${FRONTEND_MODE}" \
     node -e '
       const fs = require("fs");
       const s = (k) => (process.env[k] && process.env[k] !== "None") ? process.env[k] : "";
@@ -527,6 +528,8 @@ else
         cognitoIdpEndpoint: s("CFG_COGNITO_IDP_ENDPOINT") || `https://cognito-idp.${region}.amazonaws.com/`,
         appsDomain: s("CFG_APPS_DOMAIN"),
         stage: s("CFG_STAGE"),
+        // D16: 플랫폼 웹 배포 모드 — private이면 프론트가 로그인 보호 토글을 비활성(백엔드도 거부).
+        frontendMode: s("CFG_FRONTEND_MODE") === "private" ? "private" : "public",
         mock: !(apiUrl && userPoolId && userPoolClientId),
       };
       fs.writeFileSync(process.env.CONFIG_OUT, JSON.stringify(cfg, null, 2) + "\n");

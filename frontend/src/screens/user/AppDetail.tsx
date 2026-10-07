@@ -48,7 +48,7 @@ import {
 } from "../../components/ScheduleEditor.js";
 import { navigate, useNavigate, useRoute } from "../../lib/router.js";
 import { useAuth } from "../../auth/AuthContext.js";
-import { appsDomainLabel } from "../../lib/config.js";
+import { appsDomainLabel, frontendMode } from "../../lib/config.js";
 import { sessionInitial } from "../../auth/tokens.js";
 import type {
   App,
@@ -71,6 +71,9 @@ import {
   FIRST_DEPLOY_PENDING_HINT,
   METRIC_RANGE_LABEL,
   METRIC_RANGE_ORDER,
+  PROTECT_DESC_TEXT,
+  PROTECT_DETAIL_TEXT,
+  PROTECT_UNAVAILABLE_TEXT,
   REDEPLOY_PENDING_MESSAGE,
   REDEPLOY_SKIPPED_MESSAGE,
   SCHEME_LABEL,
@@ -429,7 +432,7 @@ function OverviewTab({ app, firstDeployPending }: { app: App; firstDeployPending
       </div>
       {app.cognitoProtect && (
         <div className="kv">
-          <span className="k">접근 보호</span>
+          <span className="k">로그인 보호</span>
           <span className="v">로그인한 사람만 접속</span>
         </div>
       )}
@@ -724,6 +727,8 @@ function SettingsTab({
   // 기존 시간표가 있으면 그대로, 없으면 기본(평일 09:00–19:00)으로 편집 시작.
   const [schedule, setSchedule] = useState<Schedule>(app.schedule ?? DEFAULT_SCHEDULE);
   const [protect, setProtect] = useState(app.cognitoProtect);
+  // D16: 사내 전용 설치(private)에서는 로그인 보호를 켤 수 없다. 이미 켜져 있던 앱은 끄는 것만 허용.
+  const protectUnavailable = frontendMode() === "private" && !app.cognitoProtect;
   const [envRows, setEnvRows] = useState(
     Object.entries(app.envVars).map(([key, value]) => ({ key, value })),
   );
@@ -734,6 +739,8 @@ function SettingsTab({
   const [secretState, setSecretState] = useState<Record<string, { removed: boolean; newValue: string | null }>>({});
   const [newSecrets, setNewSecrets] = useState<{ key: string; value: string }[]>([]);
   const saveMut = useMutation<PatchAppRequest, PatchAppResponse>((a, body) => a.patchApp(app.appId, body));
+  // 서버가 로그인 보호를 거부하면(400 COGNITO_PROTECT_UNAVAILABLE) 토글 바로 아래에 서버 message 를 보여준다.
+  const protectError = saveMut.error?.code === "COGNITO_PROTECT_UNAVAILABLE" ? saveMut.error : null;
   // D8: 비밀값 변경 저장 = 즉시 재배포. 저장 전 확인 모달 + 저장 후 재배포 결과 안내.
   const [confirmRedeploy, setConfirmRedeploy] = useState(false);
   const [redeploy, setRedeploy] = useState<RedeployResult | null>(null);
@@ -841,11 +848,28 @@ function SettingsTab({
         </div>
         <div className="switch-row">
           <div className="txt">
-            <div className="t">접근 보호</div>
-            <div className="d">로그인한 사람만 이 앱에 접속할 수 있게 해요.</div>
+            <div className="t">로그인 보호</div>
+            <div className="d">{PROTECT_DESC_TEXT}</div>
+            <div className="d">{PROTECT_DETAIL_TEXT}</div>
+            {protectUnavailable && (
+              <div className="d" id="protect-unavailable">
+                {PROTECT_UNAVAILABLE_TEXT}
+              </div>
+            )}
           </div>
-          <Toggle on={protect} onChange={setProtect} label="접근 보호" />
+          <Toggle
+            on={protect}
+            onChange={setProtect}
+            label="로그인 보호"
+            disabled={protectUnavailable}
+            describedBy={protectUnavailable ? "protect-unavailable" : undefined}
+          />
         </div>
+        {protectError && (
+          <div className="mt3">
+            <ErrorNotice error={protectError} />
+          </div>
+        )}
       </div>
 
       <div className="panel">
@@ -902,7 +926,7 @@ function SettingsTab({
         setNewSecrets={setNewSecrets}
       />
 
-      {saveMut.error && <ErrorNotice error={saveMut.error} />}
+      {saveMut.error && !protectError && <ErrorNotice error={saveMut.error} />}
       {redeploy && !saveMut.error && (
         <RedeployNotice result={redeploy} onOpenDeployments={onOpenDeployments} />
       )}

@@ -44,6 +44,11 @@ STATUS_ORDER 인덱스가 현재보다 낮은 값으로도 내리지 않는다(�
   b) 시크릿 지연 정리(D8): JSON 키 − (secretKeys ∪ 활성 태스크 정의 참조 KEY) 를 JSON 에서 제거.
      실패 배포에서는 수행하지 않는다. 후처리 실패는 로그만 남기고 삼킨다(배포 상태 기록은 이미 끝남).
 
+런타임 배포 실패 후처리(2026-10-08, QA N2 — _after_runtime_failure):
+  파이프라인 FAILED 중 첫 배포가 아닌 것(App 이 CREATING 이 아니어서 전이가 일어나지 않은 경우) /
+  provisioner runtime 빌드 FAILED 에도 (a) 재수면만 수행한다. 배포 buildspec 이 잠든 앱의 규칙 forward 를
+  cdk deploy 전에 앱 TG 로 되돌리므로, 실패해도 Waker 경로를 복구해야 한다. 첫 배포(CREATING)는 기존대로.
+
 무거운 작업(폴링/재시도)은 하지 않는다("메인 서버 무부하") — 단발 조회 후 DDB 갱신만.
 로깅은 wake 모듈과 동일하게 print 스타일.
 """
@@ -307,6 +312,11 @@ def _handle_pipeline_event(detail: dict[str, Any], stage_value: str) -> dict[str
         result["appStatus"] = app_transition
     if target_status == "SUCCEEDED" and result.get("status") == "SUCCEEDED":
         result["afterSuccess"] = _after_runtime_success(stage_value, app_id)
+    elif target_status == "FAILED" and app_transition is None:
+        # 첫 배포가 아닌(이미 ACTIVE) 앱의 배포 실패: 배포 전 규칙 복귀(N2)로 forward 가 앱 TG(태스크 0)에
+        # 남아 있을 수 있다 → 성공 경로와 같은 재수면으로 Waker 경로를 되살린다. 첫 배포(CREATING→FAILED,
+        # app_transition="FAILED")는 기존대로 건드리지 않는다.
+        result["afterFailure"] = _after_runtime_failure(app_id)
     return result
 
 
@@ -413,6 +423,8 @@ def _handle_build_event(detail: dict[str, Any], stage_value: str) -> dict[str, A
                 result["failureCategory"] = failure_category
             if target_status == "SUCCEEDED":
                 result["afterSuccess"] = _after_runtime_success(stage_value, app_id)
+            elif target_status == "FAILED":
+                result["afterFailure"] = _after_runtime_failure(app_id)
             return result
         # 경합에서 짐(접수 API 가 방금 PENDING 을 만듦) → 그 레코드에 일반 전이.
         existing = find_deployment_by_build(app_id, build_ids, consistent=True)
@@ -422,6 +434,9 @@ def _handle_build_event(detail: dict[str, Any], stage_value: str) -> dict[str, A
     result = _advance(app_id, existing, target_status, failure_category=failure_category)
     if target_status == "SUCCEEDED" and result.get("status") == "SUCCEEDED":
         result["afterSuccess"] = _after_runtime_success(stage_value, app_id)
+    elif target_status == "FAILED":
+        # provisioner runtime(롤백·시크릿 변경) 실패도 배포 전 규칙 복귀(N2)를 거쳤을 수 있다 → 재수면.
+        result["afterFailure"] = _after_runtime_failure(app_id)
     return result
 
 
@@ -474,6 +489,20 @@ def _after_runtime_success(stage_value: str, app_id: str) -> dict[str, Any]:
         print("[deploy-notify] secret prune failed:", type(err).__name__)
         out["secrets"] = {"reason": "error"}
     return out
+
+
+def _after_runtime_failure(app_id: str) -> dict[str, Any]:
+    """배포 실패 후(첫 배포 제외): 잠자는 앱 재수면(QA N2). 실패는 로그 후 삼킴(배포 기록은 이미 끝남).
+
+    배포 buildspec 은 잠든 앱이면 cdk deploy 전에 규칙 forward 를 앱 TG 로 되돌린다(desiredCount 0 유지).
+    배포가 실패하면 그 상태(태스크 0개 TG 로 forward → 503)로 남으므로 성공 경로와 같은 재수면이 필요하다.
+    시크릿 지연 정리는 실패 배포에서 하지 않는다(D8).
+    """
+    try:
+        return {"sleep": _resleep_if_sleeping(app_id)}
+    except Exception as err:  # noqa: BLE001
+        print("[deploy-notify] re-sleep after failure failed:", type(err).__name__, str(err)[:200])
+        return {"sleep": {"reason": "error"}}
 
 
 def _resleep_if_sleeping(app_id: str) -> dict[str, Any]:

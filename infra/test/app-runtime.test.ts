@@ -381,6 +381,80 @@ describe("app-runtime — D16 cognitoProtect(internet-facing)", () => {
   it("여전히 SG 개방 대역이 없다(앱 스택은 D17 예외 SG 없음)", () => {
     assertNoOpenIngress(template, []);
   });
+
+  // ── QA N1 / D16(2026-10-08): 앱 전용 Cognito 앱 클라이언트 ─────────────────
+  it("[N1] 앱 전용 UserPoolClient 1개 — secret 발급, code grant, openid+email, COGNITO, 이름 규약", () => {
+    template.resourceCountIs("AWS::Cognito::UserPoolClient", 1);
+    template.hasResourceProperties("AWS::Cognito::UserPoolClient", {
+      ClientName: "apphub-dev-app-webapp01-auth",
+      GenerateSecret: true,
+      AllowedOAuthFlowsUserPoolClient: true,
+      AllowedOAuthFlows: ["code"],
+      AllowedOAuthScopes: ["openid", "email"],
+      SupportedIdentityProviders: ["COGNITO"],
+      // User Pool은 platform SSM 참조(배포 시점 resolve).
+      UserPoolId: { Ref: Match.stringLikeRegexp("SsmParameterValueapphubdevplatformuserpoolid") },
+    });
+  });
+
+  it("[N1] 콜백 URL은 정확히 1개 `https://myweb.{appsDomain}/oauth2/idpresponse` — 와일드카드 없음", () => {
+    const [client] = Object.values(template.findResources("AWS::Cognito::UserPoolClient"));
+    const cbs = (client.Properties as Record<string, unknown>)["CallbackURLs"] as unknown[];
+    expect(cbs.length).toBe(1);
+    const join = (cbs[0] as { "Fn::Join": [string, unknown[]] })["Fn::Join"];
+    expect(join[0]).toBe("");
+    const parts = join[1];
+    expect(parts[0]).toBe("https://myweb.");
+    expect(JSON.stringify(parts[1])).toMatch(/"Ref":"SsmParameterValueapphubdevnetworkappsdomain/);
+    expect(parts[2]).toBe("/oauth2/idpresponse");
+    expect(JSON.stringify(cbs)).not.toContain("*");
+  });
+
+  it("[N1] 리스너 규칙 authenticate-cognito가 이 앱 클라이언트(Ref)를 쓰고, 공유 app-auth-client-id SSM을 읽지 않는다", () => {
+    const clientId = Object.keys(template.findResources("AWS::Cognito::UserPoolClient"))[0];
+    template.hasResourceProperties("AWS::ElasticLoadBalancingV2::ListenerRule", {
+      Actions: Match.arrayWith([
+        Match.objectLike({
+          Type: "authenticate-cognito",
+          AuthenticateCognitoConfig: Match.objectLike({
+            UserPoolClientId: { Ref: clientId },
+            UserPoolArn: { Ref: Match.stringLikeRegexp("SsmParameterValueapphubdevplatformuserpoolarn") },
+            UserPoolDomain: { Ref: Match.stringLikeRegexp("SsmParameterValueapphubdevplatformuserpooldomain") },
+          }),
+        }),
+      ]),
+    });
+    expect(JSON.stringify(template.toJSON())).not.toContain("app-auth-client-id");
+  });
+});
+
+describe("app-runtime — cognitoProtect=false 이면 Cognito 앱 클라이언트 없음 (N1)", () => {
+  it("UserPoolClient 0개 + 규칙은 forward 단독", () => {
+    const t = synth(
+      baseParams({ appId: "open0001", subdomain: "open", scheme: "internet-facing", cognitoProtect: false, sleepMode: "on-demand", schedule: undefined }),
+    );
+    t.resourceCountIs("AWS::Cognito::UserPoolClient", 0);
+    expect(JSON.stringify(t.findResources("AWS::ElasticLoadBalancingV2::ListenerRule"))).not.toContain("authenticate-cognito");
+  });
+});
+
+describe("app-runtime — deployId docker 라벨 (D8, QA D-1)", () => {
+  const containerOf = (t: Template): Record<string, unknown> => {
+    const [td] = Object.values(t.findResources("AWS::ECS::TaskDefinition"));
+    return ((td.Properties as Record<string, unknown>)["ContainerDefinitions"] as Array<Record<string, unknown>>)[0];
+  };
+  it("deployId가 있으면 컨테이너 DockerLabels apphub.deployId=<값>", () => {
+    const t = synth(baseParams({ deployId: "apphub-dev-app-testapp0-deploy:11112222-3333" }));
+    expect(containerOf(t)["DockerLabels"]).toEqual({ "apphub.deployId": "apphub-dev-app-testapp0-deploy:11112222-3333" });
+  });
+  it("deployId가 다르면 태스크 정의가 달라진다(새 리비전 → 태스크 교체)", () => {
+    const a = containerOf(synth(baseParams({ deployId: "build-a" })));
+    const b = containerOf(synth(baseParams({ deployId: "build-b" })));
+    expect(JSON.stringify(a)).not.toEqual(JSON.stringify(b));
+  });
+  it("deployId가 없으면 DockerLabels 자체가 없다(기존 synth 불변)", () => {
+    expect(containerOf(synth(baseParams()))["DockerLabels"]).toBeUndefined();
+  });
 });
 
 describe("app-runtime — scaleMetric=requests 오토스케일링 (QA F-3 회귀 방지)", () => {

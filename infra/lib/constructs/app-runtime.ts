@@ -3,6 +3,7 @@ import {
   RemovalPolicy,
   aws_applicationautoscaling as appscaling,
   aws_cloudwatch as cw,
+  aws_cognito as cognito,
   aws_ec2 as ec2,
   aws_ecr as ecr,
   aws_ecs as ecs,
@@ -31,7 +32,7 @@ import type { AppRuntimeParams } from "./app-params";
  *  - 로그 그룹(retention 30, 스택 삭제 시 함께)
  *  - EventBridge Scheduler 2개(가동 스케줄 시작/종료)
  *  - 시크릿은 ECS secrets(환경변수 아님, D8)
- *  - D16 Cognito 인증 리스너 옵션(cognitoProtect)
+ *  - D16 Cognito 인증 리스너 옵션(cognitoProtect) + 앱 전용 Cognito 앱 클라이언트(콜백 정확히 1개)
  *
  * 드리프트 방지(DESIGN 3.5): desiredCount는 최초 생성 시에만 지정, 갱신 배포에선 미지정.
  * 공유 리소스(VPC/ALB/리스너/SG/hosted zone)는 network SSM에서 읽는다(Export 잠금 방지).
@@ -201,6 +202,9 @@ export class AppRuntime extends Construct {
       },
       secrets, // ← 시크릿은 여기(환경변수 아님)
       portMappings: [{ containerPort: 8080, protocol: ecs.Protocol.TCP }],
+      // D8/QA D-1: 배포 식별자 라벨 — 매 배포 태스크 정의가 달라져 새 리비전 → 태스크 교체.
+      //  KEY 목록이 같고 값만 바뀐 시크릿 재배포도 새 태스크가 새 값을 읽는다. 미지정이면 라벨 생략.
+      ...(p.deployId ? { dockerLabels: { "apphub.deployId": p.deployId } } : {}),
     });
     void container;
 
@@ -281,21 +285,32 @@ export class AppRuntime extends Construct {
       action: elbv2.ListenerAction.forward([this.targetGroup]),
     });
 
-    // D16: authenticate-cognito 네이티브 액션. CDK L2(authenticateOidc)는 client_secret을 요구해
-    //  Cognito 퍼블릭 클라이언트와 맞지 않으므로 CfnListenerRule escape hatch로 정확히 기술한다.
+    // D16: authenticate-cognito 네이티브 액션. CDK L2(authenticateOidc)는 OIDC 엔드포인트를 요구해
+    //  Cognito 네이티브 액션과 맞지 않으므로 CfnListenerRule escape hatch로 정확히 기술한다.
+    //  앱 전용 Cognito 앱 클라이언트(QA N1, D16 2026-10-08): Cognito는 콜백 와일드카드를 지원하지 않아
+    //  공유 클라이언트(`*.appsDomain`)로는 redirect_mismatch. 앱마다 이 runtime 스택이 클라이언트를 소유해
+    //  콜백을 정확히 `https://{subdomain}.{appsDomain}/oauth2/idpresponse` 1개로 둔다(앱 삭제 = 스택 삭제로 정리).
+    //  User Pool·Hosted UI 도메인은 platform 소유(SSM 참조). 클라이언트 생성은 CFN 실행 역할(CDK bootstrap)이 수행.
     if (p.cognitoProtect) {
-      const userPoolArn = ssm.StringParameter.valueForStringParameter(
-        this,
-        `/apphub/${p.stage}/platform/user-pool-arn`,
-      );
-      const userPoolClientId = ssm.StringParameter.valueForStringParameter(
-        this,
-        `/apphub/${p.stage}/platform/app-auth-client-id`,
-      );
-      const userPoolDomain = ssm.StringParameter.valueForStringParameter(
-        this,
-        `/apphub/${p.stage}/platform/user-pool-domain`,
-      );
+      const platformSsm = (key: string): string =>
+        ssm.StringParameter.valueForStringParameter(this, `/apphub/${p.stage}/platform/${key}`);
+      const userPoolId = platformSsm("user-pool-id");
+      const userPoolArn = platformSsm("user-pool-arn");
+      const userPoolDomain = platformSsm("user-pool-domain");
+      // appsDomain은 SSM 토큰 → 템플릿 문자열이 Fn::Join으로 합성된다(와일드카드 없음, 정확히 1개).
+      const callbackUrl = `https://${host}/oauth2/idpresponse`;
+      const authClient = new cognito.CfnUserPoolClient(this, "AuthClient", {
+        userPoolId,
+        clientName: `${appPrefix}-auth`,
+        generateSecret: true, // ALB authenticate-cognito 요구
+        allowedOAuthFlowsUserPoolClient: true,
+        allowedOAuthFlows: ["code"],
+        allowedOAuthScopes: ["openid", "email"],
+        supportedIdentityProviders: ["COGNITO"],
+        callbackUrLs: [callbackUrl],
+        explicitAuthFlows: ["ALLOW_REFRESH_TOKEN_AUTH"],
+        preventUserExistenceErrors: "ENABLED",
+      });
       const cfnRule = rule.node.defaultChild as elbv2.CfnListenerRule;
       cfnRule.actions = [
         {
@@ -303,7 +318,7 @@ export class AppRuntime extends Construct {
           order: 1,
           authenticateCognitoConfig: {
             userPoolArn,
-            userPoolClientId,
+            userPoolClientId: authClient.ref,
             userPoolDomain,
             onUnauthenticatedRequest: "authenticate",
             scope: "openid",

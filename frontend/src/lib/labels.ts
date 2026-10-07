@@ -179,6 +179,13 @@ export const CONNECTION_TONE: Record<ConnectionStatus, BadgeTone> = {
 };
 
 // ── 에러 코드 → 보조 안내 (계약 에러 사전. message는 그대로 노출, code로 부가 힌트) ──
+/** 로그인 보호(D16) 안내 — 켜면 앱 접속 시 콘솔과 별개로 한 번 더 로그인한다. */
+export const PROTECT_DESC_TEXT = "켜면 앱에 들어갈 때 회사 계정으로 한 번 더 로그인해요.";
+export const PROTECT_DETAIL_TEXT =
+  "이 플랫폼에 이미 로그인했어도, 앱에 처음 들어갈 때 별도의 로그인 화면이 한 번 더 나타나요.";
+/** 사내 전용 설치(private 모드)에서는 로그인 보호를 켤 수 없다(D16). */
+export const PROTECT_UNAVAILABLE_TEXT = "사내 전용 설치에서는 로그인 보호를 쓸 수 없어요.";
+
 export function errorFallbackMessage(code?: string): string {
   switch (code) {
     case "QUOTA_EXCEEDED":
@@ -191,6 +198,10 @@ export function errorFallbackMessage(code?: string): string {
       return "저장소 연결이 아직 승인되지 않았어요. '저장소 연결' 메뉴에서 승인을 완료해주세요.";
     case "INTERNET_FACING_NOT_ALLOWED":
       return "회사 밖 접속은 현재 허용되지 않았어요. 관리자에게 문의해주세요.";
+    case "COGNITO_PROTECT_UNAVAILABLE":
+      return PROTECT_UNAVAILABLE_TEXT;
+    case "IN_USE":
+      return "사용 중인 앱이 있어 삭제할 수 없어요.";
     case "FORBIDDEN":
       return "이 작업을 수행할 권한이 없어요.";
     case "NOT_FOUND":

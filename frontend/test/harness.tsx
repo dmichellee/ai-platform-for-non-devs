@@ -67,13 +67,17 @@ export function setHash(hash: string): void {
 }
 
 /** 화면을 프로바이더로 감싸 렌더. api를 주입하면 목 대신 그 클라이언트를 쓴다. */
-export function renderWithProviders(ui: ReactNode, api?: ApiClient): RenderResult {
-  setConfigForTest(MOCK_CONFIG);
+export function renderWithProviders(
+  ui: ReactNode,
+  api?: ApiClient,
+  config: RuntimeConfig = MOCK_CONFIG,
+): RenderResult {
+  setConfigForTest(config);
   const client = api ?? new MockApiClient();
   return render(
-    <AuthProvider config={MOCK_CONFIG}>
+    <AuthProvider config={config}>
       <ApiProvider
-        config={MOCK_CONFIG}
+        config={config}
         auth={{
           ensureFreshToken: async () => "test-token",
           onUnauthorized: async () => null,

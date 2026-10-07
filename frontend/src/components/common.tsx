@@ -235,10 +235,15 @@ export function Toggle({
   on,
   onChange,
   label,
+  disabled = false,
+  describedBy,
 }: {
   on: boolean;
   onChange: (v: boolean) => void;
   label: string;
+  disabled?: boolean;
+  /** 비활성 사유 등 보조 설명 요소 id (aria-describedby). */
+  describedBy?: string | undefined;
 }): JSX.Element {
   return (
     <button
@@ -246,6 +251,8 @@ export function Toggle({
       role="switch"
       aria-checked={on}
       aria-label={label}
+      disabled={disabled}
+      aria-describedby={describedBy}
       className={`switch ${on ? "on" : ""}`}
       onClick={() => onChange(!on)}
     >

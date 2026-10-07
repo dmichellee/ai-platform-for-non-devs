@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { App } from "aws-cdk-lib";
-import { ctxAlbIndex, secretParams } from "../lib/constructs/app-params";
+import { ctxAlbIndex, loadRuntimeParams, secretParams } from "../lib/constructs/app-params";
 
 /**
  * L2 — app-runtime 컨텍스트 loader의 시크릿 키(D8, deploy.yml 계약).
@@ -62,5 +62,20 @@ describe("ctxAlbIndex — D20 albIndex 컨텍스트(계약 §5·§6)", () => {
     for (const v of ["-1", "1.5", "abc"]) {
       expect(() => ctxAlbIndex(new App({ context: { albIndex: v } }))).toThrow(/albIndex/);
     }
+  });
+});
+
+describe("loadRuntimeParams — deployId (D8, QA D-1)", () => {
+  const BASE = {
+    subdomain: "myapp", scheme: "internal", cpu: "256", memory: "512", minCount: "1", maxCount: "1",
+    scaleThreshold: "70", imageTag: "abc", rulePriority: "10",
+  };
+  it("-c deployId 가 있으면 그대로 싣는다", () => {
+    const app = new App({ context: { ...BASE, deployId: "apphub-dev-provisioner:1234-abcd" } });
+    expect(loadRuntimeParams(app, "dev", "testapp0").deployId).toBe("apphub-dev-provisioner:1234-abcd");
+  });
+  it("생략(또는 빈 문자열)이면 키 자체가 없다(기존 synth 불변)", () => {
+    expect("deployId" in loadRuntimeParams(new App({ context: BASE }), "dev", "testapp0")).toBe(false);
+    expect("deployId" in loadRuntimeParams(new App({ context: { ...BASE, deployId: "" } }), "dev", "testapp0")).toBe(false);
   });
 });

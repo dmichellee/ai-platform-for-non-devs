@@ -109,15 +109,27 @@ describe("platform 스택", () => {
       expect(props["EnableTokenRevocation"]).toBe(true);
     });
 
-    it("ALB 인증용 app-auth 클라이언트는 SPA와 별개(시크릿 O, /oauth2/idpresponse 콜백)", () => {
-      // SPA 로그인 수정이 ALB authenticate-cognito 클라이언트를 건드리지 않았음을 고정.
-      const clients = template.findResources("AWS::Cognito::UserPoolClient");
-      const appAuth = Object.values(clients).find(
-        (c) => (c.Properties as Record<string, unknown>)["GenerateSecret"] === true,
+    it("[N1] 공유 AppAuthClient(와일드카드 콜백)와 SSM app-auth-client-id가 없다 — 앱별 클라이언트는 runtime 소유", () => {
+      const clients = Object.values(template.findResources("AWS::Cognito::UserPoolClient")).map(
+        (c) => c.Properties as Record<string, unknown>,
       );
-      expect(appAuth, "app-auth client(GenerateSecret:true)가 존재해야 함").toBeDefined();
-      const cb = JSON.stringify((appAuth!.Properties as Record<string, unknown>)["CallbackURLs"]);
-      expect(cb).toContain("/oauth2/idpresponse");
+      // platform에는 SPA 클라이언트 1개만(시크릿 없음).
+      expect(clients.length).toBe(1);
+      expect(clients.some((c) => c["GenerateSecret"] === true)).toBe(false);
+      // 와일드카드 콜백 잔재 금지.
+      expect(JSON.stringify(template.toJSON())).not.toContain("https://*.");
+      const names = Object.values(template.findResources("AWS::SSM::Parameter")).map((p) =>
+        String((p.Properties as Record<string, unknown>)["Name"]),
+      );
+      expect(names).not.toContain("/apphub/dev/platform/app-auth-client-id");
+      // runtime이 읽는 계약 키는 계속 발행(user-pool-id/arn/domain).
+      expect(names).toEqual(
+        expect.arrayContaining([
+          "/apphub/dev/platform/user-pool-id",
+          "/apphub/dev/platform/user-pool-arn",
+          "/apphub/dev/platform/user-pool-domain",
+        ]),
+      );
     });
 
     it("Hosted UI 도메인 prefix에 조직 식별정보가 없다(account 기반)", () => {
@@ -1016,6 +1028,44 @@ describe("platform 스택", () => {
       expect(stmts.length).toBe(1);
       expect(asArray(stmts[0].Action)).toEqual(["cognito-idp:DescribeUserPoolClient"]);
       expect(stmts[0].Resource).toEqual({ "Fn::GetAtt": [userPoolLogicalId(), "Arn"] });
+    });
+
+    it("[N2] provisioner 역할 — 배포 전 규칙 복귀용 ModifyRule(플랫폼 ALB 규칙)·DescribeUserPoolClient(User Pool) 한정 부여", () => {
+      const mr = stmtsBySid("PreDeployRuleRestore");
+      expect(mr.length).toBe(1);
+      expect(asArray(mr[0].Action)).toEqual(["elasticloadbalancing:ModifyRule"]);
+      expect(JSON.stringify(mr[0].Resource)).toContain("listener-rule/app/apphub-dev-*/*");
+      expect(mr[0].Resource).not.toBe("*");
+      const cg = stmtsBySid("PreDeployCognitoDescribeClient");
+      expect(cg.length).toBe(1);
+      expect(asArray(cg[0].Action)).toEqual(["cognito-idp:DescribeUserPoolClient"]);
+      expect(cg[0].Resource).toEqual({ "Fn::GetAtt": [userPoolLogicalId(), "Arn"] });
+    });
+
+    it("[N2] provisioner 역할 — Describe(Rules/TargetGroups/Listeners)·network SSM·DDB GetItem은 기존 statement가 커버", () => {
+      const desc = stmtsBySid("ReadOnlyDescribeStar");
+      expect(desc.length).toBe(1);
+      expect(asArray(desc[0].Action)).toContain("elasticloadbalancing:Describe*");
+      const ssmSt = stmtsBySid("ReadSharedSsm");
+      expect(ssmSt.length).toBe(1);
+      expect(asArray(ssmSt[0].Action)).toContain("ssm:GetParameter");
+      expect(JSON.stringify(ssmSt[0].Resource)).toContain("parameter/apphub/dev/network/*");
+      const ddb = stmtsBySid("AppTableRead");
+      expect(ddb.length).toBe(1);
+      expect(asArray(ddb[0].Action)).toEqual(["dynamodb:GetItem"]);
+      // 두 PreDeploy statement는 provisioner 역할에 붙는다.
+      const pols = Object.values(template.findResources("AWS::IAM::Policy")).filter((p) =>
+        ((p.Properties as Pol).PolicyDocument?.Statement ?? []).some((st) => st.Sid === "PreDeployRuleRestore"),
+      );
+      expect(pols.length).toBe(1);
+      expect(JSON.stringify((pols[0].Properties as Pol).Roles)).toContain("ProvisionerRole");
+    });
+
+    it("[D16] API Lambda env FRONTEND_MODE=public(기본)", () => {
+      template.hasResourceProperties("AWS::Lambda::Function", {
+        FunctionName: "apphub-dev-api",
+        Environment: { Variables: Match.objectLike({ FRONTEND_MODE: "public" }) },
+      });
     });
 
     it("[H3] wake-restore/sleep-transition 역할(network 소유)에 DescribeUserPoolClient를 User Pool 한정으로 부착한다", () => {

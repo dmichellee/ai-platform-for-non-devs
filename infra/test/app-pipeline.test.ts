@@ -154,8 +154,91 @@ describe("app-pipeline — codecommit(자동 트리거)", () => {
         }
       }
       // GetAuthorizationToken + CDK 관리형(로그/아티팩트 등 일부 CDK가 생성)까지 감안해 상한만 둔다.
-      // 앱 파이프라인 우리 코드가 명시적으로 넣은 * 는 GetAuthorizationToken 하나.
+      // 우리 코드가 명시적으로 넣은 * 는 GetAuthorizationToken + PreDeployElbDescribe(N2) 두 개.
       expect(starCount).toBeLessThanOrEqual(6);
+    });
+
+    it("SID가 붙은 Resource:'*' statement는 허용 목록(EcrAuth, PreDeployElbDescribe)만 — 액션 집합도 고정", () => {
+      const allowed: Record<string, string[]> = {
+        EcrAuth: ["ecr:GetAuthorizationToken"],
+        PreDeployElbDescribe: [
+          "elasticloadbalancing:DescribeListeners",
+          "elasticloadbalancing:DescribeRules",
+          "elasticloadbalancing:DescribeTargetGroups",
+        ],
+      };
+      const unexpected: string[] = [];
+      for (const pol of Object.values(template.findResources("AWS::IAM::Policy"))) {
+        const doc = (pol.Properties as { PolicyDocument?: { Statement?: Array<{ Sid?: string; Action?: unknown; Resource?: unknown }> } })
+          .PolicyDocument;
+        for (const st of doc?.Statement ?? []) {
+          if (st.Resource !== "*" || st.Sid === undefined) continue;
+          const acts = (Array.isArray(st.Action) ? st.Action : [st.Action]).map(String).sort();
+          if (!allowed[st.Sid] || JSON.stringify(acts) !== JSON.stringify(allowed[st.Sid])) unexpected.push(st.Sid);
+        }
+      }
+      expect(unexpected).toEqual([]);
+    });
+  });
+
+  describe("QA N2 — 잠든 앱 배포 전 규칙 복귀 권한 (deployBuild 역할)", () => {
+    type Stmt = { Sid?: string; Action?: unknown; Resource?: unknown };
+    const deployRolePolicyStmts = (): Stmt[] => {
+      const out: Stmt[] = [];
+      for (const pol of Object.values(template.findResources("AWS::IAM::Policy"))) {
+        const props = pol.Properties as { Roles?: unknown; PolicyDocument?: { Statement?: Stmt[] } };
+        if (!JSON.stringify(props.Roles).includes("DeployBuildRole")) continue;
+        out.push(...(props.PolicyDocument?.Statement ?? []));
+      }
+      return out;
+    };
+    const bySid = (sid: string): Stmt => {
+      const st = deployRolePolicyStmts().find((x) => x.Sid === sid);
+      expect(st, `deployBuild 역할에 ${sid} statement가 있어야 함`).toBeDefined();
+      return st!;
+    };
+    const acts = (a: unknown): string[] => (Array.isArray(a) ? a.map(String) : [String(a)]).sort();
+
+    it("ssm:GetParameter — network 공유값 경로(parameter/apphub/dev/network/*) 한정", () => {
+      const st = bySid("PreDeployReadNetworkSsm");
+      expect(acts(st.Action)).toEqual(["ssm:GetParameter"]);
+      expect(JSON.stringify(st.Resource)).toContain("parameter/apphub/dev/network/*");
+    });
+
+    it("ELB DescribeRules/TargetGroups/Listeners — 리소스 레벨 미지원이라 *", () => {
+      const st = bySid("PreDeployElbDescribe");
+      expect(acts(st.Action)).toEqual([
+        "elasticloadbalancing:DescribeListeners",
+        "elasticloadbalancing:DescribeRules",
+        "elasticloadbalancing:DescribeTargetGroups",
+      ]);
+      expect(st.Resource).toBe("*");
+    });
+
+    it("ModifyRule — 플랫폼 ALB 리스너 규칙(listener-rule/app/apphub-dev-*/*) 한정", () => {
+      const st = bySid("PreDeployElbModifyRule");
+      expect(acts(st.Action)).toEqual(["elasticloadbalancing:ModifyRule"]);
+      expect(JSON.stringify(st.Resource)).toContain("listener-rule/app/apphub-dev-*/*");
+      expect(st.Resource).not.toBe("*");
+    });
+
+    it("DescribeUserPoolClient — 플랫폼 User Pool ARN(SSM user-pool-arn) 한정", () => {
+      const st = bySid("PreDeployCognitoDescribeClient");
+      expect(acts(st.Action)).toEqual(["cognito-idp:DescribeUserPoolClient"]);
+      expect(JSON.stringify(st.Resource)).toMatch(/SsmParameterValueapphubdevplatformuserpoolarn/);
+    });
+
+    it("runtimeState 조회 dynamodb:GetItem(기존 ReadAppParamsFromDdb)이 유지된다", () => {
+      expect(acts(bySid("ReadAppParamsFromDdb").Action)).toEqual(["dynamodb:GetItem"]);
+    });
+
+    it("validateBuild 역할에는 배포 전 규칙 복귀 권한이 새지 않는다", () => {
+      for (const pol of Object.values(template.findResources("AWS::IAM::Policy"))) {
+        const props = pol.Properties as { Roles?: unknown; PolicyDocument?: { Statement?: Stmt[] } };
+        if (!JSON.stringify(props.Roles).includes("ValidateBuildRole")) continue;
+        const sids = (props.PolicyDocument?.Statement ?? []).map((x) => x.Sid);
+        expect(sids).not.toContain("PreDeployElbModifyRule");
+      }
     });
   });
 });

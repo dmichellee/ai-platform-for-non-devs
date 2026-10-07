@@ -6,6 +6,7 @@ import { useState } from "react";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { ErrorNotice, Modal, SaveBanner, Skeleton, useSaveFeedback } from "../../components/common.js";
 import { useMutation, useQuery } from "../../lib/ApiProvider.js";
+import { ConfirmDeleteModal } from "./ConfirmDeleteModal.js";
 import type { ComputePreset } from "../../lib/types.js";
 
 // Fargate 유효 조합(대표) — cpu(vCPU 단위 1024=1vCPU) → 허용 memory(MiB)
@@ -32,7 +33,7 @@ export function AdminPresets(): JSX.Element {
   const { data, loading, error, reload } = useQuery<ComputePreset[]>((a) => a.adminListPresets(), []);
   const [editing, setEditing] = useState<ComputePreset | null>(null);
   const saved = useSaveFeedback();
-  const delMut = useMutation<string, void>((a, id) => a.adminDeletePreset(id));
+  const [deleting, setDeleting] = useState<ComputePreset | null>(null);
 
   if (error) return <ErrorNotice error={error} />;
   if (loading) return <Skeleton height={44} count={3} />;
@@ -80,10 +81,7 @@ export function AdminPresets(): JSX.Element {
                     type="button"
                     className="row-act"
                     aria-label="삭제"
-                    onClick={async () => {
-                      await delMut.run(p.presetId).catch(() => undefined);
-                      reload();
-                    }}
+                    onClick={() => setDeleting(p)}
                   >
                     <Trash2 size={15} className="icon" />
                   </button>
@@ -93,6 +91,19 @@ export function AdminPresets(): JSX.Element {
           ))}
         </tbody>
       </table>
+
+      {deleting && (
+        <ConfirmDeleteModal
+          title="프리셋을 삭제할까요?"
+          targetName={deleting.displayName}
+          onConfirm={(a) => a.adminDeletePreset(deleting.presetId)}
+          onClose={() => setDeleting(null)}
+          onDeleted={() => {
+            setDeleting(null);
+            reload();
+          }}
+        />
+      )}
 
       {editing && (
         <PresetModal

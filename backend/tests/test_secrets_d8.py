@@ -749,3 +749,41 @@ def test_secret_values_never_in_logs_responses_or_ddb(notify_ready, capsys) -> N
     blob += str(notify_ready["table"].scan()["Items"])
     for value in (VALUE_A, VALUE_B, VALUE_NEW, "zz-secret-zz", "v-gone"):
         assert value not in blob
+
+
+# ── QA N2(2026-10-08): 런타임 재배포 실패에도 재수면 ─────────────────────────────
+
+
+def test_n2_sleeping_app_resleeps_after_failed_runtime_build(notify_ready) -> None:
+    """롤백/시크릿 변경 빌드 FAILED: 배포 전 규칙 복귀로 앱 TG 에 남은 forward 를 Waker TG 로 되돌린다.
+
+    시크릿 지연 정리는 실패 배포에서 하지 않는다(D8).
+    """
+    notify_ready["table"].update_item(
+        Key={"PK": f"APP#{APP}", "SK": "META"},
+        UpdateExpression="SET runtimeState = :s",
+        ExpressionAttributeValues={":s": "SLEEPING"},
+    )
+    notify_ready["ecs"].desired = 0
+    elb = notify_ready["elb"]
+    elb.set_response("describe_target_groups", {"TargetGroups": [{"TargetGroupArn": "arn:tg:app"}]})
+    elb.set_response("describe_rules", {"Rules": [_rule("arn:tg:app")]})
+
+    res = dn.handle(_build_event("FAILED"))
+    assert res["status"] == "FAILED"
+    assert res["failureCategory"] == "DEPLOY_FAILED"
+    mods = elb.calls_for("modify_rule")
+    assert len(mods) == 1
+    assert mods[0]["Actions"][0]["Type"] == "authenticate-cognito"  # 인증 액션 보존
+    assert mods[0]["Actions"][1]["TargetGroupArn"] == "arn:tg:waker"
+    assert res["afterFailure"]["sleep"]["ruleSwitched"] is True
+    assert "afterSuccess" not in res
+    # 실패 배포 → 시크릿 JSON 그대로(정리 안 함).
+    assert notify_ready["sm"].json_of(SECRET_NAME) == {"A": VALUE_A, "OLD": VALUE_B, "GONE": "v-gone"}
+
+
+def test_n2_running_app_untouched_after_failed_runtime_build(notify_ready) -> None:
+    res = dn.handle(_build_event("FAILED"))
+    assert res["afterFailure"]["sleep"] == {"reason": "runtime-RUNNING"}
+    assert notify_ready["elb"].calls_for("modify_rule") == []
+    assert notify_ready["ecs"].calls_for("update_service") == []
