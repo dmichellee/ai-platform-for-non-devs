@@ -1,4 +1,4 @@
-"""관리자 사용자 관리 (DESIGN.md 5/6 관리자 화면 "사용자 관리": 초대·비활성화·그룹 변경).
+"""관리자 사용자 관리 (관리자 화면 "사용자 관리": 초대·비활성화·그룹 변경).
 
 IAM(platform-stack, User Pool ARN 범위): AdminCreateUser, AdminAddUserToGroup,
 AdminRemoveUserFromGroup, AdminDisableUser, AdminEnableUser, ListUsers, AdminListGroupsForUser.

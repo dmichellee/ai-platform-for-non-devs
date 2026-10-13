@@ -1,4 +1,4 @@
-"""Dockerfile 정적 검증기 (KIRO-STANDARDS.md 3장 · DESIGN.md 3.3 [Build & Validate] 1~2단계).
+"""Dockerfile 정적 검증기 (빌드·검증 1~2단계).
 
 이 모듈은 **독립적**이며 두 곳에서 같은 코드로 실행된다:
  (1) CodeBuild 검증 단계(buildspec)에서 레포 루트 Dockerfile 내용을 넣어 실행 → 실패 시 파이프라인 중단.
@@ -7,7 +7,7 @@
 **정적 파싱만** 한다. 실동작(C3+C9 헬스체크 스모크: 이미지 실행 → GET /health 200)은
 buildspec에서 빌드된 이미지를 실행해 확인하는 영역이라 검증기 범위 밖이다.
 
-검사(KIRO-STANDARDS 3장 표):
+검사:
  - C1 Dockerfile 존재            → 없으면 DOCKERFILE_MISSING
  - C2 EXPOSE 8080 **하나만**      → 없거나 8080이 아니거나 8080 외 다른 포트가 함께 있으면 DOCKERFILE_INVALID
  - 금지 항목(privileged/host mount 등) → 있으면 DOCKERFILE_INVALID
@@ -30,7 +30,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-# 컨테이너 계약 포트(KIRO-STANDARDS C2).
+# 컨테이너 계약 포트.
 REQUIRED_EXPOSE_PORT = 8080
 
 

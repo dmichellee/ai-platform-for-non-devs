@@ -1,4 +1,4 @@
-"""wake-on-request — Waker / 복원 / 잠자기 (DESIGN.md 3.5, D-M5-02/03, D-M4-04).
+"""wake-on-request — Waker / 복원 / 잠자기 (D-M5-02/03, D-M4-04).
 
 잠자는 앱: 리스너 규칙 forward 대상을 공유 Waker TG 로 돌려 두고 ECS desiredCount=0.
 요청이 오면 Waker Lambda 가 앱을 깨우고(desiredCount=min) 대기 페이지를 응답,
@@ -23,7 +23,7 @@ def apps_domain() -> str | None:
 
 
 def cluster_name() -> str:
-    """공유 ECS 클러스터명(`apphub-{stage}-cluster`, DESIGN.md D18).
+    """공유 ECS 클러스터명(`apphub-{stage}-cluster`, D18).
 
     network 스택이 Waker/복원/잠자기 Lambda env 에 CLUSTER_NAME 을 주입한다(확정 계약).
     stage 당 클러스터 1개를 앱들이 공유하므로 서비스명(`apphub-{stage}-app-{appId}`)과 분리된다.

@@ -1,4 +1,4 @@
-# AppHub 플랫폼 콘솔 이미지 (D19 private 모드 — PLATFORM-ENGINEERING 4.1)
+# AppHub 플랫폼 콘솔 이미지 (D19 private 모드)
 #
 # 내용: SPA 정적 빌드 + Kiro 설정 zip(site/, deploy.sh가 cdk deploy 전에 준비) + nginx.
 #  - CDK DockerImageAsset(platform-stack)이 이 디렉토리를 빌드·push 한다(내용 해시 → 멱등).

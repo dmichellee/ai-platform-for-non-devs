@@ -1,9 +1,9 @@
-"""ECS 서비스 desiredCount 멱등 조정 (DESIGN.md 3.5 — desiredCount 는 런타임이 바꾸는 값).
+"""ECS 서비스 desiredCount 멱등 조정 (desiredCount 는 런타임이 바꾸는 값).
 
 CloudFormation 드리프트 방지: app-runtime 스택은 desiredCount 를 관리하지 않고,
 Waker(깨우기)/잠자기 Lambda 가 UpdateService 로만 조정한다. 이미 목표면 UpdateService 미호출(멱등).
 
-클러스터/서비스 규약(DESIGN.md D18): stage 당 공유 클러스터 1개(`apphub-{stage}-cluster`) 위에
+클러스터/서비스 규약(D18): stage 당 공유 클러스터 1개(`apphub-{stage}-cluster`) 위에
 앱 서비스(`apphub-{stage}-app-{appId}`)만 만든다. 클러스터명은 CLUSTER_NAME env(network 스택
 주입)에서 읽고, 서비스명은 이름 규약으로 파생한다 — 둘은 더 이상 동일하지 않다.
 """

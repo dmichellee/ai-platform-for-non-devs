@@ -1,4 +1,4 @@
-"""QA W-3 — ACTIVE/RUNNING 후 15분 유예(DESIGN 3.5 "유휴 15분").
+"""QA W-3 — ACTIVE/RUNNING 후 15분 유예("유휴 15분").
 
 유휴 알람은 CREATING 중 ALARM 에 고착되므로 ACTIVE 직후 스윕·알람 경로가 앱을 바로 재우면 안 된다.
 기준 시각 = runtimeStateUpdatedAt(없으면 updatedAt). force·schedule_stop 은 유예 무시.

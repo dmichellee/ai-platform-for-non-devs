@@ -172,7 +172,7 @@ def parse_create_app(raw: str | None) -> dict[str, Any]:
         "presetId": _str(body, "presetId"),
         "permissionTemplateId": _str(body, "permissionTemplateId"),
         "scheme": scheme,
-        # vpcId 는 제거됨(1차 플랫폼 부트스트랩 VPC 단일 배치 — DESIGN 3.7·10장).
+        # vpcId 는 제거됨(1차 플랫폼 부트스트랩 VPC 단일 배치).
         #  body 에 와도(구 클라이언트) 파싱하지 않고 무시한다(App 레코드에 저장하지 않음).
         "autoDeployEnabled": _bool(body, "autoDeployEnabled", True),
         "sleepMode": sleep_mode,

@@ -1,7 +1,7 @@
 /* ============================================================
    AppHub 디자인 토큰 — 사용자 제공 팔레트 (Material 계열)
    다크가 기본(default). data-theme="light" 로 토글.
-   원본: design-system/apphub/tokens.md, _workspace/design/tone-and-manner.html
+   원본: design-system/apphub/tokens.md
    프론트엔드는 이 토큰만 참조하고 raw hex 직접 사용 금지.
    ============================================================ */
 :root,

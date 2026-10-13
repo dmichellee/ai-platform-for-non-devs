@@ -10,7 +10,7 @@ from .validate import parse_body
 
 _PROVIDERS = ("codecommit", "github", "gitlab")
 
-# Fargate 유효 cpu/memory 조합(DESIGN.md D11 "Fargate 유효 조합만").
+# Fargate 유효 cpu/memory 조합(D11 "Fargate 유효 조합만").
 _FARGATE_VALID: dict[int, list[int]] = {
     256: [512, 1024, 2048],
     512: [1024, 2048, 3072, 4096],
@@ -88,7 +88,7 @@ def parse_admin_settings(raw: str | None) -> dict[str, Any]:
         raise errors.validation("회사 밖 접속 허용 값은 true/false여야 해요.")
 
     # 아래 두 필드는 제거됨(body 에 와도 무시 — allowedBaseImages 와 동일 패턴):
-    #  - registeredVpcs: VPC 등록/선택 기능 폐기(1차 플랫폼 부트스트랩 VPC 단일 배치, DESIGN 3.7·10장).
+    #  - registeredVpcs: VPC 등록/선택 기능 폐기(1차 플랫폼 부트스트랩 VPC 단일 배치).
     #  - logRetentionDays: 미사용 설정 폐기.
     #  구 클라이언트가 이 키들을 보내도 검증하지 않고 반환 dict 에도 담지 않는다.
     return {

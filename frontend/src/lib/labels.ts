@@ -41,7 +41,7 @@ export function failureGuidance(cat?: FailureCategory): string {
 
 // ── 실패 배포의 실패 칸(DEPLOY_STEPS key) — QA F-L1 ──
 // FAILED 레코드는 도달 단계를 따로 담지 않으므로 failureCategory 로 실패 칸을 정한다.
-// HEALTHCHECK_FAILED 는 빌드 단계의 스모크 테스트에서 배포 전에 잡히므로(DESIGN 3.2) "검사·빌드".
+// HEALTHCHECK_FAILED 는 빌드 단계의 스모크 테스트에서 배포 전에 잡히므로 "검사·빌드".
 // INTERNAL_ERROR/미상은 배포 로그 API 의 stage(VALIDATING→검사·빌드, DEPLOYING→배포)로,
 // 그것도 없으면 첫 칸("가져오기").
 export const FAILURE_STEP: Partial<Record<FailureCategory, string>> = {
@@ -166,7 +166,7 @@ export const DEPLOY_STEPS: { key: string; label: string; reaches: DeploymentStat
   { key: "confirm", label: "확인", reaches: ["SUCCEEDED"] },
 ];
 
-// ── sleepMode → 사용자 옵션 라벨 (DESIGN 3.5: 항상 켜두기 / 쓸 때만 켜기(권장) / 시간표대로) ──
+// ── sleepMode → 사용자 옵션 라벨 (항상 켜두기 / 쓸 때만 켜기(권장) / 시간표대로) ──
 export const SLEEP_MODE_LABEL: Record<SleepMode, string> = {
   "always-on": "항상 켜두기",
   "on-demand": "쓸 때만 켜기 (권장)",

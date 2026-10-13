@@ -656,7 +656,7 @@
       <div class="g4" style="gap:14px">
         <div class="card hl" style="display:flex;flex-direction:column;gap:8px">
           <div class="row center" style="gap:8px"><img src="assets/aws/elb.svg" width="30" alt=""><div><b style="font-size:15px">network</b><div class="mono small muted">apphub-{stage}-network</div></div></div>
-          <ul class="bl sm"><li>VPC 10.20.0.0/16 · 2 AZ · NAT 1</li><li>공유 ALB 2 (internet / internal) · 한도 시 증설 스택 추가</li><li>공유 ECS 클러스터</li><li>와일드카드 ACM · Route 53 zone 2</li><li>SG 3 · Waker 계열 Lambda 3</li></ul>
+          <ul class="bl sm"><li>VPC(기본 10.20.0.0/16, --vpc-cidr) · 2 AZ · NAT 1</li><li>공유 ALB 2 (internet / internal) · 한도 시 증설 스택 추가</li><li>공유 ECS 클러스터</li><li>와일드카드 ACM · Route 53 zone 2</li><li>SG 3(private 모드 4) · Waker 계열 Lambda 3</li></ul>
           <div class="mt8"><span class="tag ghost">관리자 · deploy.sh</span> <span class="tag ghost">stage당 1개</span></div>
         </div>
         <div class="card hl" style="display:flex;flex-direction:column;gap:8px">
@@ -721,7 +721,7 @@
         </div>
       </div>
       <div class="g4" style="gap:12px">
-        <div class="card soft" style="padding:10px 14px"><div class="cap">VPC</div><div class="small">10.20.0.0/16 · 2 AZ · public/private /24 · NAT 1개(비용)</div></div>
+        <div class="card soft" style="padding:10px 14px"><div class="cap">VPC</div><div class="small">기본 10.20.0.0/16(설치 시 --vpc-cidr) · 2 AZ · public/private /24 · NAT 1개(비용)</div></div>
         <div class="card soft" style="padding:10px 14px"><div class="cap">스트리밍</div><div class="small">ALB idle timeout 300초 — SSE 응답 지원 (<code>sample-streaming</code>로 검증)</div></div>
         <div class="card soft" style="padding:10px 14px"><div class="cap">앱 인증 (선택)</div><div class="small"><code>cognitoProtect</code> — 인터넷 공개 앱은 기본 켜짐(사내 전용 설치에선 사용 불가). 앱마다 전용 로그인 클라이언트. 잠자는 중에도 인증 동작 유지</div></div>
         <div class="card soft" style="padding:10px 14px"><div class="cap">규칙 우선순위</div><div class="small">DynamoDB 원자 카운터로 전역 발급, ALB별 <code>ruleCount</code> 관리</div></div>
@@ -1128,7 +1128,7 @@
       <div class="card"><h4><svg class="ico"><use href="#i-lock"/></svg>비밀값</h4>
         <ul class="bl sm mt8"><li>Secrets Manager 앱당 1개 <code>apphub/{stage}/app/{appId}</code> — JSON <code>{KEY: value}</code></li><li>DynamoDB·로그·CFN 파라미터엔 ARN만</li><li>키별로 ECS <code>secrets</code> 주입 (<code>&lt;arn&gt;:KEY::</code>), 실행 역할은 해당 ARN만 읽기</li><li>앱 삭제 시 강제 삭제</li></ul></div>
       <div class="card"><h4><svg class="ico"><use href="#i-user"/></svg>인증 · 인가</h4>
-        <ul class="bl sm mt8"><li>Cognito: 자가 가입 off(초대 전용), 비밀번호 12자+ 복합</li><li>API: JWT authorizer, admin/user 그룹</li><li>앱: ALB authenticate-cognito (인터넷 공개 앱 기본 on)</li></ul></div>
+        <ul class="bl sm mt8"><li>Cognito: 자가 가입 off(초대 전용), 비밀번호 12자+ 복합</li><li>API: JWT authorizer, admin/user 그룹</li><li>앱: ALB authenticate-cognito (인터넷 공개 앱 기본 on, private 모드 불가)</li></ul></div>
       <div class="card"><h4><svg class="ico"><use href="#i-db"/></svg>저장소 · 전송</h4>
         <ul class="bl sm mt8"><li>S3 퍼블릭 액세스 전면 차단 · SSE · SSL 강제</li><li>CloudFront → S3는 OAC (public 모드)</li><li>DynamoDB PITR, prod는 RETAIN</li><li>CORS는 허용 origin만 반사 (<code>*</code> 없음)</li></ul></div>
     </div>
@@ -1141,7 +1141,7 @@
     <div class="kicker">운영 · 설치 / 제거</div>
     <h2 class="s-title">명령 1개로 설치, 몇 번을 다시 실행해도 결과가 같음</h2>
     <div class="body vc" style="gap:14px">
-      <div class="card soft" style="padding:10px 16px"><code style="font-size:13px;background:none;border:0">./scripts/deploy.sh --stage dev|prod --domain apps.example.com [--hosted-zone-id] [--region] [--admin-email] [--frontend-mode public|private] [--internal-cidrs "10.0.0.0/16,…"] [--skip-spa]</code></div>
+      <div class="card soft" style="padding:10px 16px"><code style="font-size:13px;background:none;border:0">./scripts/deploy.sh --stage dev|prod --domain apps.example.com [--hosted-zone-id] [--region] [--admin-email] [--frontend-mode public|private] [--internal-cidrs "10.0.0.0/16,…"] [--vpc-cidr 10.20.0.0/16] [--skip-spa]</code></div>
       <div class="flow">
         <div class="step"><div class="h"><span class="num">1</span><b>사전 점검</b></div><p>aws · node 22+ · pnpm · docker · rsync · zip, 자격 증명, hosted zone 자동 조회</p><div class="svc">실패 시 변경 없이 종료</div></div>
         <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
@@ -1170,14 +1170,14 @@
 <section class="slide" data-nav="테스트 전략" data-group="04 품질·보안·운영">
   <div class="pad">
     <div class="kicker">품질 · 테스트</div>
-    <h2 class="s-title">계층별 단위 테스트 1,086개 + 실제 AWS E2E 5개 시나리오</h2>
+    <h2 class="s-title">계층별 단위 테스트 1,123개 + 실제 AWS E2E 5개 시나리오</h2>
     <div class="body vc row" style="gap:22px">
       <div class="col" style="width:440px;gap:14px">
         <div class="card"><div class="cap">자동화 테스트 수 (test 함수 기준)</div>
           <div class="bars mt8">
             <div class="bar-row"><span>backend</span><div class="track"><div class="fill" style="width:100%"></div></div><span class="val">522</span></div>
             <div class="bar-row"><span>frontend</span><div class="track"><div class="fill" style="width:56.1%"></div></div><span class="val">293</span></div>
-            <div class="bar-row"><span>infra (CDK)</span><div class="track"><div class="fill" style="width:51.9%"></div></div><span class="val">271</span></div>
+            <div class="bar-row"><span>infra (CDK)</span><div class="track"><div class="fill" style="width:59.0%"></div></div><span class="val">308</span></div>
             <div class="bar-row"><span>Playwright</span><div class="track"><div class="fill" style="width:2.1%"></div></div><span class="val">11</span></div>
           </div>
           <div class="small muted mt12">pytest · vitest + Testing Library · CDK assertions · Playwright</div></div>
@@ -1199,7 +1199,7 @@
         </table>
         <div class="g2 mt12" style="gap:10px">
           <div class="card soft" style="padding:10px 12px"><div class="cap">backend 상위</div><div class="small">qa_2026_10_08_b 45 · deploy_notify 39 · secrets_d8 36 · cc_repos 35 · apps 31</div></div>
-          <div class="card soft" style="padding:10px 12px"><div class="cap">infra 상위</div><div class="small">platform-stack 75 · app-runtime 47 · network-stack 40 · platform-frontend-mode 31</div></div>
+          <div class="card soft" style="padding:10px 12px"><div class="cap">infra 상위</div><div class="small">platform-stack 75 · network-stack 52 · app-runtime 48 · platform-frontend-mode 46</div></div>
         </div>
       </div>
     </div>

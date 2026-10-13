@@ -24,7 +24,7 @@
 #         s3://{AssetsBucketName}/kiro-config/kiro-config-windows.zip
 #      (deploy.sh 3b의 검증기/CDK소스 업로드와 동일한 자산 버킷·고정 키 패턴)
 #
-# 서빙 계약(_workspace/contracts/api-contract.md):
+# 서빙 계약:
 #   - 프론트 "Kiro 설정 다운로드(Mac)/(Windows)"는 이 두 고정 S3 키의 오브젝트를 제공한다.
 #   - 배포용 고정 URI: s3://{assets}/kiro-config/kiro-config-{mac,windows}.zip
 #     (SSM: /apphub/{stage}/platform/kiro-bundle-s3-uri-{mac,windows} — 발행은 인프라 후속 항목)

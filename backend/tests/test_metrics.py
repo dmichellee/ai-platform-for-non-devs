@@ -24,7 +24,7 @@ ADMIN = "user-admin"
 APP_ID = "app00001"
 STAGE = "test"
 
-# ECS 지표 차원(DESIGN.md D18): 공유 클러스터 == apphub-{stage}-cluster,
+# ECS 지표 차원(D18): 공유 클러스터 == apphub-{stage}-cluster,
 # 서비스 == apphub-{stage}-app-{appId} (더 이상 동일하지 않음).
 CLUSTER_DIM = f"apphub-{STAGE}-cluster"
 SERVICE_DIM = f"apphub-{STAGE}-app-{APP_ID}"

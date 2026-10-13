@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """AppHub AWS 아키텍처 다이어그램 생성 (AWS 공식 아이콘).
 
-docs/ARCHITECTURE-AS-BUILT.md 의 구성도를 AWS 아이콘 이미지로 렌더한다.
+AppHub 구성도를 AWS 아이콘 이미지로 렌더한다.
 산출물: docs/architecture/apphub-architecture-{overview,deploy-flow,wake-flow}.png
 
 실행:

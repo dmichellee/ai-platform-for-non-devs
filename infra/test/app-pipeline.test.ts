@@ -6,7 +6,7 @@ import { assertNoOpenIngress } from "./helpers/sg-ingress";
 import type { AppPipelineParams } from "../lib/constructs/app-params";
 
 /**
- * L2 — app-pipeline construct CDK assertions (DESIGN.md 3.1/3.3, 9, cdk-authoring).
+ * L2 — app-pipeline construct CDK assertions (cdk-authoring).
  *
  * 단언 대상:
  *  - ECR lifecycle(최근 5개) + emptyOnDelete(RETAIN 아님)

@@ -1,6 +1,6 @@
-# CodeBuild #1 — 검증 + 빌드 (DESIGN.md 3.3 [Build & Validate], KIRO-STANDARDS 3장)
+# CodeBuild #1 — 검증 + 빌드
 #
-# 계약(_workspace/contracts/buildspec-contract.md):
+# 계약:
 #  입력 소스: 사용자 앱 레포(루트에 Dockerfile 필수). CodePipeline Source 아티팩트.
 #  검증기: apphub-backend 의 Dockerfile 정적 검증기(Python, dist/validator/ 2파일:
 #          dockerfile_validator.py + dockerfile.py). 단위 테스트와 동일한 코드(app/validator/dockerfile.py)를 실행한다.

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# AppHub 제거 스크립트 — 배포의 역순 삭제(PLATFORM-ENGINEERING.md 4장). 재실행 안전(멱등).
+# AppHub 제거 스크립트 — 배포의 역순 삭제. 재실행 안전(멱등).
 # 순서: 잔여 앱 스택(app-*-runtime → app-*-pipeline) → ALB 증설 스택(alb-*, D20) → platform → network.
 #
 # 사용:

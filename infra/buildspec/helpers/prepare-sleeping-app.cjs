@@ -1,9 +1,9 @@
-// 잠든 앱 배포 전 규칙 복귀 (2026-10-08, QA N2 / DESIGN 3.5 드리프트 방지 (c) / buildspec-contract §8).
+// 잠든 앱 배포 전 규칙 복귀 (2026-10-08, QA N2 / 드리프트 방지 / buildspec-contract §8).
 //
 // 왜: 잠든 앱(runtimeState=SLEEPING)은 리스너 규칙 forward 가 Waker TG 를 가리켜 앱 TG 에 연결된 LB 가 없다.
 //   이 상태로 cdk deploy 하면 ECS 서비스 갱신이 "target group does not have an associated load balancer" 로
 //   거부된다. 그래서 cdk deploy 직전에 **forward 대상만** 앱 TG 로 되돌린다.
-//   - authenticate-cognito 등 다른 액션은 원형 유지(로그인 보호 우회 금지, DESIGN 3.5).
+//   - authenticate-cognito 등 다른 액션은 원형 유지(로그인 보호 우회 금지).
 //   - ECS desiredCount 는 건드리지 않는다(0 유지 — 배포가 깨우지 않음). 배포 중 수 분은 503 가능(설계 허용).
 //   - 배포가 끝나면(성공·실패 모두) deploy-notify 가 sleep_app 으로 forward→Waker TG 를 재적용한다.
 //

@@ -1,4 +1,4 @@
-"""App 아이템 데이터 액세스 (DESIGN.md 4장).
+"""App 아이템 데이터 액세스.
 
 App 도메인 모델은 dict(camelCase 키). 저장 시 PK/SK/entityType 를 붙이고,
 조회 시 이 키들을 제거해 계약 응답 shape 로 되돌린다(strip_item).
@@ -223,7 +223,7 @@ def delete_app_record(app_id: str) -> None:
     table().delete_item(Key={"PK": app_pk(app_id), "SK": APP_META_SK})
 
 
-# ── 시크릿 JSON 갱신 직렬화 (DESIGN.md D8 — 앱 레코드 버전 조건부 갱신) ─────────────
+# ── 시크릿 JSON 갱신 직렬화 (D8 — 앱 레코드 버전 조건부 갱신) ─────────────
 #
 # 앱당 시크릿 1개(JSON)를 여러 경로(PATCH /apps, deploy-notify 정리)가 고친다. Secrets Manager 의
 # PutSecretValue 는 조건부 쓰기를 지원하지 않으므로, App 레코드의 `version` 으로 직렬화한다:

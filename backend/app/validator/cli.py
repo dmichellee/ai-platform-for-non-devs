@@ -1,6 +1,6 @@
 """Dockerfile 검증기 CLI — CodeBuild 검증 단계(buildspec)에서 실행되는 진입점.
 
-buildspec 계약(_workspace/contracts/buildspec-contract.md §1):
+buildspec 계약:
  - 실행:   python dockerfile_validator.py <Dockerfile 경로>
  - 출력:   stdout에 결과 JSON 한 줄(DockerfileValidationResult). 사람용 요약은 stderr.
  - 종료코드: ok=true → 0, DOCKERFILE_MISSING/INVALID → 1(파이프라인이 실패로 인식).

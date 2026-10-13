@@ -1,4 +1,4 @@
-# AppHub 라이브 E2E (TEST-STRATEGY L4)
+# AppHub 라이브 E2E
 
 릴리스 게이트. 배포된 dev 스테이지에 대해 골든 샘플 앱의 실제 배포 여정을 검증한다.
 **실제 AWS 비용(소액)과 시간(~30분)이 든다.** 퍼블릭 애셋 사용자가 설치 후 검증용으로도 쓸 수 있게
@@ -37,7 +37,7 @@ E2E_INTERNAL_TUNNEL=1 PYENV_VERSION=3.10.14 ./e2e/run-e2e.sh --stage dev --scena
 #  ↑ 이전 실행이 남긴 증설 흔적이 있으면 같은 명령이 "정리만" 수행하고 끝난다(앱 생성/ruleCount 조작 없음).
 ```
 
-## 시나리오 (TEST-STRATEGY §L4)
+## 시나리오
 1. **정상 배포 여정** — sample-ok 앱 생성 → 파이프라인 완주 → 발급 URL HTTPS 200 →
    sample-streaming 스트리밍 확인 → 삭제 → **리소스 누수 검사**(app-* 스택/ECR/Route53/리스너 규칙).
 2. **실패 유형 검증** — 실패 픽스처 4종 → 기대 failureCategory(DOCKERFILE_MISSING / DOCKERFILE_INVALID /
@@ -75,7 +75,7 @@ E2E_INTERNAL_TUNNEL=1 PYENV_VERSION=3.10.14 ./e2e/run-e2e.sh --stage dev --scena
 
 이 스크립트들은 **AWS 리소스를 만들지 않는다**. 아래가 먼저 갖춰져야 한다:
 
-1. **플랫폼 배포**: `./scripts/deploy.sh --stage dev` 완료(network + platform 스택, SPA).
+1. **플랫폼 배포**: `./scripts/deploy.sh --stage dev --domain <apps-dev.example.com>` 완료(network + platform 스택, SPA).
 2. **관리자 초기 설정**(관리자 화면 또는 admin API):
    - provider 활성화: `codecommit`(기본) — 시나리오는 CodeCommit 리포에 픽스처를 push한다.
    - 컴퓨팅 프리셋 ≥ 1, 권한 템플릿 ≥ 1

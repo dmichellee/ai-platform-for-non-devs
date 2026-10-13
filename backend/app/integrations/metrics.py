@@ -1,4 +1,4 @@
-"""앱 모니터링 메트릭 (DESIGN 6 앱 상세 "모니터링" 탭).
+"""앱 모니터링 메트릭 (앱 상세 "모니터링" 탭).
 
 CloudWatch GetMetricData 배치 1회로 접속량(requests)·CPU·메모리 시계열을 수집한다.
 무거운 처리를 하지 않는다("메인 서버 무부하") — 단일 GetMetricData 호출로 3지표를 함께 받는다.
@@ -112,7 +112,7 @@ def get_app_metrics(app: dict[str, Any], range_key: str) -> dict[str, Any]:
     end = datetime.now(timezone.utc)
     start = end - duration
 
-    # ECS 지표 차원(DESIGN.md D18): stage 당 공유 클러스터 1개 위에 앱 서비스만 존재.
+    # ECS 지표 차원(D18): stage 당 공유 클러스터 1개 위에 앱 서비스만 존재.
     # ClusterName 은 공유 클러스터, ServiceName 은 앱 서비스로 분리(더 이상 동일하지 않음).
     cluster_dim = f"apphub-{stage}-cluster"
     service_dim = f"apphub-{stage}-app-{app_id}"

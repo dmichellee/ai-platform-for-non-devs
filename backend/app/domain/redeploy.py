@@ -1,4 +1,4 @@
-"""재빌드 없는 런타임 재배포 (DESIGN.md 9 롤백, D8 시크릿 변경 즉시 재배포).
+"""재빌드 없는 런타임 재배포 (롤백, D8 시크릿 변경 즉시 재배포).
 
 롤백과 시크릿 변경 재배포가 **같은 경로**를 쓴다: provisioner CodeBuild(StartBuild) 를
 APP_STACK_KIND=runtime + IMAGE_TAG={commitSha} 로 트리거 → provisioner.yml 이 DDB 의 최신 App

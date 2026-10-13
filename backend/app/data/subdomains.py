@@ -1,4 +1,4 @@
-"""서브도메인 전역 유일성 (DESIGN.md 3.2).
+"""서브도메인 전역 유일성.
 
 App 아이템과 별개로 예약 아이템을 둔다: PK = SUBDOMAIN#{subdomain}, SK = RESERVATION.
 조건부 쓰기(attribute_not_exists)로 원자적 유일성 보장. 앱 삭제 시 함께 해제.

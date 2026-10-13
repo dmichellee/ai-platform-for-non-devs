@@ -6,7 +6,7 @@ import { assertNoOpenIngress } from "./helpers/sg-ingress";
 import type { AppRuntimeParams } from "../lib/constructs/app-params";
 
 /**
- * L2 — app-runtime construct CDK assertions (DESIGN.md 3.1/3.5, cdk-authoring 앱 스택 특수 규칙).
+ * L2 — app-runtime construct CDK assertions (cdk-authoring 앱 스택 특수 규칙).
  *
  * 단언 대상:
  *  - internal 앱 scheme (public 아님)
@@ -16,7 +16,7 @@ import type { AppRuntimeParams } from "../lib/constructs/app-params";
  *  - SG ingress에 0.0.0.0/0 부재(앱 태스크 SG는 ALB SG 참조만) — D17 공통
  *  - 리스너 규칙 priority가 주입 파라미터와 일치(자동 채번 금지)
  *  - D16 cognitoProtect: authenticate-cognito 액션
- *  - desiredCount 최초생성만 지정(갱신 미지정=드리프트 방지, DESIGN 3.5)
+ *  - desiredCount 최초생성만 지정(갱신 미지정=드리프트 방지)
  */
 
 const ENV = { account: "111122223333", region: "ap-northeast-2" };
@@ -272,7 +272,7 @@ describe("app-runtime — internal 앱(schedule + secrets)", () => {
     });
   });
 
-  describe("유휴 재중지 알람 (DESIGN 3.5, D-M5-03)", () => {
+  describe("유휴 재중지 알람 (D-M5-03)", () => {
     it("sleepMode=schedule이면 유휴 알람({appPrefix}-idle)이 생성된다", () => {
       // network의 공유 idle-sleep 규칙이 이 알람명을 prefix로 잡아 sleep-transition을 호출.
       template.hasResourceProperties("AWS::CloudWatch::Alarm", {
@@ -317,7 +317,7 @@ describe("app-runtime — internal 앱(schedule + secrets)", () => {
 });
 
 describe("app-runtime — 갱신 배포(isInitialDeploy=false)", () => {
-  it("DesiredCount를 지정하지 않는다(현재 값 유지, DESIGN 3.5)", () => {
+  it("DesiredCount를 지정하지 않는다(현재 값 유지)", () => {
     const template = synth(baseParams({ isInitialDeploy: false }));
     const services = template.findResources("AWS::ECS::Service");
     for (const svc of Object.values(services)) {
@@ -334,7 +334,7 @@ describe("app-runtime — 스케줄 없음(always-on)", () => {
     template.resourceCountIs("AWS::Scheduler::Schedule", 0);
   });
 
-  it("sleepMode=always-on이면 유휴 알람도 만들지 않는다(잠들지 않음, DESIGN 3.5)", () => {
+  it("sleepMode=always-on이면 유휴 알람도 만들지 않는다(잠들지 않음)", () => {
     const p = baseParams({ sleepMode: "always-on" });
     delete (p as { schedule?: unknown }).schedule;
     const template = synth(p);

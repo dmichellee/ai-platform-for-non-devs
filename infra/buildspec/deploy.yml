@@ -1,12 +1,12 @@
-# CodeBuild #2 — 배포(cdk deploy app-runtime) (DESIGN.md 3.3 [Deploy], 3.5 드리프트 방지)
+# CodeBuild #2 — 배포(cdk deploy app-runtime) (드리프트 방지)
 #
-# 계약(_workspace/contracts/buildspec-contract.md):
+# 계약:
 #  입력 아티팩트: ValidateBuild 산출물 image-tag.json({"imageTag":"<commitSha>"}).
 #  동작: 앱 파라미터(preset/scheme/subdomain/priority/permissionTemplate/이미지태그)를
 #        컨텍스트로 cdk deploy `apphub-{stage}-app-{appId}-runtime` 실행.
 #  앱 파라미터 출처: DDB App 레코드(APP#{appId}/META) + ComputePreset/PermissionTemplate.
 #        (여기서 조회해 컨텍스트로 조립 → app 스택 모드 synth/deploy)
-#  드리프트 방지(DESIGN 3.5): isInitialDeploy는 스택 존재 여부로 판정(최초=true → desiredCount 지정,
+#  드리프트 방지: isInitialDeploy는 스택 존재 여부로 판정(최초=true → desiredCount 지정,
 #        갱신=false → 미지정 = 현재 desiredCount 유지).
 #  잠자는 앱(runtimeState=SLEEPING) 배포(QA H2·N2, 2026-10-08): 깨우지 않는다(desiredCount 0 유지). cdk deploy
 #        직전에 리스너 규칙 forward 만 앱 TG 로 되돌리고(ECS 갱신이 LB 미연결 TG 를 거부하므로 — N2,

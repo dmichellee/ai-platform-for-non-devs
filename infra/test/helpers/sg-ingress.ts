@@ -2,7 +2,7 @@ import { expect } from "vitest";
 import { Template } from "aws-cdk-lib/assertions";
 
 /**
- * D17 공통 단언 헬퍼 (PLATFORM-ENGINEERING.md 2장).
+ * D17 공통 단언 헬퍼.
  *
  * 플랫폼 소유 SG의 **ingress**에 `0.0.0.0/0`·`::/0`가 없어야 한다.
  * 예외는 명시적 예외 목록(internet-facing 공유 ALB SG)의 SG뿐이며,

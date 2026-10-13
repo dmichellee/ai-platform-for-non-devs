@@ -26,7 +26,7 @@ def _test_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("USER_POOL_CLIENT_ID", "testclient")
     monkeypatch.setenv("STAGE", "test")
     monkeypatch.setenv("APPS_DOMAIN", "apps.example.com")
-    # 공유 ECS 클러스터(DESIGN.md D18) — 관리자 강제 중지(sleep_app→ensure_stopped)가 API
+    # 공유 ECS 클러스터(D18) — 관리자 강제 중지(sleep_app→ensure_stopped)가 API
     # Lambda 컨텍스트에서도 CLUSTER_NAME 을 읽으므로 API env 에 포함(network 스택 주입 계약).
     monkeypatch.setenv("CLUSTER_NAME", "apphub-test-cluster")
     monkeypatch.setenv(

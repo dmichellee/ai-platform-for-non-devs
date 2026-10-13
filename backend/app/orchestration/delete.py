@@ -1,4 +1,4 @@
-"""DeleteApp task Lambda 디스패처 (DESIGN.md 3.6, D-M5-05).
+"""DeleteApp task Lambda 디스패처 (D-M5-05).
 
 step 흐름(ASL 이 Wait/Choice/Retry/Catch 로 감싼다):
   delete-runtime(DeleteStack) → poll-runtime(Choice DELETE_COMPLETE + Wait)

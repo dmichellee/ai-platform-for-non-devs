@@ -19,7 +19,7 @@ import { resourcePrefix } from "../config";
 import type { AppPipelineParams } from "./app-params";
 
 /**
- * app-pipeline — 특정 앱의 **빌드 경로** (apphub-conventions 2장, DESIGN.md 3.1/3.3).
+ * app-pipeline — 특정 앱의 **빌드 경로** (apphub-conventions 2장).
  *
  * 포함(전부 앱별 — 앱 삭제 = 이 스택 삭제로 완결):
  *  - ECR 리포지토리(lifecycle 최근 5개, emptyOnDelete:true → 앱 삭제 시 이미지 포함 완전 삭제)
@@ -56,7 +56,7 @@ export class AppPipeline extends Construct {
       removalPolicy: RemovalPolicy.DESTROY,
       lifecycleRules: [
         {
-          description: "Keep only the latest 5 images (rollback headroom + cost control, DESIGN 9)",
+          description: "Keep only the latest 5 images (rollback headroom + cost control)",
           maxImageCount: 5,
         },
       ],
@@ -205,7 +205,7 @@ export class AppPipeline extends Construct {
     // 플랫폼 CDK 소스 tarball(CDK_SOURCE_S3_URI)을 자산 버킷에서 받는다(D-M5-06). GetObject만.
     this.grantAssetRead(this.deployBuild, p.cdkSourceS3Uri, "ReadCdkSourceAsset");
 
-    // ── QA N2(2026-10-08) — 잠든 앱 배포 전 규칙 복귀 (DESIGN 3.5 (c)) ─────────────
+    // ── QA N2(2026-10-08) — 잠든 앱 배포 전 규칙 복귀 ─────────────
     //  deploy.yml이 cdk deploy **전에** runtimeState=SLEEPING이면 AWS CLI로 배정 ALB 리스너 규칙의 forward만
     //  앱 TG로 되돌린다(authenticate-cognito 유지). 필요한 호출: SSM https-listener-arn 조회 →
     //  describe-rules(host 매칭) / describe-target-groups(이름 규약) → modify-rule. runtimeState 조회는

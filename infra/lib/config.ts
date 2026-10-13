@@ -1,7 +1,7 @@
 /**
  * Stage별 설정 타입 + 로더.
  *
- * [P] 플랫폼 개발·설치 규칙 (docs/PLATFORM-ENGINEERING.md):
+ * [P] 플랫폼 개발·설치 규칙:
  *  - 계정/리전/도메인/hostedZoneId 등 환경 리터럴은 **하드코딩하지 않는다**. 퍼블릭 애셋이므로
  *    설치자마다 값이 다르다(cdk-authoring "cdk.context.json에 환경 값 커밋 금지"와 동일 취지).
  *  - 이 값들은 최초 배포 시 주입받는다:
@@ -14,7 +14,7 @@
  *  - 앱 스택(app-runtime/app-pipeline)은 이 로더를 쓰지 않는다 — domain/hostedZone을 network 스택이
  *    발행한 SSM(`/apphub/{stage}/network/*`)에서 읽으므로 buildspec에 domain 주입이 불필요하다.
  *
- * SG ingress 규칙 (D17, PLATFORM-ENGINEERING.md 2장):
+ * SG ingress 규칙 (D17):
  *  - 플랫폼 소유 SG의 ingress에 `0.0.0.0/0`·`::/0` 금지. 개방이 필요하면 대역을 한정한다.
  *  - 이 로더는 allowedIngressCidrs에 해당 오픈 대역이 섞여 들어오면 build 이전 단계에서 throw 한다.
  *  - 유일한 예외(internet-facing 공유 ALB SG)는 이 CIDR 목록이 아니라 스택 코드에서 명시적으로 처리한다.
@@ -23,7 +23,7 @@
 export type Stage = "dev" | "prod";
 
 /**
- * 플랫폼 웹 배포 모드(D19, PLATFORM-ENGINEERING 4.1). 기본 public.
+ * 플랫폼 웹 배포 모드(D19). 기본 public.
  *  - public : CloudFront+S3 + API GW Regional
  *  - private: 콘솔 internal ALB + ECS(nginx) + Private REST API(VPC 엔드포인트)
  */
@@ -214,7 +214,7 @@ export function loadConfig(stage: Stage, inputs?: ConfigInputs): StageConfig {
     inputs?.hostedZoneId,
     `'${appsDomain}'의 Route53 hosted zone ID(hostedZoneId)`,
     "`--hosted-zone-id <id>`로 지정하거나, 해당 도메인의 public hosted zone을 계정에 두면 " +
-      "deploy.sh가 자동 조회합니다(PLATFORM-ENGINEERING.md 5.1).",
+      "deploy.sh가 자동 조회합니다.",
   );
 
   return {

@@ -69,7 +69,7 @@ zip 안에 **`apphub-aws.conf` 와 `setup-aws-git.sh`** 가 들어 있다면, �
 ## 훅은 보조 수단, 최종 강제는 플랫폼 (개발자/관리자용)
 - 이 pre-commit 훅은 **미리 걸러주는 보조 수단**이다. **최종 강제는 플랫폼의 배포 전 검증**
   (Dockerfile 정적 검증 + 이미지 실행 스모크)이 담당한다. Kiro/훅을 안 쓴 레포도 플랫폼에서
-  같은 기준으로 걸러진다(신뢰 경계 = 플랫폼 검증, KIRO-STANDARDS 3장).
+  같은 기준으로 걸러진다(신뢰 경계 = 플랫폼 검증).
 - pre-commit의 EXPOSE·금지 항목 검사는 플랫폼 정적 검증기(`backend/app/validator/dockerfile.py`)와
   **동일한 규칙**을 따른다(8080 하나만, 금지 항목 패턴 동일).
 - 훅은 의존성 없이 **POSIX sh + grep + git**만 사용한다. mac/linux 어디서든 동작한다.
@@ -81,4 +81,4 @@ zip 안에 **`apphub-aws.conf` 와 `setup-aws-git.sh`** 가 들어 있다면, �
 AppHub 화면의 "Kiro 설정" 메뉴에서 OS별로 내려받습니다.
 zip은 `scripts/build-kiro-bundle.sh`로 생성하며, 플랫폼 자산 버킷의 고정 키
 `s3://{assets}/kiro-config/kiro-config-mac.zip`에 업로드된다.
-(Windows 판은 `.../kiro-config-windows.zip`.)
+(Windows 판은 `.../kiro-config-windows.zip`. 사내 전용(private) 설치에서는 S3 대신 콘솔 이미지에 포함된다.)

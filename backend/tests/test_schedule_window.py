@@ -1,4 +1,4 @@
-"""QA W-1 — 가동 시간대 안의 schedule 앱은 유휴 경로(알람·스윕)로 재우지 않는다 (DESIGN 3.5).
+"""QA W-1 — 가동 시간대 안의 schedule 앱은 유휴 경로(알람·스윕)로 재우지 않는다.
 
 schedule 형식: {startTime, stopTime, days(0=일..6=토), timezone}. 창은 [start, stop), stop<=start 면 자정 넘김.
 """

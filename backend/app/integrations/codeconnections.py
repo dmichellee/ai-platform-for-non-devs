@@ -1,4 +1,4 @@
-"""레포 연결 (DESIGN.md D4/6 "레포 연결 관리").
+"""레포 연결 (D4, "레포 연결 관리").
 
 - github/gitlab: CodeConnections OAuth 흐름. 생성 → PENDING(외부 승인 대기) → AVAILABLE.
 - codecommit: 외부 연동 없이 즉시 사용 가능 → CodeConnections 미사용, 가상 식별자(핸들러 처리).

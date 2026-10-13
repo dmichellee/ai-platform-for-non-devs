@@ -1,4 +1,4 @@
-"""CodePipeline — 앱 파이프라인 실행 트리거 (DESIGN.md 3.2/3.3).
+"""CodePipeline — 앱 파이프라인 실행 트리거.
 
 파이프라인 생성 직후 첫 배포, 그리고 수동 배포/롤백을 StartPipelineExecution 으로 트리거.
 파이프라인명 규약: `apphub-{stage}-app-{appId}`.

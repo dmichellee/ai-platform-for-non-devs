@@ -1,6 +1,6 @@
-# provisioner CodeBuild — 앱 스택 원격 배포 (DESIGN.md 3.2 단계 2 / 3.1 provisioner / 9 롤백)
+# provisioner CodeBuild — 앱 스택 원격 배포 (앱 생성 2단계 · 롤백)
 #
-# 계약(_workspace/contracts/buildspec-contract.md 6장 미해결 자산 주입 D-M4-05):
+# 계약(미해결 자산 주입 D-M4-05):
 #  ProvisionApp 상태 기계가 이 프로젝트를 StartBuild 하며 아래 env를 override로 주입한다:
 #    APP_ID, STAGE, APP_STACK_KIND(pipeline|runtime|alb), PROVIDER, REPO_URL, BRANCH,
 #    AUTO_DEPLOY, CONNECTION_ARN(선택), IMAGE_TAG(롤백 시 runtime 재배포용 커밋 SHA)
@@ -14,7 +14,7 @@
 #
 # 동작: 플랫폼 CDK 코드를 S3에서 받아 kind별 스택을 cdk deploy.
 #   - pipeline: `apphub-{stage}-app-{APP_ID}-pipeline` 생성/갱신(무거운 빌드/이미지는 앱 파이프라인이 담당).
-#   - runtime : `apphub-{stage}-app-{APP_ID}-runtime` — 롤백/시크릿 변경 재배포(DESIGN 9, D8). 재빌드 없이
+#   - runtime : `apphub-{stage}-app-{APP_ID}-runtime` — 롤백/시크릿 변경 재배포(D8). 재빌드 없이
 #     IMAGE_TAG(커밋 SHA) 이미지로 runtime 스택만 재배포한다. app 파라미터 조립·잠든 앱 규칙 복귀는
 #     deploy.yml과 같은 공용 헬퍼(cdk-src/infra/buildspec/helpers/{runtime-ctx,prepare-sleeping-app}.cjs —
 #     CDK 소스 tarball 에 포함)를 쓴다. -c deployId=${CODEBUILD_BUILD_ID}(QA D-1).
@@ -174,7 +174,7 @@ phases:
             -c cdkSourceS3Uri="${CDK_SOURCE_S3_URI}" \
             ${CTX_connectionArn:+-c connectionArn="${CTX_connectionArn}"}
         else
-          # runtime 롤백/시크릿 변경: 재빌드 없이 IMAGE_TAG 이미지로 runtime 스택 재배포(DESIGN 9).
+          # runtime 롤백/시크릿 변경: 재빌드 없이 IMAGE_TAG 이미지로 runtime 스택 재배포.
           #  deploy.yml Deploy 스테이지와 동일 컨텍스트(app-params.ts 소비). 실패 시 CFN 롤백.
           #  deployId(D8, QA D-1): 빌드 ID → 태스크 정의 dockerLabels apphub.deployId(매번 새 리비전 → 태스크 교체,
           #  값만 바뀐 시크릿도 반영).

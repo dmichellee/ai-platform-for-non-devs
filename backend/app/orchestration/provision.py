@@ -1,4 +1,4 @@
-"""ProvisionApp task Lambda 디스패처 (DESIGN.md 3.2, D-M5-01).
+"""ProvisionApp task Lambda 디스패처 (D-M5-01).
 
 step 흐름(ASL 이 Wait/Choice/Retry/Catch 로 감싼다):
   allocate-slot(slotStatus=WAIT 면 Wait 30초 → 재호출, D20) → deploy-pipeline(provisioner CodeBuild StartBuild)
@@ -66,7 +66,7 @@ def allocate_slot(e: dict[str, Any]) -> dict[str, Any]:
     scheme = app["scheme"]
     st = stage()
     seed_alb_arn = alb_param(st, scheme, 0, "alb-arn")
-    # VPC 선택 기능 제거 — 1차는 플랫폼 부트스트랩 VPC 단일 배치(DESIGN 3.7·10장).
+    # VPC 선택 기능 제거 — 1차는 플랫폼 부트스트랩 VPC 단일 배치.
     #  배치 VPC 는 network SSM(vpc-id)에서 확정(AlbRegistry.vpcId — 관리자 인프라 현황용).
     vpc_id = network_param(st, "vpc-id")
     slot = allocate_alb_slot(scheme, seed_alb_arn, vpc_id)

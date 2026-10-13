@@ -96,7 +96,7 @@ export class AlbShardStack extends Stack {
       vpc,
       internetFacing: isInternet,
       securityGroup: albSg,
-      idleTimeout: Duration.seconds(300), // SSE/스트리밍 대비 (DESIGN 3.5) — n=0과 동일
+      idleTimeout: Duration.seconds(300), // SSE/스트리밍 대비 — n=0과 동일
       vpcSubnets: { subnets: isInternet ? vpc.publicSubnets : vpc.privateSubnets },
     });
     this.alb = alb;

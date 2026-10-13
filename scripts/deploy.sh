@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 #
 # AppHub 설치 스크립트 — 멱등(idempotent). 같은 명령을 몇 번 실행해도 결과가 같다.
-# [P] PLATFORM-ENGINEERING.md 4장 동작 그대로.
 #
 # 사용:
 #   ./scripts/deploy.sh --stage dev|prod --domain <apps.example.com> \
@@ -68,7 +67,7 @@ usage() {
                                 public : CloudFront + S3, API Gateway Regional
                                 private: 사내 전용 — internal ALB + 컨테이너(nginx), Private API(VPC 엔드포인트).
                                          사무실 PC 접속에는 사내망-VPC 연결과 DNS 포워딩이 필요합니다
-                                         (README 의 요구 사항 참고).
+                                         (README 의 배포 절 참고).
                               다른 값으로 다시 실행하면 모드가 전환됩니다.
   --internal-cidrs "a,b"      internal ALB(및 private 모드 콘솔·VPC 엔드포인트) ingress 허용 대역
                               (콤마 구분). 미지정 시 VPC CIDR.
@@ -686,7 +685,7 @@ if [[ "${FRONTEND_MODE}" == "public" ]]; then
   echo "  (참고) 콘솔 인증서 발급·DNS 전파에 수 분이 걸릴 수 있습니다."
 else
   echo "  (참고) private 모드 콘솔은 사내망에서만 열립니다 — 사내망-VPC 연결과 '${APPS_DOMAIN}' DNS 포워딩이"
-  echo "         필요합니다(README 의 요구 사항 참고). 앱 '로그인한 사람만 접근'은 공용 로그인 도메인을 경유합니다."
+  echo "         필요합니다(README 의 배포 절 참고). 앱 '로그인한 사람만 접근'은 private 모드에서 쓸 수 없습니다."
 fi
 echo
 echo "다음 단계:"

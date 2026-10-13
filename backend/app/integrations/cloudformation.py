@@ -1,4 +1,4 @@
-"""CloudFormation — 앱 스택 삭제 시작 / 삭제 상태 조회 (DESIGN.md 3.6).
+"""CloudFormation — 앱 스택 삭제 시작 / 삭제 상태 조회.
 
 DeleteApp 상태 기계가 소비. 무거운 작업은 시작만(DeleteStack) — 폴링은 SFN Choice+Wait 루프가,
 task Lambda 는 DescribeStacks 로 삭제 상태 조회만.

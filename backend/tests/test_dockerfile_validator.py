@@ -1,4 +1,4 @@
-"""L1 — Dockerfile 정적 검증기 (KIRO-STANDARDS.md 3장).
+"""L1 — Dockerfile 정적 검증기.
 
 CodeBuild 검증 단계가 부르는 것과 **동일한** validate_dockerfile 을 호출한다.
 failureCategory 와 사람이 읽을 사유(reasons)가 apphub-conventions 4장과 일치하는지 고정.

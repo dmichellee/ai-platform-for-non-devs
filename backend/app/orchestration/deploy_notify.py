@@ -1,6 +1,6 @@
 """[Notify] 배포 상태 알림 Lambda — EventBridge(CodePipeline 상태변화) → DDB Deployment 갱신.
 
-DESIGN.md 3.3 마지막 단계 `[Notify] EventBridge → Lambda → DDB Deployment 레코드 갱신`의 구현.
+배포 파이프라인의 마지막 단계 `[Notify] EventBridge → Lambda → DDB Deployment 레코드 갱신`의 구현.
 이 Lambda 가 없으면 Deployment 레코드가 접수 시점 PENDING 에서 영원히 멈추고(웹 '배포 진행 상황'
 화면이 '가져오기'에서 정지), push 자동 배포는 레코드 자체가 생성되지 않는다.
 

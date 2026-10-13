@@ -1,4 +1,4 @@
-"""인증·인가 (DESIGN.md 5장, stack-outputs.md §3.1).
+"""인증·인가 (stack-outputs.md §3.1).
 
 API GW의 Cognito authorizer가 검증한 JWT 클레임을 event.requestContext.authorizer.claims 로 넘긴다.
  - user_id  = claims.sub

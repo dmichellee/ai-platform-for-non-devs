@@ -5,7 +5,7 @@ import { AppRuntime } from "./constructs/app-runtime";
 import type { AppPipelineParams, AppRuntimeParams } from "./constructs/app-params";
 
 /**
- * 앱별 독립 스택 래퍼 (DESIGN.md 3.1).
+ * 앱별 독립 스택 래퍼.
  *  - provisioner CodeBuild가 앱 파라미터를 컨텍스트로 넘겨 `apphub-{stage}-app-{appId}-{pipeline|runtime}`
  *    스택으로 synth/deploy 한다.
  *  - construct(app-pipeline/app-runtime)는 플랫폼 설치와 앱 배포 양쪽에서 같은 코드로 쓰이며,

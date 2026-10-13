@@ -74,7 +74,7 @@ def rollback_deploy(ctx: RouteContext) -> ProxyResult:
 
     검증: 대상 Deployment 가 존재하고 SUCCEEDED 이며 commitSha 가 있고, 그 태그 이미지가 ECR 에 실존.
     실행: provisioner CodeBuild(StartBuild) 를 APP_STACK_KIND=runtime + IMAGE_TAG={commitSha} 로 트리거.
-      재빌드 없이 runtime 스택만 이미지 태그를 바꿔 재배포한다(DESIGN 9). Deployment(trigger=rollback)
+      재빌드 없이 runtime 스택만 이미지 태그를 바꿔 재배포한다. Deployment(trigger=rollback)
       레코드를 접수 상태(PENDING)로 남기고, 진행 상태는 배포 이력/새로고침으로 확인(완료 폴링 안 함).
     """
     app = load_owned_app(ctx)

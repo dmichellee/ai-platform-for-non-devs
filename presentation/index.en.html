@@ -1,0 +1,1255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AppHub - Workload Overview</title>
+<link rel="stylesheet" href="css/fonts.css?v=1791210766">
+<link rel="stylesheet" href="css/tokens.css?v=1791210766">
+<link rel="stylesheet" href="css/deck.css?v=1791210766">
+</head>
+<body>
+
+<!-- Line icons (Lucide-style, 24px grid). Used via <svg class="ico"><use href="#i-..."/></svg> -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-grid" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></symbol>
+    <symbol id="i-code" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></symbol>
+    <symbol id="i-cloud" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 1 0-1.4-8.8A6 6 0 0 0 4.3 12 3.5 3.5 0 0 0 5.5 19z"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01"/></symbol>
+    <symbol id="i-rocket" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 16.5c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.8.7-2.1-.1-2.9a2.2 2.2 0 0 0-2.9-.1zM12 15l-3-3a22 22 0 0 1 2-3.9A12.9 12.9 0 0 1 22 2c0 2.7-.8 7.5-6 11a22.4 22.4 0 0 1-4 2zM9 12H4s.6-3 2-4c1.6-1.1 5 0 5 0M12 15v5s3-.6 4-2c1.1-1.6 0-5 0-5"/></symbol>
+    <symbol id="i-git" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="9" r="2.5"/><path d="M6 8.5v7M18 11.5c0 3-4 3.5-10 5"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="8" r="3.5"/><path d="M2 20a7 7 0 0 1 14 0M16 4.5a3.5 3.5 0 0 1 0 7M18 13.5a6.5 6.5 0 0 1 4 6.5"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3L21 2M16 7l3 3M19 4l2 2"/></symbol>
+    <symbol id="i-net" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="5" rx="1"/><rect x="2" y="17" width="6" height="5" rx="1"/><rect x="16" y="17" width="6" height="5" rx="1"/><path d="M12 7v5M5 17v-3h14v3"/></symbol>
+    <symbol id="i-db" viewBox="0 0 24 24" fill="none" stroke-width="2"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-5-6-5M12 19h8"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l10 5-10 5L2 7z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></symbol>
+    <symbol id="i-test" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.8 3h10.4a2 2 0 0 0 1.8-3l-5-9V3"/><path d="M7 15h10"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+    <symbol id="i-sparkle" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2z"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-repeat" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 1l4 4-4 4M3 11V9a4 4 0 0 1 4-4h14M7 23l-4-4 4-4M21 13v2a4 4 0 0 1-4 4H3"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></symbol>
+    <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#6B7785"/></marker>
+    <marker id="ahv" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#6842FF"/></marker>
+    <marker id="ahp" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#D600BA"/></marker>
+  </defs>
+</svg>
+
+<div id="thread"></div>
+<button id="menu-toggle" aria-label="Slide list (M)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg></button>
+<nav id="sidebar" aria-label="Slide list">
+  <div class="sb-head"><b>AppHub Workload</b><button class="sb-close" aria-label="Close">&times;</button></div>
+  <div class="sb-body"></div>
+  <div class="sb-foot"><kbd>←</kbd> <kbd>→</kbd> navigate / <kbd>M</kbd> list / <kbd>F</kbd> fullscreen / print for PDF</div>
+</nav>
+<button class="nav-arrow prev" aria-label="Previous"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+<button class="nav-arrow next" aria-label="Next"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg></button>
+<div id="counter"></div>
+<div id="lightbox" role="dialog" aria-modal="true" aria-label="Enlarged image" hidden><button class="lb-close" type="button" aria-label="Close (Esc)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button><img alt=""><div class="lb-cap"><span class="t"></span><span><kbd>←</kbd> <kbd>→</kbd> navigate / <kbd>Esc</kbd> close</span></div></div>
+
+<main id="stage">
+
+<!-- ═══════════════════ 01 COVER ═══════════════════ -->
+<section class="slide cover" data-nav="Cover" data-group="Overview">
+  <div class="glow tr"></div><div class="glow bl"></div>
+  <div class="pad">
+    <div class="brandmark"><div class="m"><svg><use href="#i-grid"/></svg></div><b>AppHub</b><span class="tag ghost">Workload Overview</span></div>
+    <h1 style="font-size:54px">An internal app platform<strong>for non-developers</strong></h1>
+    <p class="lede">Take an app built with Kiro from repository<br>to deployment to status, all in one web console.</p>
+    <div class="presenter"><b>Daeun Lee</b><span>Solutions Architect, AWS</span></div>
+  </div>
+  <div class="laptop"><div class="scr"><img src="assets/shots/02-dashboard.png" alt="AppHub dashboard"></div><div class="base"></div></div>
+</section>
+
+<!-- ═══════════════════ 02 AT A GLANCE ═══════════════════ -->
+<section class="slide" data-nav="At a glance" data-group="Overview">
+  <div class="glow tr"></div>
+  <style>
+    .gl-flow { display:grid; grid-template-columns: 250px 34px 1fr 34px 290px; align-items:stretch; }
+    .gl-flow .chev { width:auto; }
+    .gl-flow .chev svg { width:22px; height:22px; }
+    .persona { display:flex; gap:12px; align-items:flex-start; padding:12px 14px; }
+    .persona .ico-box { width:44px; height:44px; }
+    .persona b { font-size:15px; }
+    .persona .d { font-size:12.5px; color:var(--muted); margin-top:3px; line-height:1.45; }
+    .hub { border-radius:18px; padding:14px 16px 16px; color:#fff; background: linear-gradient(135deg, #3B2BB8, #6842FF 55%, #2FA6E8); box-shadow: 0 18px 40px -18px rgba(70,60,220,.6); display:flex; flex-direction:column; gap:10px; }
+    .hub .hd { display:flex; align-items:center; gap:10px; }
+    .hub .hd .m { width:34px; height:34px; border-radius:9px; background:rgba(255,255,255,.18); display:grid; place-items:center; }
+    .hub .hd .m svg { width:19px; height:19px; stroke:#fff; }
+    .hub .hd b { color:#fff; font-size:18px; }
+    .hub .hd span { font-size:12px; opacity:.8; }
+    .hub .cap4 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .hub .c { background:rgba(255,255,255,.13); border:1px solid rgba(255,255,255,.22); border-radius:11px; padding:9px 10px; display:flex; gap:9px; align-items:center; }
+    .hub .c svg { width:22px; height:22px; stroke:#fff; flex:none; }
+    .hub .c b { color:#fff; font-size:13.5px; display:block; }
+    .hub .c i { font-style:normal; font-size:11.5px; opacity:.82; }
+    .result { display:flex; flex-direction:column; gap:10px; }
+    .urlbar { display:flex; align-items:center; gap:7px; background:#fff; border:1px solid var(--hair); border-radius:999px; padding:7px 12px; font:12px var(--font-mono); color:var(--ink); box-shadow:var(--shadow-card); }
+    .urlbar svg { width:14px; height:14px; stroke:#0B7A5C; }
+    .kpis { display:grid; grid-template-columns:repeat(6,1fr); gap:10px; }
+    .kpis .kpi { padding:11px 12px; display:flex; flex-direction:column; gap:2px; }
+    .kpis .kpi .v { font-size:28px; }
+    .kpis .kpi .l { font-size:12.5px; margin-top:0; font-weight:600; color:var(--ink); }
+    .kpis .kpi .d { font-size:10.5px; }
+  </style>
+  <div class="pad">
+    <div class="kicker">At a glance</div>
+    <h2 class="s-title">Connect a code repository; the platform handles build, deploy, URL and operations</h2>
+    <div class="body" style="gap:18px;justify-content:center">
+      <div class="gl-flow">
+        <div class="col" style="gap:10px">
+          <div class="cap" style="font:700 11px var(--font-display);letter-spacing:.06em;color:var(--g3)">WHO</div>
+          <div class="card persona"><div class="ico-box"><svg class="ico"><use href="#i-user"/></svg></div><div><b>User (non-developer)</b><div class="d">Writes code with Kiro → push<br>Creates, deploys, monitors on the web</div></div></div>
+          <div class="card persona"><div class="ico-box" style="background:rgba(47,166,232,.12)"><svg class="ico" style="stroke:#1F8FD0"><use href="#i-shield"/></svg></div><div><b>Administrator</b><div class="d">Size presets, permission templates<br>Users, platform settings</div></div></div>
+          <div class="row center" style="gap:6px;flex-wrap:wrap"><span class="tag ghost"><svg class="ico" style="width:13px;height:13px"><use href="#i-sliders"/></svg>7-question wizard</span><span class="tag ghost">No AWS jargon</span></div>
+        </div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="hub">
+          <div class="hd"><div class="m"><svg><use href="#i-grid"/></svg></div><div><b>AppHub</b><div><span>Handled by the platform</span></div></div></div>
+          <div class="cap4">
+            <div class="c"><svg><use href="#i-rocket"/></svg><div><b>Auto check, build, deploy</b><i>on every push</i></div></div>
+            <div class="c"><svg><use href="#i-lock"/></svg><div><b>HTTPS URL issued</b><i>{subdomain}.apps.{company domain}</i></div></div>
+            <div class="c"><svg><use href="#i-moon"/></svg><div><b>Sleep, wake</b><i>0 tasks when idle, starts on first request</i></div></div>
+            <div class="c"><svg><use href="#i-alert"/></svg><div><b>Clear failure guidance</b><i>Per-type message + prompt for Kiro</i></div></div>
+          </div>
+          <div class="row center" style="gap:8px;font-size:11.5px;opacity:.9;flex-wrap:wrap">
+            <span style="color:#fff">1 app =</span>
+            <span class="tag" style="background:rgba(255,255,255,.2)">pipeline stack</span><span style="color:#fff">+</span><span class="tag" style="background:rgba(255,255,255,.2)">runtime stack</span>
+            <span style="color:#fff;opacity:.85">(CloudFormation)</span>
+          </div>
+        </div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="result">
+          <div class="cap" style="font:700 11px var(--font-display);letter-spacing:.06em;color:var(--g3)">RESULT</div>
+          <div class="urlbar"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>https://chat-bot.apps.company-domain</div>
+          <div class="shot" style="border-radius:10px"><img src="assets/shots/02-dashboard.png" alt="" style="height:128px;object-fit:cover;object-position:top"></div>
+          <div class="row" style="gap:4px;flex-wrap:nowrap;font-size:11px"><span style="font-size:11px;padding:3px 7px" class="tag ok">Running</span><span style="font-size:11px;padding:3px 7px" class="tag grey">Sleeping</span><span style="font-size:11px;padding:3px 7px" class="tag vio">Waking</span><span style="font-size:11px;padding:3px 7px" class="tag warn">Creating</span><span style="font-size:11px;padding:3px 7px" class="tag err">Failed</span></div>
+        </div>
+      </div>
+      <div class="row" style="gap:12px;align-items:stretch">
+        <div class="kpi row center" style="gap:16px;flex:1">
+          <div><div class="v">7<small> steps</small></div><div class="l" style="font-weight:600;color:var(--ink)">App creation wizard</div></div>
+          <div class="row center" style="gap:4px;flex-wrap:wrap;font-size:11.5px">
+            <span class="tag ghost">Repository</span>›<span class="tag ghost">Name, visibility</span>›<span class="tag ghost">Size</span>›<span class="tag ghost">App type</span>›<span class="tag ghost">Env vars</span>›<span class="tag ghost">Run mode</span>›<span class="tag ghost">Setup guide</span>
+          </div>
+        </div>
+        <div class="kpi row center" style="gap:16px;width:400px">
+          <div><div class="v">4<small> kinds</small></div><div class="l" style="font-weight:600;color:var(--ink)">CDK stacks</div></div>
+          <div class="col" style="gap:5px;font:600 11px var(--font-mono)">
+            <div class="row" style="gap:5px"><span class="tag vio">network</span><span class="tag vio">platform</span><span class="small muted" style="font-family:var(--font-body)">once per stage</span></div>
+            <div class="row" style="gap:5px"><span class="tag" style="background:#E0F2FE;color:#0B6AA8">pipeline</span><span class="tag" style="background:#E0F2FE;color:#0B6AA8">runtime</span><span class="small muted" style="font-family:var(--font-body)">per app</span></div>
+            <div class="row" style="gap:5px"><span class="tag vio">+ alb</span><span class="small muted" style="font-family:var(--font-body)">only when scaling out</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="row center small muted" style="gap:8px;flex-wrap:wrap">
+        <svg class="ico" style="width:16px;height:16px;stroke:var(--muted)"><use href="#i-layers"/></svg>Monorepo
+        <span class="tag ghost"><code>infra/</code> CDK</span><span class="tag ghost"><code>backend/</code> Python 3.13</span><span class="tag ghost"><code>frontend/</code> React</span><span class="tag ghost"><code>kiro-config/</code> deploy standard</span><span class="tag ghost"><code>e2e/</code> tests</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 03 PRINCIPLES ═══════════════════ -->
+<section class="slide" data-nav="4 design principles" data-group="Overview">
+  <style>
+    .pr { display:flex; flex-direction:column; gap:10px; padding:16px; }
+    .pr .top { display:flex; align-items:center; gap:10px; }
+    .pr .top .ico-box { width:46px; height:46px; border-radius:13px; }
+    .pr .top .ico-box .ico { width:24px; height:24px; }
+    .pr .top .n { font:700 12px var(--font-mono); color:var(--faint); }
+    .pr h4 { font-size:17px; }
+    .pr .one { font-size:13px; color:var(--muted); line-height:1.45; min-height:38px; }
+    .mini { background:var(--surface); border:1px solid var(--hair-soft); border-radius:12px; padding:14px 12px; display:flex; flex-direction:column; justify-content:center; gap:10px; flex:1; }
+    .mini .lbl { font:700 10.5px var(--font-display); letter-spacing:.05em; color:var(--faint); text-transform:uppercase; }
+    .pair { display:grid; grid-template-columns: 1fr 14px 1.15fr; align-items:center; gap:4px; font-size:12px; }
+    .pair .u { background:#fff; border:1px solid var(--hair); border-radius:8px; padding:5px 7px; text-align:center; color:var(--ink); font-weight:600; }
+    .pair .a { background:#EEF2FF; border:1px solid #D6DCFB; border-radius:8px; padding:5px 4px; text-align:center; font:10.5px var(--font-mono); white-space:nowrap; color:#3B2BB8; }
+    .mini-arr { color:var(--g4); text-align:center; font-weight:700; }
+    .stk { display:grid; grid-template-columns: 1fr 1fr; gap:6px; }
+    .stk div { border-radius:7px; padding:6px 4px; text-align:center; font:600 11px var(--font-mono); }
+    .stk .shared { background:#E9E5FF; color:#3B2BB8; }
+    .stk .app { background:#E0F2FE; color:#0B6AA8; }
+    .vflow { display:flex; flex-direction:column; align-items:stretch; gap:4px; font-size:12px; }
+    .vflow .b { display:flex; align-items:center; gap:7px; background:#fff; border:1px solid var(--hair); border-radius:8px; padding:5px 8px; }
+    .vflow .b img { width:20px; height:20px; }
+    .vflow .b em { font-style:normal; margin-left:auto; font-size:10.5px; color:var(--muted); }
+    .vflow .dn { text-align:center; color:var(--g4); font-size:11px; line-height:1; }
+    .errc { background:#FFF4F6; border:1px solid #F6C7D2; border-radius:9px; padding:7px 9px; font-size:11.5px; color:#B4153A; display:flex; gap:6px; align-items:center; }
+    .errc svg { width:15px; height:15px; stroke:#B4153A; flex:none; }
+    .bubble { background:#fff; border:1px solid #D6DCFB; border-radius:12px 12px 12px 3px; padding:7px 10px; font-size:12px; color:var(--ink); }
+  </style>
+  <div class="pad">
+    <div class="kicker">Design principles</div>
+    <h2 class="s-title">Four principles and where the code implements them</h2>
+    <div class="body vc g4" style="gap:14px">
+      <div class="card pr">
+        <div class="top"><div class="ico-box"><svg class="ico"><use href="#i-sliders"/></svg></div></div>
+        <h4>Minimal technical options</h4>
+        <div class="one">Plain choices instead of AWS terms, limited to admin-defined presets</div>
+        <div class="mini">
+          <div class="lbl">Screen → internal</div>
+          <div class="pair"><span class="u">Size: Medium (e.g.)</span><span class="mini-arr">→</span><span class="a">1vCPU/2GB</span></div>
+          <div class="pair"><span class="u">Internal only</span><span class="mini-arr">→</span><span class="a">internal ALB</span></div>
+          <div class="pair"><span class="u">Uses AI features</span><span class="mini-arr">→</span><span class="a">IAM policy</span></div>
+        </div>
+      </div>
+      <div class="card pr">
+        <div class="top"><div class="ico-box"><svg class="ico"><use href="#i-layers"/></svg></div></div>
+        <h4>All infrastructure as code</h4>
+        <div class="one">Platform and user apps share one CDK codebase; deployments are idempotent</div>
+        <div class="mini">
+          <div class="lbl">Once per stage</div>
+          <div class="stk"><div class="shared">network</div><div class="shared">platform</div></div>
+          <div class="lbl">Per app × N</div>
+          <div class="stk"><div class="app">pipeline</div><div class="app">runtime</div></div>
+          <div class="row" style="gap:5px;flex-wrap:wrap"><span class="tag ghost">Deleting an app removes its resources</span><span class="tag ghost">Install command is safe to re-run</span></div>
+        </div>
+      </div>
+      <div class="card pr">
+        <div class="top"><div class="ico-box"><svg class="ico"><use href="#i-cloud"/></svg></div></div>
+        <h4>No load on the main server</h4>
+        <div class="one">Builds and deploys run in CodeBuild. The API only accepts requests and reports status</div>
+        <div class="mini">
+          <div class="lbl">On app creation</div>
+          <div class="vflow">
+            <div class="b"><img src="assets/aws/lambda.svg" alt="">API<em>accept, query</em></div>
+            <div class="dn">▼</div>
+            <div class="b"><img src="assets/aws/sfn.svg" alt="">Step Functions<em>long tasks</em></div>
+            <div class="dn">▼</div>
+            <div class="b"><img src="assets/aws/codebuild.svg" alt="">CodeBuild<em>cdk deploy</em></div>
+          </div>
+          <div class="row center" style="gap:6px"><img src="assets/aws/eventbridge.svg" width="18" alt=""><span class="small" style="line-height:1.4">Deploy status updated by events<br><b>No API server polling</b></span></div>
+        </div>
+      </div>
+      <div class="card pr">
+        <div class="top"><div class="ico-box"><svg class="ico"><use href="#i-alert"/></svg></div></div>
+        <h4>Helpful failures</h4>
+        <div class="one">Failures are classified into 7 types and shown as plain-language guidance</div>
+        <div class="mini">
+          <div class="errc"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><use href="#i-alert"/></svg><b style="color:#B4153A;font-family:var(--font-mono);font-size:11px">BUILD_FAILED</b></div>
+          <div class="dn" style="text-align:center;color:var(--g4);font-size:11px">▼</div>
+          <div class="bubble">Copy the log and ask Kiro: <b>"Fix this build error"</b></div>
+          <div class="row" style="gap:5px;flex-wrap:wrap"><span class="tag ghost">User: plain sentence</span><span class="tag ghost">Admin: detailed cause</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 04 USER JOURNEY ═══════════════════ -->
+<section class="slide" data-nav="User journey" data-group="Overview">
+  <div class="pad">
+    <div class="kicker">User journey</div>
+    <h2 class="s-title">Six steps for the user; the platform automates the rest</h2>
+    <div class="body vc" style="gap:18px">
+      <div class="flow">
+        <div class="step"><div class="h"><span class="num">1</span><b>Install Kiro config</b></div><p>Download Mac/Windows zip → copy into project → install commit checks</p><div class="svc"><svg class="ico" style="width:16px;height:16px"><use href="#i-download"/></svg>steering + pre-commit</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">2</span><b>Write code, push</b></div><p>Kiro writes to the deploy standard (Dockerfile, 8080, /health)</p><div class="svc"><svg class="ico" style="width:16px;height:16px"><use href="#i-git"/></svg>git push</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">3</span><b>Connect repository</b></div><p>AWS repository / GitHub (to be built) / GitLab (to be built), as allowed by the admin</p><div class="svc"><img src="assets/aws/codecommit.svg" alt="">Code Repository</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">4</span><b>Create app</b></div><p>7-step wizard: name, URL, size, type, settings, run mode</p><div class="svc"><svg class="ico" style="width:16px;height:16px"><use href="#i-sliders"/></svg>POST /apps</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step hl"><div class="h"><span class="num">5</span><b>Auto deploy</b></div><p>Check → build → deploy → verify. Progress shown on screen</p><div class="svc"><img src="assets/aws/codepipeline.svg" alt="">Platform-automated</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">6</span><b>Access, operate</b></div><p>Open the URL, view logs and metrics, restart, roll back, delete</p><div class="svc"><svg class="ico" style="width:16px;height:16px"><use href="#i-eye"/></svg>App detail page</div></div>
+      </div>
+      <div class="row" style="gap:16px">
+        <div class="card soft grow"><div class="cap">Change loop</div>
+          <div class="row center" style="gap:10px;font-size:14px;flex-wrap:wrap">
+            <span class="tag ghost">Edit code with Kiro</span>→<span class="tag ghost">git commit (pre-commit check)</span>→<span class="tag ghost">git push</span>→<span class="tag">Auto redeploy (if enabled)</span>→<span class="tag ghost">Logged in deploy history</span>
+          </div></div>
+        <div class="card soft" style="width:380px"><div class="cap">Failure loop</div>
+          <div style="font-size:14px;line-height:1.55">Copy the on-screen guidance and log → paste into Kiro → fix and push</div></div>
+      </div>
+      <div class="g3">
+        <div class="card" style="padding:12px 16px"><div class="row center" style="gap:10px"><div class="ico-box"><svg class="ico"><use href="#i-user"/></svg></div><div><b>User</b><div class="small muted">Sees and manages only own apps (owner check)</div></div></div></div>
+        <div class="card" style="padding:12px 16px"><div class="row center" style="gap:10px"><div class="ico-box"><svg class="ico"><use href="#i-shield"/></svg></div><div><b>Administrator</b><div class="small muted">All apps + CONFIG (presets, permissions, settings)</div></div></div></div>
+        <div class="card" style="padding:12px 16px"><div class="row center" style="gap:10px"><div class="ico-box"><svg class="ico"><use href="#i-settings"/></svg></div><div><b>Platform</b><div class="small muted">Stack creation, build, deploy, sleep/wake</div></div></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ DIVIDER 1 ═══════════════════ -->
+<section class="slide divider" data-nav="01 / User & admin screens" data-group="01 Screens">
+  <div class="pad">
+    <div class="sn">SECTION 01</div>
+    <h2>User & admin screens</h2>
+    <p>Captures from the real app (preview mode, Korean UI)</p>
+    <div class="chips"><span>Dashboard</span><span>App creation wizard</span><span>App detail</span><span>Failure guidance</span><span>Repository, Kiro setup</span><span>Admin console</span></div>
+  </div>
+  <div class="sweep-line"></div>
+</section>
+
+<!-- ═══════════════════ 05 DASHBOARD ═══════════════════ -->
+<section class="slide" data-nav="Dashboard" data-group="01 Screens">
+  <div class="pad">
+    <div class="kicker">User / My apps dashboard</div>
+    <h2 class="s-title">One card per app showing its status</h2>
+    <div class="body vc row zoomable" style="gap:26px">
+      <div style="width:760px;position:relative">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i><span>apphub / My apps</span></div><img src="assets/shots/02-dashboard.png" alt="Dashboard"></div>
+        <div class="pin" style="left:196px;top:150px">1</div>
+        <div class="pin" style="left:6px;top:206px">2</div>
+        <div class="pin" style="left:546px;top:34px">3</div>
+        <div class="pin" style="left:648px;top:336px">4</div>
+      </div>
+      <div class="col grow" style="gap:14px">
+        <div class="row" style="gap:10px"><span class="num">1</span><div><b>Status badge</b>
+          <div class="row mt8" style="gap:6px;flex-wrap:wrap"><span class="tag ok">Running</span><span class="tag grey">Sleeping</span><span class="tag vio">Waking</span><span class="tag warn">Creating</span><span class="tag err">Failed</span></div>
+          <div class="small muted mt8">Combines app status and runtime state (runtimeState) into one badge</div></div></div>
+        <div class="row" style="gap:10px"><span class="num">2</span><div><b>App URL</b><div class="small muted"><code>{subdomain}.apps.{company domain}</code> - unique per app</div></div></div>
+        <div class="row" style="gap:10px"><span class="num">3</span><div><b>App quota</b><div class="small muted">"My apps 5 / 5" - admin setting <code>userAppQuota</code> (default 5)</div></div></div>
+        <div class="row" style="gap:10px"><span class="num">4</span><div><b>Create new app</b><div class="small muted">Opens the wizard (#/apps/new)</div></div></div>
+        <div class="card soft mt8"><div class="cap">Card metadata</div><div class="small">Last change, size (preset label), repository type</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 06 WIZARD SCREENS ═══════════════════ -->
+<section class="slide" data-nav="App wizard (screens)" data-group="01 Screens">
+  <div class="pad">
+    <div class="kicker">User / App creation wizard</div>
+    <h2 class="s-title">Seven questions define one app</h2>
+    <div class="body vc g3 zoomable" style="gap:16px 18px">
+      <div><div class="shot clip" style="--h:196px"><img src="assets/shots/w1.png" alt=""></div><div class="shot-cap"><span class="num">1</span><b>Repository</b> AWS repository, repo, branch</div></div>
+      <div><div class="shot clip" style="--h:196px"><img src="assets/shots/w2.png" alt=""></div><div class="shot-cap"><span class="num">2</span><b>Name, visibility</b> live URL availability check</div></div>
+      <div><div class="shot clip" style="--h:196px"><img src="assets/shots/w3.png" alt=""></div><div class="shot-cap"><span class="num">3</span><b>Server size</b> admin presets (S/M/L)</div></div>
+      <div><div class="shot clip" style="--h:196px"><img src="assets/shots/w4.png" alt=""></div><div class="shot-cap"><span class="num">4</span><b>App type</b> IAM permission template</div></div>
+      <div><div class="shot clip" style="--h:196px"><img src="assets/shots/w5.png" alt=""></div><div class="shot-cap"><span class="num">5</span><b>Env vars</b> "keep secret" toggle</div></div>
+      <div><div class="shot clip" style="--h:196px"><img src="assets/shots/w6.png" alt=""></div><div class="shot-cap"><span class="num">6</span><b>Run mode</b> schedule editor + auto deploy → <span class="num" style="width:20px;height:20px;font-size:11px">7</span> Kiro guide</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 07 WIZARD MAPPING ═══════════════════ -->
+<section class="slide" data-nav="Wizard ↔ AWS resources" data-group="01 Screens">
+  <div class="pad">
+    <div class="kicker">User / App creation wizard</div>
+    <h2 class="s-title">What each wizard question becomes internally</h2>
+    <div class="body vc">
+      <table class="tbl" style="font-size:13.5px">
+        <thead><tr><th style="width:130px">Step</th><th style="width:290px">Question / choices shown to the user</th><th>What the platform creates</th><th style="width:150px">Decided by</th></tr></thead>
+        <tbody>
+          <tr><td class="k"><span class="num">1</span> Repository</td><td>Which code repository should be deployed?</td><td>CodePipeline Source - CodeCommit or CodeConnections (GitHub/GitLab), branch</td><td>User (allowed repos set by admin)</td></tr>
+          <tr><td class="k"><span class="num">2</span> Name, visibility</td><td>App name, URL, <b>Internal only</b> (recommended) / Internet</td><td>Subdomain reservation (DynamoDB conditional write), Route 53 record (private/public zone), <b>internal / internet-facing ALB</b> host rule</td><td>User (internet exposure allowed by admin)</td></tr>
+          <tr><td class="k"><span class="num">3</span> Size</td><td>Small / Medium / Large</td><td>Fargate <b>CPU, memory</b>, min/max task count, autoscaling target (CPU% or request count)</td><td>Admin preset</td></tr>
+          <tr><td class="k"><span class="num">4</span> App type</td><td>Basic (no permissions) / Uses AI features</td><td>ECS <b>Task Role inline IAM policy</b> (e.g. <code>bedrock:InvokeModel</code>). Basic has no policy</td><td>Admin permission template</td></tr>
+          <tr><td class="k"><span class="num">5</span> Env vars</td><td>Name, value, "keep secret"</td><td>Plain → container env var / secret → stored in <b>Secrets Manager</b> (1 per app, JSON), injected per key via ECS <code>secrets</code> (DB holds only ARN and key names)</td><td>User</td></tr>
+          <tr><td class="k"><span class="num">6</span> Run mode</td><td>On when used (recommended) / Always on / On schedule</td><td>Idle alarm (15 min without requests), EventBridge Scheduler (start/stop), always running</td><td>User</td></tr>
+          <tr><td class="k"><span class="num">6</span> Auto deploy</td><td>Deploy automatically on every push (toggle)</td><td>Pipeline source trigger on/off (CodeCommit: EVENTS/NONE, Connections: <code>triggerOnPush</code>)</td><td>User</td></tr>
+          <tr><td class="k"><span class="num">7</span> Setup guide</td><td>Deploy standard guide, Kiro config link</td><td>- (shown after the request is accepted; app is <code>CREATING</code>)</td><td>-</td></tr>
+        </tbody>
+      </table>
+      <div class="small muted mt12">Network (VPC) has no wizard step; apps are placed in the platform VPC automatically - <code>CreateWizard.tsx</code>, <code>handlers/apps.py</code>, <code>app-runtime.ts</code></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 08 APP DETAIL ═══════════════════ -->
+<section class="slide" data-nav="App detail / 4 tabs" data-group="01 Screens">
+  <div class="pad">
+    <div class="kicker">User / App detail</div>
+    <h2 class="s-title">Each app is managed through Overview, Deployments, Monitoring and Settings tabs</h2>
+    <div class="body vc row" style="gap:20px">
+      <div class="g2 grow zoomable" style="gap:12px 14px;align-content:start">
+        <div><div class="shot clip" style="--h:206px"><img src="assets/shots/t-overview.png" alt=""></div><div class="shot-cap"><b>Overview</b> status, URL, repository, size, visibility</div></div>
+        <div><div class="shot clip" style="--h:206px"><img src="assets/shots/t-deploy.png" alt=""></div><div class="shot-cap"><b>Deployments</b> auto, manual, rollback, secret change, commit SHA, build/deploy logs</div></div>
+        <div><div class="shot clip" style="--h:206px"><img src="assets/shots/t-monitor.png" alt=""></div><div class="shot-cap"><b>Monitoring</b> requests, CPU, memory (1h/6h/24h/7d)</div></div>
+        <div><div class="shot clip" style="--h:206px"><img src="assets/shots/t-settings.png" alt=""></div><div class="shot-cap"><b>Settings</b> env vars, secrets, run mode, auto deploy</div></div>
+      </div>
+      <div class="col" style="width:330px;gap:10px">
+
+        <div class="card soft"><div class="cap">Data sources</div>
+          <ul class="bl sm">
+            <li>Logs: CloudWatch Logs <code>/apphub/{stage}/app/{appId}</code></li>
+            <li>Metrics: one <code>GetMetricData</code> call - ALB RequestCountPerTarget, ECS CPU/Memory</li>
+            <li>Sleeping apps return empty series</li>
+          </ul></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 09b APP ACTIONS ═══════════════════ -->
+<section class="slide" data-nav="App detail / actions" data-group="01 Screens">
+  <div class="pad">
+    <div class="kicker">User / App detail actions</div>
+    <h2 class="s-title">Four app actions and what they actually do</h2>
+    <div class="body vc zoomable" style="gap:16px">
+      <div class="g2" style="gap:16px">
+        <div><div class="shot" style="position:relative"><div class="bar"><i></i><i></i><i></i><span>App detail / header</span></div><img src="assets/shots/a-head.png" alt="">
+          <div class="pin" style="left:419px;top:23px;width:20px;height:20px;font-size:11px">1</div><div class="pin" style="left:474px;top:23px;width:20px;height:20px;font-size:11px">2</div><div class="pin" style="left:524px;top:23px;width:20px;height:20px;font-size:11px">3</div></div>
+          <div class="shot-cap"><b>App detail</b> header buttons ①②③</div></div>
+        <div><div class="shot" style="position:relative"><div class="bar"><i></i><i></i><i></i><span>Deployment detail / successful deploy</span></div><img src="assets/shots/a-rollback.png" alt="">
+          <div class="pin" style="left:500px;top:48px">4</div></div>
+          <div class="shot-cap"><b>Deployment detail</b> ④ shown only on successful deploys</div></div>
+      </div>
+      <div class="row" style="gap:16px;align-items:flex-start">
+        <table class="tbl grow" style="font-size:12.2px">
+          <thead><tr><th style="width:110px">Button</th><th style="width:220px">What the user sees</th><th>What happens internally</th></tr></thead>
+          <tbody>
+            <tr><td class="k"><span class="num">1</span> Deploy now</td><td>Accepted immediately, no confirmation<br>"Pending" added to deploy history</td><td>Re-runs the app's pipeline from the start → fetch latest code, check, <b>build new image</b>, deploy. Takes minutes; leaves a (manual) deploy record</td></tr>
+            <tr><td class="k"><span class="num">2</span> Restart</td><td>"Restarting the app. Refresh in about a minute."</td><td>Keeps code and image; <b>replaces only the running servers</b> (ECS forceNewDeployment). No build, no deploy record. Not available while sleeping</td></tr>
+            <tr><td class="k"><span class="num">3</span> Delete</td><td>Delete button enables only after typing the exact app name</td><td>App becomes "Deleting"; <b>AWS resources removed runtime first, then build</b>. Then secrets deleted, URL and load balancer slot released, app record deleted. Irreversible</td></tr>
+            <tr><td class="k"><span class="num">4</span> Roll back</td><td>Confirmation: "No rebuild, so it applies quickly"</td><td>Checks the image from that deploy (commit SHA) still exists → <b>redeploys only the runtime with that image</b>. Fast because build is skipped. Only the latest 5 images are kept</td></tr>
+          </tbody>
+        </table>
+        <div class="col" style="width:250px;gap:10px">
+          <div><div class="shot"><img src="assets/shots/a-delete-dlg.png" alt=""></div><div class="shot-cap"><span class="num">3</span><b>Delete</b> confirmation</div></div>
+          <div><div class="shot"><img src="assets/shots/a-rollback-dlg.png" alt=""></div><div class="shot-cap"><span class="num">4</span><b>Roll back</b> confirmation</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 09 FAILURE UX ═══════════════════ -->
+<section class="slide" data-nav="Failure guidance" data-group="01 Screens">
+  <div class="pad">
+    <div class="kicker">User / Failure guidance</div>
+    <h2 class="s-title">Failures sorted into 7 types, with the exact prompt to give Kiro</h2>
+    <div class="body vc zoomable" style="gap:16px">
+      <div class="g2" style="gap:18px;align-items:start">
+        <div><div class="shot"><div class="bar"><i></i><i></i><i></i><span>Deploy progress / build failed</span></div><img src="assets/shots/08b-deploy-failed-crop.png" alt="Deploy failure detail"></div>
+          <div class="shot-cap"><span class="num">1</span><b>Deploy failure</b> guidance + log tail</div></div>
+        <div><div class="shot"><div class="bar"><i></i><i></i><i></i><span>App detail / app creation failed</span></div><img src="assets/shots/t-failed-head.png" alt="Failed app"></div>
+          <div class="shot-cap"><span class="num">2</span><b>App creation failure</b> plain sentence + next step</div></div>
+      </div>
+      <table class="tbl" style="font-size:14px">
+        <thead><tr><th style="width:230px">Failure type</th><th style="width:270px">Where it failed</th><th>On-screen guidance (what to tell Kiro)</th></tr></thead>
+        <tbody>
+          <tr><td class="k mono" style="font-size:12.5px">DOCKERFILE_MISSING</td><td>Static check - no Dockerfile</td><td>Ask "Prepare this app for the deploy standard", then push</td></tr>
+          <tr><td class="k mono" style="font-size:12.5px">DOCKERFILE_INVALID</td><td>Static check - port, forbidden items</td><td>"Match the deploy standard (port 8080, /health response)"</td></tr>
+          <tr><td class="k mono" style="font-size:12.5px">BUILD_FAILED</td><td>Image build</td><td>Copy the log tail: "Fix this build error"</td></tr>
+          <tr><td class="k mono" style="font-size:12.5px">HEALTHCHECK_FAILED</td><td>Trial run - no response within 60s</td><td>"Add a 200 response on /health"</td></tr>
+          <tr><td class="k mono" style="font-size:12.5px">DEPLOY_FAILED</td><td>Runtime deployment</td><td>New version failed → automatically reverted to previous</td></tr>
+          <tr><td class="k mono" style="font-size:12.5px">SOURCE_UNAVAILABLE</td><td>Repository access</td><td>Check connection status under "Repositories"</td></tr>
+          <tr><td class="k mono" style="font-size:12.5px">INTERNAL_ERROR</td><td>Anything else</td><td>Platform-side issue - contact the administrator</td></tr>
+        </tbody>
+      </table>
+      <div class="row center" style="gap:10px;font-size:13.5px">
+        <span class="tag ghost" style="font-size:12.5px"><svg class="ico" style="width:14px;height:14px"><use href="#i-user"/></svg>User</span><span>Plain per-step sentence (<code>failureReason</code>)</span>
+        <span class="tag ghost" style="font-size:12.5px;margin-left:18px"><svg class="ico" style="width:14px;height:14px"><use href="#i-shield"/></svg>Admin only</span><span>Detailed cause (<code>failureDetail</code>) - ARNs and secrets masked, 500 chars max</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 10 CONNECTIONS + KIRO ═══════════════════ -->
+<section class="slide" data-nav="Repositories / Kiro setup" data-group="01 Screens">
+  <div class="pad">
+    <div class="kicker">User / Repositories / Kiro setup</div>
+    <h2 class="s-title">Repository connection and Kiro deploy-standard setup, guided on screen</h2>
+    <div class="body vc g2 zoomable" style="gap:22px">
+      <div class="col" style="gap:12px">
+        <div class="shot clip" style="--h:300px"><div class="bar"><i></i><i></i><i></i><span>Repositories</span></div><img src="assets/shots/09-connections.png" alt=""></div>
+        <div class="card">
+          <h4><svg class="ico"><use href="#i-git"/></svg>Repository connection</h4>
+          <ul class="bl mt8" style="gap:7px">
+            <li><b>AWS repository (CodeCommit)</b> - ready to use; create new repositories from the console</li>
+            <li>Repository names auto-assigned as <code>{owner}-{name}</code>; users see only their own</li>
+            <li>GitHub, GitLab - supported in code, <span class="tag grey">disabled</span> in current config</li>
+          </ul>
+        </div>
+      </div>
+      <div class="col" style="gap:12px">
+        <div class="shot clip" style="--h:300px"><div class="bar"><i></i><i></i><i></i><span>Kiro config download</span></div><img src="assets/shots/10-kiro-setup.png" alt=""></div>
+        <div class="card">
+          <h4><svg class="ico"><use href="#i-download"/></svg>Kiro config download</h4>
+          <ul class="bl mt8" style="gap:7px">
+            <li>Two zips, Mac and Windows - download directly from the web</li>
+            <li>Contents: <b>deploy standard rules</b> (steering), <b>commit checks</b> (pre-commit), install script</li>
+            <li>Unzip → copy into project → install once → every commit is checked</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 11 ADMIN ═══════════════════ -->
+<section class="slide" data-nav="Admin console" data-group="01 Screens">
+  <div class="pad">
+    <div class="kicker">Admin / Console</div>
+    <h2 class="s-title">Admins define the choices users can pick from</h2>
+    <div class="body vc zoomable" style="gap:18px">
+      <style>
+        .adm-tabs { display:flex; flex-direction:column; gap:7px; }
+        .adm-tabs .t { display:grid; grid-template-columns: 30px 128px 1fr; align-items:center; gap:8px; background:#fff; border:1px solid var(--hair); border-radius:10px; padding:8px 12px; font-size:13px; line-height:1.4; }
+        .adm-tabs .t .ico { width:19px; height:19px; }
+        .adm-tabs .t b { font-size:14px; }
+        .pair2 { display:grid; grid-template-columns: 1fr 28px 1fr; align-items:center; }
+      </style>
+      <div class="row" style="gap:20px;align-items:flex-start">
+        <div style="width:560px"><div class="shot clip" style="--h:262px"><div class="bar"><i></i><i></i><i></i><span>AppHub Admin / Overview</span></div><img src="assets/shots/ad-overview.png" alt=""></div>
+          <div class="shot-cap"><b>Overview</b> every user's apps on one screen</div></div>
+        <div class="adm-tabs grow">
+          <div class="t"><svg class="ico"><use href="#i-grid"/></svg><b>Overview</b><span>All user apps, status filter, force sleep, delete</span></div>
+          <div class="t"><svg class="ico"><use href="#i-settings"/></svg><b>Platform settings</b><span>Allowed repos, apps per user (default 5), internet exposure (default off)</span></div>
+          <div class="t"><svg class="ico"><use href="#i-sliders"/></svg><b>Compute presets</b><span>Name, CPU/memory, min/max count, autoscaling target</span></div>
+          <div class="t"><svg class="ico"><use href="#i-key"/></svg><b>Permission templates</b><span>Name + IAM policy - users see only the name</span></div>
+          <div class="t"><svg class="ico"><use href="#i-users"/></svg><b>Users</b><span>Email invite, admin/user role, active/inactive</span></div>
+          <div class="t"><svg class="ico"><use href="#i-net"/></svg><b>Infrastructure</b><span>Visibility per load balancer, attached app rule count</span></div>
+        </div>
+      </div>
+      <div>
+        <div class="row center" style="gap:8px;margin-bottom:8px"><span class="cap" style="font:700 11.5px var(--font-display);letter-spacing:.06em;color:var(--g3)">ADMIN VALUES → USER WIZARD CHOICES</span><span class="small muted">Admin features are limited to the Cognito <code>admin</code> group</span></div>
+        <div class="g2" style="gap:20px">
+          <div class="pair2">
+            <div class="shot clip" style="--h:104px"><img src="assets/shots/ad-presets.png" alt=""></div><div class="chev" style="width:28px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+            <div class="shot clip" style="--h:104px"><img src="assets/shots/w3.png" alt=""></div>
+          </div>
+          <div class="pair2">
+            <div class="shot clip" style="--h:104px"><img src="assets/shots/ad-permissions.png" alt=""></div><div class="chev" style="width:28px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+            <div class="shot clip" style="--h:104px"><img src="assets/shots/w4.png" alt=""></div>
+          </div>
+          <div class="shot-cap" style="margin-top:-12px"><b>Compute presets</b> → wizard step 3 "Size"</div>
+          <div class="shot-cap" style="margin-top:-12px"><b>Permission templates</b> → wizard step 4 "App type"</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ DIVIDER 2 ═══════════════════ -->
+<section class="slide divider" data-nav="02 / Architecture" data-group="02 Architecture">
+  <div class="pad">
+    <div class="sn">SECTION 02</div>
+    <h2>Architecture</h2>
+    <p>Control plane, pipeline layer, app hosting layer</p>
+    <div class="chips"><span>Overall diagram</span><span>CDK stacks</span><span>Network, routing</span><span>API, data model</span></div>
+  </div>
+  <div class="sweep-line"></div>
+</section>
+
+<!-- ═══════════════════ 12 ARCHITECTURE ═══════════════════ -->
+<section class="slide" data-nav="Overall architecture" data-group="02 Architecture">
+  <style>
+    .cv { position: relative; height: 486px; margin-top: 40px; }
+    .cv .node { position: absolute; width: 124px; margin-left: -62px; }
+    .cv .node img { width: 36px; height: 36px; }
+    .cv .node .pair { display: flex; gap: 4px; }
+    .cv .node .pair img { width: 32px; height: 32px; }
+    .cv .zone { position: absolute; left: 128px; right: 0; }
+    .cv svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+    .cv .actor { position: absolute; left: 0; width: 108px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 4px; }
+    .cv .actor .ico-box { width: 42px; height: 42px; }
+    .cv .actor b { font-size: 12.5px; }
+    .cv .actor span { font-size: 10.5px; color: var(--muted); line-height: 1.25; }
+    .cv .lbl { position: absolute; font-size: 10.5px; color: var(--g3); background: #fff; padding: 1px 7px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--g2) 30%, #fff); white-space: nowrap; transform: translate(-50%, -50%); font-weight: 600; }
+    .cv .lbl.g { color: var(--muted); border-color: var(--hair); font-weight: 500; }
+  </style>
+  <div class="pad" style="inset:44px 64px 30px">
+    <div class="kicker">Architecture / Overall diagram</div>
+    <h2 class="s-title" style="font-size:27px;margin-top:8px">Three layers - platform installed once, pipeline and runtime created per app</h2>
+    <div class="cv">
+      <!-- zones -->
+      <div class="zone v" style="top:0;height:124px"><div class="zl">Control plane, apphub-{stage}-platform</div></div>
+      <div class="zone p" style="top:176px;height:118px"><div class="zl">Pipeline layer, per app …-app-{appId}-pipeline</div></div>
+      <div class="zone o" style="top:346px;height:138px"><div class="zl">App hosting layer, …-network (shared) + per app …-app-{appId}-runtime</div></div>
+
+      <svg class="wires" viewBox="0 0 1152 486" preserveAspectRatio="none">
+        <g stroke="#6B7785" stroke-width="1.5" fill="none" marker-end="url(#ah)">
+          <!-- Z1 -->
+          <path d="M84 48 H 172"/>
+          <path d="M84 60 C 130 104, 250 104, 314 62"/>
+          <path d="M378 48 H 452"/>
+          <path d="M518 48 H 592"/>
+          <path d="M488 26 C 520 2, 880 2, 918 24"/>
+          <path d="M732 48 H 658"/>
+          <path d="M948 48 H 1012"/>
+          <!-- Z2 -->
+          <path d="M84 222 H 172"/>
+          <path d="M238 222 H 312"/>
+          <path d="M378 222 H 452"/>
+          <path d="M518 222 H 592"/>
+          <path d="M658 222 H 732"/>
+          <path d="M798 222 H 872"/>
+          <!-- Z3 -->
+          <path d="M84 392 H 172"/>
+          <path d="M238 392 H 312"/>
+          <path d="M378 392 H 452"/>
+          <path d="M592 392 H 518"/>
+          <path d="M798 392 H 872"/>
+          <path d="M1012 392 H 938"/>
+        </g>
+        <g stroke="#D600BA" stroke-width="1.6" fill="none" stroke-dasharray="5 4" marker-end="url(#ahp)">
+          <path d="M1045 100 V 176"/>
+          <path d="M905 268 V 346"/>
+          <path d="M345 200 V 150 H 765 V 102"/>
+        </g>
+        <g stroke="#6842FF" stroke-width="1.5" fill="none" stroke-dasharray="4 4" marker-end="url(#ahv)">
+          <path d="M345 438 C 345 480, 905 480, 905 438"/>
+        </g>
+      </svg>
+
+      <!-- actors -->
+      <div class="actor" style="top:20px"><div class="ico-box"><svg class="ico"><use href="#i-user"/></svg></div><b>Non-developer</b><span>AppHub web console</span></div>
+      <div class="actor" style="top:194px"><div class="ico-box"><svg class="ico"><use href="#i-code"/></svg></div><b>Kiro</b><span>git push</span></div>
+      <div class="actor" style="top:364px"><div class="ico-box"><svg class="ico"><use href="#i-users"/></svg></div><b>App users</b><span>Internal / internet</span></div>
+
+      <!-- Z1 nodes (icon center y=48) -->
+      <div class="node" style="left:205px;top:30px"><div class="pair" style="align-items:center"><img src="assets/aws/cloudfront.svg" alt="" style="width:28px;height:28px"><img src="assets/aws/s3.svg" alt="" style="width:28px;height:28px"><i style="font:600 10.5px var(--font-body);font-style:normal;color:var(--g3)">or</i><img src="assets/aws/elb.svg" alt="" style="width:28px;height:28px"></div><b>Web console (SPA)</b><span>CloudFront (public)<br>Internal ALB (private)</span></div>
+      <div class="node" style="left:345px;top:30px"><div class="pair"><img src="assets/aws/apigw.svg" alt=""><img src="assets/aws/cognito.svg" alt=""></div><b>API GW + Cognito</b><span>JWT authorizer</span></div>
+      <div class="node" style="left:485px;top:30px"><img src="assets/aws/lambda.svg" alt=""><b>Lambda, api</b><span>Python 3.13 / boto3</span></div>
+      <div class="node" style="left:625px;top:30px"><img src="assets/aws/dynamodb.svg" alt=""><b>DynamoDB</b><span>Single table + 2 GSIs</span></div>
+      <div class="node" style="left:765px;top:30px"><div class="pair"><img src="assets/aws/eventbridge.svg" alt=""><img src="assets/aws/lambda.svg" alt=""></div><b>deploy-notify</b><span>Applies deploy status</span></div>
+      <div class="node" style="left:905px;top:30px"><img src="assets/aws/sfn.svg" alt=""><b>Step Functions</b><span>provision / delete</span></div>
+      <div class="node" style="left:1045px;top:30px"><img src="assets/aws/codebuild.svg" alt=""><b>provisioner</b><span>CodeBuild, cdk deploy</span></div>
+
+      <!-- Z2 nodes (icon center y=222) -->
+      <div class="node" style="left:205px;top:204px"><img src="assets/aws/codecommit.svg" alt=""><b>Code repository</b><span>CodeCommit, GitHub, GitLab</span></div>
+      <div class="node" style="left:345px;top:204px"><img src="assets/aws/codepipeline.svg" alt=""><b>CodePipeline</b><span>Source→Validate→Deploy</span></div>
+      <div class="node" style="left:485px;top:204px"><img src="assets/aws/codebuild.svg" alt=""><b>validate-build</b><span>Check, build, smoke</span></div>
+      <div class="node" style="left:625px;top:204px"><img src="assets/aws/ecr.svg" alt=""><b>ECR</b><span>Tag = commit SHA</span></div>
+      <div class="node" style="left:765px;top:204px"><img src="assets/aws/codebuild.svg" alt=""><b>deploy</b><span>CodeBuild, cdk deploy</span></div>
+      <div class="node" style="left:905px;top:204px"><img src="assets/aws/cfn.svg" alt=""><b>CloudFormation</b><span>runtime stack</span></div>
+
+      <!-- Z3 nodes (icon center y=392) -->
+      <div class="node" style="left:205px;top:374px"><img src="assets/aws/route53.svg" alt=""><b>Route 53</b><span>public / private zone</span></div>
+      <div class="node" style="left:345px;top:374px"><div class="pair"><img src="assets/aws/elb.svg" alt=""><img src="assets/aws/acm.svg" alt=""></div><b>Shared ALB</b><span>internet / internal</span></div>
+      <div class="node" style="left:485px;top:374px"><div class="pair"><img src="assets/aws/ecs.svg" alt=""><img src="assets/aws/fargate.svg" alt=""></div><b>ECS Fargate</b><span>Shared cluster, :8080</span></div>
+      <div class="node" style="left:625px;top:374px"><img src="assets/aws/secrets.svg" alt=""><b>Secrets Manager</b><span>Injected as ECS secrets</span></div>
+      <div class="node" style="left:765px;top:374px"><img src="assets/aws/cloudwatch.svg" alt=""><b>CloudWatch</b><span>Idle alarm, logs</span></div>
+      <div class="node" style="left:905px;top:374px"><img src="assets/aws/lambda.svg" alt=""><b>waker, sleep, restore</b><span>Sleep / wake</span></div>
+      <div class="node" style="left:1045px;top:374px"><img src="assets/aws/eventbridge.svg" alt=""><b>EB Scheduler</b><span>Triggers sleep at end time</span></div>
+
+      <!-- link labels -->
+      <div class="lbl g" style="left:128px;top:104px">REST calls</div>
+      <div class="lbl" style="left:1045px;top:152px">① Create pipeline stack</div>
+      <div class="lbl" style="left:556px;top:150px">Pipeline state events</div>
+      <div class="lbl" style="left:905px;top:320px">② Create/update runtime stack</div>
+      <div class="lbl" style="left:625px;top:473px;color:var(--g4)">Sleeping app: ALB rule → waker target group</div>
+    </div>
+    <div class="row center small muted" style="gap:16px;margin-top:22px;padding-left:128px;white-space:nowrap">
+      <span class="row center" style="gap:6px"><svg width="34" height="8"><path d="M0 4h28" stroke="#6B7785" stroke-width="1.5" marker-end="url(#ah)"/></svg>Request, data flow</span>
+      <span class="row center" style="gap:6px"><svg width="34" height="8"><path d="M0 4h28" stroke="#D600BA" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#ahp)"/></svg>Stack creation, events</span>
+      <span class="row center" style="gap:6px"><svg width="34" height="8"><path d="M0 4h28" stroke="#6842FF" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#ahv)"/></svg>Sleeping app routing</span>
+      <span style="white-space:normal">7 Lambdas: api, provision-task, delete-task, deploy-notify, waker, sleep-transition, wake-restore</span>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 13 CDK STACKS ═══════════════════ -->
+<section class="slide" data-nav="CDK stacks" data-group="02 Architecture">
+  <div class="pad">
+    <div class="kicker">Architecture / Infrastructure as Code</div>
+    <h2 class="s-title">Four CDK stacks - 2 shared, installed once by the admin; 2 per app, created by the platform (+ alb on scale-out)</h2>
+    <div class="body vc" style="gap:14px">
+      <div class="g4" style="gap:14px">
+        <div class="card hl" style="display:flex;flex-direction:column;gap:8px">
+          <div class="row center" style="gap:8px"><img src="assets/aws/elb.svg" width="30" alt=""><div><b style="font-size:15px">network</b><div class="mono small muted">apphub-{stage}-network</div></div></div>
+          <ul class="bl sm"><li>VPC (default 10.20.0.0/16, --vpc-cidr), 2 AZs, 1 NAT</li><li>2 shared ALBs (internet / internal), extra stack added at limit</li><li>Shared ECS cluster</li><li>Wildcard ACM, 2 Route 53 zones</li><li>3 SGs (4 in private mode), 3 Waker Lambdas</li></ul>
+          <div class="mt8"><span class="tag ghost">Admin, deploy.sh</span> <span class="tag ghost">1 per stage</span></div>
+        </div>
+        <div class="card hl" style="display:flex;flex-direction:column;gap:8px">
+          <div class="row center" style="gap:8px"><img src="assets/aws/apigw.svg" width="30" alt=""><div><b style="font-size:15px">platform</b><div class="mono small muted">apphub-{stage}-platform</div></div></div>
+          <ul class="bl sm"><li>Cognito (admin invite only)</li><li>DynamoDB, API GW + Lambda</li><li>2 Step Functions, 2 task Lambdas</li><li>SPA (public: CloudFront+S3 / private: internal ALB+ECS), asset bucket</li><li>provisioner CodeBuild, deploy-notify</li></ul>
+          <div class="mt8"><span class="tag ghost">Admin, deploy.sh</span> <span class="tag ghost">1 per stage</span></div>
+        </div>
+        <div class="card" style="display:flex;flex-direction:column;gap:8px">
+          <div class="row center" style="gap:8px"><img src="assets/aws/codepipeline.svg" width="30" alt=""><div><b style="font-size:15px">app pipeline</b><div class="mono small muted">…-app-{appId}-pipeline</div></div></div>
+          <ul class="bl sm"><li>ECR (scan on push, keep latest 5)</li><li>CodeBuild validate-build (privileged)</li><li>CodeBuild deploy</li><li>3-stage CodePipeline</li><li>Artifact bucket (30-day expiry)</li></ul>
+          <div class="mt8"><span class="tag">provisioner</span> <span class="tag ghost">per app</span></div>
+        </div>
+        <div class="card" style="display:flex;flex-direction:column;gap:8px">
+          <div class="row center" style="gap:8px"><img src="assets/aws/fargate.svg" width="30" alt=""><div><b style="font-size:15px">app runtime</b><div class="mono small muted">…-app-{appId}-runtime</div></div></div>
+          <ul class="bl sm"><li>ECS service, task (preset size)</li><li>Target Group :8080 /health</li><li>Listener rule (host-header)</li><li>Route 53 A alias, Task Role</li><li>Idle alarm, Scheduler (by mode)</li></ul>
+          <div class="mt8"><span class="tag">App pipeline</span> <span class="tag ghost">per app</span></div>
+        </div>
+      </div>
+      <div class="g3" style="gap:14px">
+        <div class="card soft"><div class="cap">Cross-stack values</div><div class="small">SSM parameters <code>/apphub/{stage}/network/*</code>, <code>/platform/*</code> instead of CloudFormation exports</div></div>
+        <div class="card soft"><div class="cap">Single entry point</div><div class="small"><code>bin/apphub.ts</code> - platform mode by default; <code>-c appId</code> + <code>appStackKind</code> synthesizes app stacks</div></div>
+        <div class="card soft"><div class="cap">Naming, lifecycle</div><div class="small">All resources <code>apphub-{stage}-*</code>, stage = dev | prod. App deletion = runtime, then pipeline</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 14 NETWORK ═══════════════════ -->
+<section class="slide" data-nav="Network / routing" data-group="02 Architecture">
+  <style>
+    .nbox { background:#fff; border:1px solid var(--hair); border-radius:12px; padding:10px 12px; box-shadow: var(--shadow-card); font-size:12.5px; line-height:1.45; }
+    .nbox .t { display:flex; align-items:center; gap:8px; font-weight:600; color:var(--ink); font-size:13.5px; margin-bottom:3px; }
+    .nbox .t img { width:26px; height:26px; }
+    .lane { display:grid; grid-template-columns: 130px 22px 1fr 22px 1.25fr; align-items:center; }
+  </style>
+  <div class="pad">
+    <div class="kicker">Architecture / Network / routing</div>
+    <h2 class="s-title">One shared ALB per visibility; apps are told apart by host name</h2>
+    <div class="body vc" style="gap:14px">
+      <div class="row" style="gap:12px;align-items:center">
+        <div class="col" style="flex:1.9;gap:12px">
+          <div class="lane">
+            <div class="nbox"><div class="t"><svg class="ico"><use href="#i-users"/></svg>Internet users</div><span class="muted">Apps set to "Internet"</span></div>
+            <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+            <div class="nbox"><div class="t"><img src="assets/aws/route53.svg" alt="">Public hosted zone</div>A alias in the existing company domain zone<br><span class="muted">Also registered in private zone for internal lookup</span></div>
+            <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+            <div class="nbox"><div class="t"><img src="assets/aws/elb.svg" alt="">internet-facing ALB</div>public subnet, SG 443/80 ← <code>0.0.0.0/0</code><br><span class="tag warn" style="margin-top:3px">The only SG allowed to be fully open</span></div>
+          </div>
+          <div class="lane">
+            <div class="nbox"><div class="t"><svg class="ico"><use href="#i-user"/></svg>Internal users</div><span class="muted">"Internal only" (default)</span></div>
+            <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+            <div class="nbox"><div class="t"><img src="assets/aws/route53.svg" alt="">Private hosted zone</div>Same name, associated with the VPC</div>
+            <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+            <div class="nbox"><div class="t"><img src="assets/aws/elb.svg" alt="">internal ALB</div>private subnet, SG 443/80 ← <code>--internal-cidrs</code><br><span class="muted">VPC CIDR if not set</span></div>
+          </div>
+        </div>
+        <div class="chev" style="width:26px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="col" style="flex:1;gap:8px">
+          <div class="nbox"><div class="t"><img src="assets/aws/acm.svg" alt="">HTTPS :443 listener</div>TLS RECOMMENDED, one shared <code>*.{appsDomain}</code> ACM cert<br>Default action 404 "No app for this host", :80 → 301 HTTPS</div>
+          <div class="nbox" style="border-color:color-mix(in srgb,var(--g4) 45%,var(--hair))"><div class="t"><svg class="ico"><use href="#i-net"/></svg>Host rule (1 per app)</div><code>{sub}.{appsDomain}</code> → [optional] authenticate-cognito → forward</div>
+          <div class="nbox"><div class="t"><img src="assets/aws/fargate.svg" alt="">Target Group → Fargate</div>IP target :8080, <code>/health</code> 200, 15s interval<br>Task SG: 8080 ← ALB SG reference only</div>
+        </div>
+      </div>
+      <div class="g4" style="gap:12px">
+        <div class="card soft" style="padding:10px 14px"><div class="cap">VPC</div><div class="small">Default 10.20.0.0/16 (--vpc-cidr at install), 2 AZs, public/private /24, 1 NAT (cost)</div></div>
+        <div class="card soft" style="padding:10px 14px"><div class="cap">Streaming</div><div class="small">ALB idle timeout 300s - supports SSE responses (verified with <code>sample-streaming</code>)</div></div>
+        <div class="card soft" style="padding:10px 14px"><div class="cap">App auth (optional)</div><div class="small"><code>cognitoProtect</code> - on by default for internet apps (unavailable in internal-only installs). Dedicated login client per app. Auth stays on while sleeping</div></div>
+        <div class="card soft" style="padding:10px 14px"><div class="cap">Rule priority</div><div class="small">Issued globally via a DynamoDB atomic counter; <code>ruleCount</code> tracked per ALB</div></div>
+      </div>
+      <div class="small muted" style="font-size:12px;line-height:1.5">
+        <b style="color:var(--muted)">App auth accounts</b> - for convenience, apps currently use the <b style="color:var(--muted)">same Cognito user pool</b> as AppHub login. Any account invited by an admin can sign in to any protected app; per-app account management requires separate auth in the app's own code.<br>
+        <b style="color:var(--muted)">Internal access ranges</b> are set at install with <code>--internal-cidrs "10.0.0.0/8,…"</code> (VPC range only if not set)
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 15 CONTROL PLANE + DATA ═══════════════════ -->
+<section class="slide" data-nav="API / data model" data-group="02 Architecture">
+  <div class="pad">
+    <div class="kicker">Architecture / Control plane</div>
+    <h2 class="s-title">One Lambda serves 39 API routes; data lives in a single DynamoDB table</h2>
+    <div class="body vc row" style="gap:22px">
+      <div class="col" style="width:470px;gap:12px">
+        <div class="card">
+          <div class="cap">Request path</div>
+          <div class="row center" style="gap:6px;font-size:12.5px;flex-wrap:wrap">
+            <span class="tag ghost">SPA</span>→<span class="tag ghost">API GW <code>/{proxy+}</code> ANY</span>→<span class="tag ghost">Cognito authorizer</span>→<span class="tag ghost">Lambda <code>handler.py</code></span>→<span class="tag ghost">router</span>
+          </div>
+          <ul class="bl sm mt12">
+            <li>OPTIONS preflight answered before auth; CORS allows only the console origin (<code>console.{appsDomain}</code>)</li>
+            <li>All exceptions → <code>{error:{code,message}}</code></li>
+            <li>Owner check: other users' apps 403, missing apps 404</li>
+          </ul>
+        </div>
+        <div class="g2" style="gap:12px">
+          <div class="card"><div class="cap">22 user routes</div><div class="small mono" style="line-height:1.6;font-size:11.5px">/apps, /apps/:id<br>/deploy, /rollback, /restart<br>/deployments(/:id/logs), /logs, /metrics<br>/presets, /permission-templates<br>/subdomains/check, /providers<br>/connections(/:id/repos)</div></div>
+          <div class="card"><div class="cap">17 admin routes</div><div class="small mono" style="line-height:1.6;font-size:11.5px">/admin/settings<br>/admin/presets<br>/admin/permission-templates<br>/admin/users<br>/admin/apps (/:id/stop)<br>/admin/alb-registry</div></div>
+        </div>
+      </div>
+      <div class="grow">
+        <div class="row center" style="gap:10px;margin-bottom:6px"><img src="assets/aws/dynamodb.svg" width="28" alt=""><b>apphub-{stage}-main</b><span class="tag ghost">PK / SK</span><span class="tag ghost">On-demand, PITR, TTL</span></div>
+        <table class="tbl" style="font-size:12.5px">
+          <thead><tr><th>Entity</th><th>PK</th><th>SK</th></tr></thead>
+          <tbody>
+            <tr><td class="k">App</td><td class="mono">APP#{appId}</td><td class="mono">META</td></tr>
+            <tr><td class="k">Deployment</td><td class="mono">APP#{appId}</td><td class="mono">DEPLOY#{ts} <span class="muted">(TTL 90 days)</span></td></tr>
+            <tr><td class="k">Repository connection</td><td class="mono">USER#{userId}</td><td class="mono">CONN#{connId}</td></tr>
+            <tr><td class="k">CodeCommit repo</td><td class="mono">USER#{userId}</td><td class="mono">CCREPO#{name}</td></tr>
+            <tr><td class="k">Subdomain reservation</td><td class="mono">SUBDOMAIN#{sub}</td><td class="mono">RESERVATION</td></tr>
+            <tr><td class="k">Presets, perms, settings</td><td class="mono">CONFIG</td><td class="mono">PRESET#, PERM#, SETTINGS</td></tr>
+            <tr><td class="k">ALB, rule counter</td><td class="mono">CONFIG</td><td class="mono">ALB#{arn}, RULEPRIORITYSEQ</td></tr>
+          </tbody>
+        </table>
+        <div class="g2 mt12" style="gap:10px">
+          <div class="card soft" style="padding:10px 12px"><div class="cap">GSI1, ownerId + SK</div><div class="small">My apps list, quota check</div></div>
+          <div class="card soft" style="padding:10px 12px"><div class="cap">GSI2, status + SK</div><div class="small">Admin overview (by status)</div></div>
+        </div>
+        <div class="small muted mt8">Duplicate subdomains prevented with an <code>attribute_not_exists(PK)</code> conditional write instead of a scan (race-safe)</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ DIVIDER 3 ═══════════════════ -->
+<section class="slide divider" data-nav="03 / How it works" data-group="03 How it works">
+  <div class="pad">
+    <div class="sn">SECTION 03</div>
+    <h2>How it works</h2>
+    <p>App creation, deploy pipeline, state model, sleep/wake</p>
+    <div class="chips"><span>Provisioning sequence</span><span>Step Functions</span><span>3-stage CodePipeline</span><span>State Machine</span><span>Scale-to-zero</span></div>
+  </div>
+  <div class="sweep-line"></div>
+</section>
+
+<!-- ═══════════════════ 16 PROVISION SEQUENCE ═══════════════════ -->
+<section class="slide" data-nav="App creation sequence" data-group="03 How it works">
+  <style>
+    .seq .step { padding: 11px 12px 10px; }
+    .seq .step p { font-size: 12px; }
+    .ribbon { display:flex; height: 26px; border-radius: 6px; overflow: hidden; font: 600 12px var(--font-mono); }
+    .ribbon div { display:flex; align-items:center; justify-content:center; color:#fff; }
+  </style>
+  <div class="pad">
+    <div class="kicker">How it works / App creation (provisioning)</div>
+    <h2 class="s-title">Ten steps from "Create app" to a reachable URL</h2>
+    <div class="body vc seq" style="gap:10px">
+      <div class="flow">
+        <div class="step"><div class="h"><span class="num">1</span><b>Create request</b></div><p>POST /apps → validation chain (subdomain, allowed repo, preset, connection, quota) → reserve subdomain, store secrets</p><div class="svc"><img src="assets/aws/lambda.svg" alt="">api Lambda</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">2</span><b>Start State Machine</b></div><p>Runs ProvisionApp. Execution name = appId → no duplicate runs</p><div class="svc"><img src="assets/aws/sfn.svg" alt="">Step Functions</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">3</span><b>AllocateSlot</b></div><p>Pick ALB by visibility, atomically bump rule priority, ruleCount +1 (reused on retry)</p><div class="svc"><img src="assets/aws/dynamodb.svg" alt="">DynamoDB</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">4</span><b>DeployPipeline</b></div><p>Start provisioner build: <code>cdk deploy …-pipeline</code> (ECR, 2 CodeBuild, CodePipeline)</p><div class="svc"><img src="assets/aws/codebuild.svg" alt="">CodeBuild</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">5</span><b>PollBuild</b></div><p>Checks every 30s. Failure → FinalizeFailure → <code>FAILED</code></p><div class="svc"><img src="assets/aws/sfn.svg" alt="">Wait / Choice</div></div>
+      </div>
+      <div class="flow">
+        <div class="step"><div class="h"><span class="num">6</span><b>First pipeline run</b></div><p>AWS runs the pipeline on creation. <b>FirstDeploy intentionally does nothing</b> (avoids duplicate history)</p><div class="svc"><img src="assets/aws/codepipeline.svg" alt="">CodePipeline</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">7</span><b>Check, build</b></div><p>Static check → docker build → /health smoke test → ECR push (tag = commit SHA)</p><div class="svc"><img src="assets/aws/ecr.svg" alt="">validate-build, ECR</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">8</span><b>Runtime deploy</b></div><p><code>cdk deploy …-runtime</code>: ECS service, TG, listener rule, DNS, alarm/schedule</p><div class="svc"><img src="assets/aws/cfn.svg" alt="">CloudFormation</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step hl"><div class="h"><span class="num">9</span><b>Status update</b></div><p>Pipeline events → deploy history updated. On success <code>CREATING→ACTIVE</code>, RUNNING</p><div class="svc"><img src="assets/aws/eventbridge.svg" alt="">deploy-notify</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">10</span><b>Access</b></div><p><code>https://{sub}.apps.{domain}</code> shows "Running" on the dashboard</p><div class="svc"><img src="assets/aws/route53.svg" alt="">Route 53, ALB</div></div>
+      </div>
+      <div class="row center" style="gap:12px;margin-top:4px">
+        <span class="small muted" style="width:96px">App.status</span>
+        <div class="ribbon grow"><div style="flex:8.2;background:#E5A23A">CREATING (1 – 8)</div><div style="flex:1.8;background:#18A27A">ACTIVE (9 –)</div></div>
+      </div>
+      <div class="row center" style="gap:12px">
+        <span class="small muted" style="width:96px">Executed by</span>
+        <div class="ribbon grow" style="font-family:var(--font-body)"><div style="flex:2;background:#6842FF">API, State Machine</div><div style="flex:3;background:#942EFF">provisioner (platform role)</div><div style="flex:3;background:#D600BA">App pipeline (app role)</div><div style="flex:2;background:#AA0071">Event-driven</div></div>
+      </div>
+      <div class="card soft row center" style="padding:9px 14px;gap:10px;margin-top:4px;font-size:13px">
+        <svg class="ico" style="width:18px;height:18px"><use href="#i-info"/></svg>
+        <span><b>Two kinds of CodeBuild</b> - <img src="assets/aws/codebuild.svg" width="16" style="vertical-align:-3px" alt=""> provisioner is run directly by <b>Step Functions</b> (step 4); <img src="assets/aws/codebuild.svg" width="16" style="vertical-align:-3px" alt=""> per-app validate-build, deploy are run by <b>CodePipeline</b> (steps 7, 8)</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 17 STEP FUNCTIONS ═══════════════════ -->
+<section class="slide" data-nav="Step Functions State Machines" data-group="03 How it works">
+  <style>
+    .sm-row { display:flex; align-items:center; gap:0; flex-wrap:nowrap; }
+    .sm-row .s { background:#fff; border:1.5px solid #8C7BFF; color:#3B1FB0; border-radius:8px; padding:7px 10px; font: 600 12px var(--font-mono); white-space:nowrap; position:relative; }
+    .sm-row .s.ch { border-color:#E5A23A; color:#8A5200; background:#FFF9EF; border-radius:18px; }
+    .sm-row .s.ok { border-color:#18A27A; color:#0B7A5C; background:#F1FBF7; }
+    .sm-row .s.err { border-color:#E0496A; color:#B4153A; background:#FFF4F6; }
+    .sm-row .s.nop { border-style:dashed; color:var(--muted); border-color:#A3ABB8; }
+    .sm-row .a { width:22px; height:2px; background:#8E97A5; position:relative; flex:none; }
+    .sm-row .a::after { content:''; position:absolute; right:-1px; top:-4px; border:5px solid transparent; border-left:7px solid #8E97A5; border-right:0; }
+    .sm-row .s .loop { position:absolute; left:50%; top:-22px; transform:translateX(-50%); font: 600 10.5px var(--font-body); color:#8A5200; background:#FFF2DE; border-radius:999px; padding:1px 8px; white-space:nowrap; }
+    .catch { margin-top:12px; display:flex; align-items:center; gap:10px; font-size:12.5px; }
+    .catch .line { flex:none; width:40px; height:0; border-top:2px dashed #E0496A; }
+  </style>
+  <div class="pad">
+    <div class="kicker">How it works / Step Functions</div>
+    <h2 class="s-title">Create and delete run as two State Machines - every step idempotent, failures handled in one place</h2>
+    <div class="body vc" style="gap:16px">
+      <div class="card">
+        <div class="row center" style="gap:10px;margin-bottom:24px"><img src="assets/aws/sfn.svg" width="26" alt=""><b>apphub-{stage}-provision-app</b><span class="tag ghost">Execution name = appId</span><span class="tag ghost">timeout 1h</span></div>
+        <div class="sm-row">
+          <div class="s">AllocateSlot</div><div class="a"></div>
+          <div class="s">DeployPipeline</div><div class="a"></div>
+          <div class="s">PollBuild<span class="loop">↺ WaitBuild 30s</span></div><div class="a"></div>
+          <div class="s ch">BuildDone?</div><div class="a"></div>
+          <div class="s nop">FirstDeploy (no-op)</div><div class="a"></div>
+          <div class="s">FinalizeSuccess</div><div class="a"></div>
+          <div class="s ok">ProvisionDone</div>
+        </div>
+        <div class="catch"><span class="tag err">Catch States.ALL</span><div class="line"></div><span class="mono" style="font-size:12px">ProvisionFinalizeFailure → ProvisionFailed</span><span class="muted">- CREATING→FAILED, records failureReason / failureDetail</span></div>
+        <div class="small muted mt8">App stays CREATING after FinalizeSuccess → becomes ACTIVE on the first successful pipeline event</div>
+      </div>
+      <div class="card">
+        <div class="row center" style="gap:10px;margin-bottom:24px"><img src="assets/aws/sfn.svg" width="26" alt=""><b>apphub-{stage}-delete-app</b><span class="tag ghost">Execution name = del-{appId}</span><span class="tag ghost">ACTIVE / FAILED → DELETING</span></div>
+        <div class="sm-row">
+          <div class="s">DeleteRuntime</div><div class="a"></div>
+          <div class="s">PollRuntime<span class="loop">↺ Wait 20s</span></div><div class="a"></div>
+          <div class="s">DeletePipeline</div><div class="a"></div>
+          <div class="s">PollPipeline<span class="loop">↺ Wait 20s</span></div><div class="a"></div>
+          <div class="s">Cleanup</div><div class="a"></div>
+          <div class="s">FinalizeSuccess</div><div class="a"></div>
+          <div class="s ok">DeleteDone</div>
+        </div>
+        <div class="catch"><span class="tag err">Catch States.ALL</span><div class="line"></div><span class="mono" style="font-size:12px">DeleteFinalizeFailure → DeleteFailed</span><span class="muted">- DELETING→FAILED (can delete again)</span></div>
+        <div class="row mt12" style="gap:8px;flex-wrap:wrap"><span class="small muted">Cleanup:</span><span class="tag ghost">Force-delete secrets</span><span class="tag ghost">ALB ruleCount −1</span><span class="tag ghost">Release subdomain</span><span class="tag ghost">Delete App record</span></div>
+      </div>
+      <div class="small muted">Both State Machines use one task Lambda that branches on the <code>step</code> field (<code>orchestration/provision.py</code>, <code>delete.py</code>)</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 18 PIPELINE ═══════════════════ -->
+<section class="slide" data-nav="Deploy pipeline" data-group="03 How it works">
+  <div class="pad">
+    <div class="kicker">How it works / Per-app CodePipeline</div>
+    <h2 class="s-title">Source → ValidateBuild → Deploy; where it fails defines the failure type</h2>
+    <div class="body vc" style="gap:14px">
+      <div class="flow" style="align-items:stretch">
+        <div class="step" style="flex:.8"><div class="h"><img src="assets/aws/codecommit.svg" width="26" alt=""><b>Source</b></div>
+          <ul class="bl sm"><li>CodeCommit or CodeConnections</li><li>Auto deploy on: push trigger</li><li>Off: only via "Deploy now"</li></ul>
+          <div class="svc">History status → <span class="tag grey">Pending</span></div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step hl" style="flex:1.6"><div class="h"><img src="assets/aws/codebuild.svg" width="26" alt=""><b>ValidateBuild</b><span class="tag ghost">validate-build.yml, privileged</span></div>
+          <table class="tbl" style="font-size:12px">
+            <tr><td class="k"><span class="num">1</span> Static check</td><td>Platform validator (fetched from S3): Dockerfile exists, EXPOSE 8080, forbidden items</td><td class="mono" style="font-size:11px">DOCKERFILE_MISSING<br>DOCKERFILE_INVALID</td></tr>
+            <tr><td class="k"><span class="num">2</span> Build</td><td><code>docker build</code></td><td class="mono" style="font-size:11px">BUILD_FAILED</td></tr>
+            <tr><td class="k"><span class="num">3</span> Smoke</td><td><code>docker run</code> → <code>curl /health</code> 2s × 30 (60s), expects 200</td><td class="mono" style="font-size:11px">HEALTHCHECK_FAILED</td></tr>
+            <tr><td class="k"><span class="num">4</span> Push</td><td>ECR push, tag = commit SHA → <code>image-tag.json</code></td><td></td></tr>
+          </table>
+          <div class="svc">History status → <span class="tag vio">Validating</span></div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step" style="flex:1.1"><div class="h"><img src="assets/aws/cfn.svg" width="26" alt=""><b>Deploy</b><span class="tag ghost">deploy.yml</span></div>
+          <ul class="bl sm"><li>Reads app, preset, permission template from DynamoDB</li><li>First deploy detected by stack existence → desiredCount set only on first deploy. Sleeping apps: ALB rule pointed back to app TG before deploy, put back to sleep after</li><li><code>cdk deploy …-runtime</code>, CloudFormation rollback on failure</li><li class="mono" style="font-size:11px">DEPLOY_FAILED</li></ul>
+          <div class="svc">History status → <span class="tag vio">Deploying</span> → <span class="tag ok">Done</span></div></div>
+      </div>
+      <div class="g3" style="gap:14px">
+        <div class="card soft"><div class="cap">Trust boundary</div><div class="small">Validator and CDK source come from the platform asset bucket - cannot be replaced by code in the user's repository</div></div>
+        <div class="card soft"><div class="cap">Permission scope</div><div class="small">validate-build: pushes only to its own ECR, deploy: CloudFormation only on its own <code>-runtime</code> stack</div></div>
+        <div class="card soft"><div class="cap">Rollback</div><div class="small">Verify the SHA image of a successful deploy exists → provisioner redeploys only the runtime stack (no rebuild)</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 19 STATE MODELS ═══════════════════ -->
+<section class="slide" data-nav="State model" data-group="03 How it works">
+  <div class="pad">
+    <div class="kicker">How it works / State model</div>
+    <h2 class="s-title">App status, runtime state and deploy status - three states managed separately</h2>
+    <div class="body vc" style="gap:14px">
+      <div class="row" style="gap:16px">
+        <div class="card" style="flex:1.25">
+          <div class="cap">App.status - changes only via conditional updates</div>
+          <svg viewBox="0 0 560 210" width="100%" height="210" font-family="ui-monospace, Menlo, monospace" font-size="12">
+            <g font-weight="700">
+              <rect x="10" y="30" width="110" height="44" rx="10" fill="#FFF9EF" stroke="#E5A23A" stroke-width="1.5"/><text x="65" y="50" text-anchor="middle" fill="#A26200">CREATING</text><text x="65" y="66" text-anchor="middle" fill="#A26200" font-size="10.5" font-family="Pretendard Local" font-weight="500">Creating</text>
+              <rect x="220" y="30" width="110" height="44" rx="10" fill="#F1FBF7" stroke="#18A27A" stroke-width="1.5"/><text x="275" y="50" text-anchor="middle" fill="#0B7A5C">ACTIVE</text><text x="275" y="66" text-anchor="middle" fill="#0B7A5C" font-size="10.5" font-family="Pretendard Local" font-weight="500">Ready</text>
+              <rect x="430" y="30" width="110" height="44" rx="10" fill="#F6F7F9" stroke="#A3ABB8" stroke-width="1.5"/><text x="485" y="50" text-anchor="middle" fill="#4A5461">DELETING</text><text x="485" y="66" text-anchor="middle" fill="#4A5461" font-size="10.5" font-family="Pretendard Local" font-weight="500">Deleting</text>
+              <rect x="220" y="150" width="110" height="44" rx="10" fill="#FFF4F6" stroke="#E0496A" stroke-width="1.5"/><text x="275" y="170" text-anchor="middle" fill="#B4153A">FAILED</text><text x="275" y="186" text-anchor="middle" fill="#B4153A" font-size="10.5" font-family="Pretendard Local" font-weight="500">Failed</text>
+            </g>
+            <g stroke="#6B7785" stroke-width="1.4" fill="none" marker-end="url(#ah)">
+              <path d="M120 52 H 216"/><path d="M330 52 H 426"/>
+              <path d="M90 74 C 110 140, 170 172, 216 172"/>
+              <path d="M330 162 C 400 150, 450 110, 470 78"/>
+              <path d="M500 74 C 500 150, 420 188, 334 184"/>
+            </g>
+            <g font-family="Pretendard Local" font-size="11" fill="#3A4757">
+              <text x="168" y="44" text-anchor="middle">First deploy OK</text>
+              <text x="378" y="44" text-anchor="middle">Delete request</text>
+              <text x="20" y="148">Provisioning or</text><text x="20" y="162">first deploy failed</text>
+              <text x="372" y="118">Delete request</text>
+              <text x="430" y="206">Delete failed</text>
+            </g>
+          </svg>
+          <div class="small muted">Cannot delete while CREATING, repeat request while DELETING returns the same response (idempotent)</div>
+        </div>
+        <div class="card" style="flex:1">
+          <div class="cap">runtimeState - runtime state of an ACTIVE app</div>
+          <svg viewBox="0 0 440 210" width="100%" height="210" font-family="ui-monospace, Menlo, monospace" font-size="12">
+            <g font-weight="700">
+              <rect x="160" y="10" width="120" height="44" rx="10" fill="#F1FBF7" stroke="#18A27A" stroke-width="1.5"/><text x="220" y="30" text-anchor="middle" fill="#0B7A5C">RUNNING</text><text x="220" y="46" text-anchor="middle" fill="#0B7A5C" font-size="10.5" font-family="Pretendard Local" font-weight="500">Running</text>
+              <rect x="20" y="150" width="120" height="44" rx="10" fill="#F6F7F9" stroke="#A3ABB8" stroke-width="1.5"/><text x="80" y="170" text-anchor="middle" fill="#4A5461">SLEEPING</text><text x="80" y="186" text-anchor="middle" fill="#4A5461" font-size="10.5" font-family="Pretendard Local" font-weight="500">Sleeping</text>
+              <rect x="300" y="150" width="120" height="44" rx="10" fill="#F5F2FF" stroke="#6842FF" stroke-width="1.5"/><text x="360" y="170" text-anchor="middle" fill="#4B25D6">WAKING</text><text x="360" y="186" text-anchor="middle" fill="#4B25D6" font-size="10.5" font-family="Pretendard Local" font-weight="500">Waking</text>
+            </g>
+            <g stroke="#6B7785" stroke-width="1.4" fill="none" marker-end="url(#ah)">
+              <path d="M170 54 L 96 146"/><path d="M144 172 H 296"/><path d="M344 146 L 270 58"/>
+            </g>
+            <g font-family="Pretendard Local" font-size="11" fill="#3A4757">
+              <text x="4" y="88">15 min idle, schedule end</text><text x="4" y="102">/ admin sleep</text>
+              <text x="220" y="166" text-anchor="middle">First request, schedule start</text>
+              <text x="318" y="88">Task RUNNING</text><text x="318" y="102">event (restore)</text>
+            </g>
+          </svg>
+          <div class="small muted">Handled by the sleep, waker and restore Lambdas respectively</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="cap">Deployment.status - moves forward only, driven by pipeline and provisioner build events</div>
+        <div class="row center mt8" style="gap:8px;flex-wrap:wrap">
+          <div class="st grey">PENDING<small>Pending</small></div><span class="muted">→ Source</span>
+          <div class="st run">VALIDATING<small>Validating</small></div><span class="muted">→ ValidateBuild</span>
+          <div class="st run">DEPLOYING<small>Deploying</small></div><span class="muted">→ Deploy</span>
+          <div class="st ok">SUCCEEDED<small>Done</small></div>
+          <span class="muted" style="margin-left:10px">or</span>
+          <div class="st err">FAILED<small>Failed + failureCategory</small></div>
+          <span class="small muted" style="margin-left:auto;max-width:260px">CANCELED, STOPPED → FAILED; SUPERSEDED ignored. History TTL 90 days</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 20 SLEEP / WAKE ═══════════════════ -->
+<section class="slide" data-nav="Sleep / wake" data-group="03 How it works">
+  <style>
+    .lanehead { width: 92px; flex: none; display:flex; flex-direction:column; justify-content:center; gap:4px; }
+    .lanehead b { font-size: 15px; }
+    .sw .step { padding: 10px 11px; gap: 4px; }
+    .sw .step p { font-size: 11.8px; }
+  </style>
+  <div class="pad">
+    <div class="kicker">How it works / Scale-to-zero</div>
+    <h2 class="s-title">Zero tasks when unused; starts automatically on the first request</h2>
+    <div class="body vc sw zoomable" style="gap:12px">
+      <div class="row" style="gap:10px">
+        <div class="lanehead"><svg class="ico" style="width:26px;height:26px"><use href="#i-moon"/></svg><b>Sleep</b></div>
+        <div class="flow grow">
+          <div class="step"><div class="h"><img src="assets/aws/cloudwatch.svg" width="22" alt=""><b>Trigger</b></div><p>Idle alarm: &lt; 1 request per target, 5 min × 3 (15 min) + stuck-alarm sweep every 15 min - 15 min grace after waking<br>or schedule end, admin sleep</p></div>
+          <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+          <div class="step"><div class="h"><img src="assets/aws/eventbridge.svg" width="22" alt=""><b>EventBridge</b></div><p>Matches alarm name prefix <code>apphub-{stage}-app-</code> + 15-min sweep (2 shared rules)</p></div>
+          <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+          <div class="step hl"><div class="h"><img src="assets/aws/lambda.svg" width="22" alt=""><b>sleep-transition</b></div><p>① desiredCount → 0<br>② listener rule forward target → <b>waker TG</b><br>③ runtimeState = SLEEPING</p></div>
+        </div>
+      </div>
+      <div class="row" style="gap:10px">
+        <div class="lanehead"><svg class="ico" style="width:26px;height:26px"><use href="#i-sun"/></svg><b>Wake</b></div>
+        <div class="flow grow">
+          <div class="step"><div class="h"><svg class="ico" style="width:20px;height:20px"><use href="#i-user"/></svg><b>First request</b></div><p>Visit <code>{sub}.apps…</code> → rule forwards to waker TG</p></div>
+          <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+          <div class="step hl"><div class="h"><img src="assets/aws/lambda.svg" width="22" alt=""><b>waker</b></div><p>Host → subdomain → appId → desiredCount = min (≥1), WAKING<br>Always returns a <b>200 waiting page</b> (auto-refresh every 5s)</p></div>
+          <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+          <div class="step"><div class="h"><img src="assets/aws/ecs.svg" width="22" alt=""><b>Task RUNNING</b></div><p>ECS Task State Change event (appId taken from <code>group</code>)</p></div>
+          <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+          <div class="step hl"><div class="h"><img src="assets/aws/lambda.svg" width="22" alt=""><b>wake-restore</b></div><p>Forward target → back to app TG<br>runtimeState = RUNNING</p></div>
+        </div>
+      </div>
+      <div class="row" style="gap:16px">
+        <div class="shot" style="width:380px"><div class="bar"><i></i><i></i><i></i><span>{sub}.apps.company-domain / waker response</span></div><img src="assets/shots/30-waker-page.png" alt="Waiting page" style="height:150px;object-fit:cover"></div>
+        <div class="g2 grow" style="gap:10px">
+          <div class="card soft" style="padding:10px 12px"><div class="cap">Auth preserved</div><div class="small">Only the forward TargetGroupArn is swapped - the authenticate-cognito action stays</div></div>
+          <div class="card soft" style="padding:10px 12px"><div class="cap">Idempotent</div><div class="small">Skips UpdateService, ModifyRule when the current value already matches</div></div>
+          <div class="card soft" style="padding:10px 12px"><div class="cap">No clash with deploys</div><div class="small">desiredCount set only on first deploy, sleeping apps get the rule pointed back to the app TG before deploy; after success or failure, deploy-notify re-applies sleep (0 tasks + waker rule)</div></div>
+          <div class="card soft" style="padding:10px 12px"><div class="cap">Schedule start</div><div class="small">Scheduler calls only <code>ecs:updateService</code>; restore handles the rule switch</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 21 SLEEP MODES ═══════════════════ -->
+<section class="slide" data-nav="3 run modes" data-group="03 How it works">
+  <div class="pad">
+    <div class="kicker">How it works / Run mode (sleepMode)</div>
+    <h2 class="s-title">The run mode decides which resources the runtime stack creates</h2>
+    <div class="body vc zoomable" style="gap:16px">
+      <table class="tbl" style="font-size:14px">
+        <thead><tr><th style="width:190px"></th><th class="c">On when used <span class="tag" style="margin-left:4px">Recommended</span><div class="mono" style="font-weight:400;text-transform:none">on-demand</div></th><th class="c">Always on<div class="mono" style="font-weight:400;text-transform:none">always-on</div></th><th class="c">On schedule<div class="mono" style="font-weight:400;text-transform:none">schedule</div></th></tr></thead>
+        <tbody>
+          <tr><td class="k">On-screen description</td><td>Sleeps when unused, wakes automatically on access</td><td>Opens instantly at any time</td><td>On only during set hours (e.g. weekdays 09:00–19:00)</td></tr>
+          <tr><td class="k">Idle alarm (15 min)</td><td class="c yes">Created</td><td class="c no">None</td><td class="c yes">Created</td></tr>
+          <tr><td class="k">EventBridge Scheduler</td><td class="c no">None</td><td class="c no">None</td><td class="c yes">start + stop (weekday, time, Asia/Seoul)</td></tr>
+          <tr><td class="k">First-access delay</td><td class="c">30s – 1 min if asleep</td><td class="c">None</td><td class="c">30s – 1 min outside hours</td></tr>
+          <tr><td class="k">Idle-time cost</td><td class="c">0 tasks</td><td class="c">min tasks always on</td><td class="c">0 tasks outside hours</td></tr>
+          <tr><td class="k">Admin sleep</td><td class="c yes">Yes</td><td class="c yes">Yes (force)</td><td class="c yes">Yes</td></tr>
+        </tbody>
+      </table>
+      <div class="row" style="gap:16px">
+        <div class="shot fix" style="--h:190px;width:520px"><div class="bar"><i></i><i></i><i></i><span>Wizard step 6 / run mode</span></div><img src="assets/shots/w6.png" alt="" style="object-position:center 22%"></div>
+        <div class="card soft grow"><div class="cap">Where it's implemented</div>
+          <ul class="bl sm">
+            <li><code>infra/lib/constructs/app-runtime.ts</code> - alarm, Scheduler created conditionally</li>
+            <li>Scheduler stop invokes the sleep Lambda (also switches the rule)</li>
+            <li>Weekday mapping: UI 0–6 → cron 1–7</li>
+            <li><code>ScheduleEditor.tsx</code> - at least one weekday, time format validation</li>
+          </ul></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ DIVIDER 4 ═══════════════════ -->
+<section class="slide divider" data-nav="04 / Quality / security / ops" data-group="04 Quality / security / ops">
+  <div class="pad">
+    <div class="sn">SECTION 04</div>
+    <h2>Quality, security, operations</h2>
+    <p>Kiro-linked checks, security design, install/uninstall, tests</p>
+    <div class="chips"><span>3-layer deploy standard checks</span><span>Security controls</span><span>deploy.sh / destroy.sh</span><span>Test pyramid</span><span>Current scope</span></div>
+  </div>
+  <div class="sweep-line"></div>
+</section>
+
+<!-- ═══════════════════ 22 KIRO 3-LAYER ═══════════════════ -->
+<section class="slide" data-nav="Kiro / 3-layer checks" data-group="04 Quality / security / ops">
+  <div class="pad">
+    <div class="kicker">Quality / Deploy standard</div>
+    <h2 class="s-title">The same deploy standard checked three times: when writing, committing and building</h2>
+    <div class="body vc" style="gap:14px">
+      <div class="flow">
+        <div class="step"><div class="h"><span class="num">1</span><b>Writing, Kiro steering</b></div><p><code>.kiro/steering/deployment-standard.md</code> (inclusion: always) - rules Kiro always follows when generating code</p><div class="svc">One prompt "Match the deploy standard" checks and fixes</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">2</span><b>Commit, pre-commit hook</b></div><p>POSIX sh + grep. Collects every failed item, prints it in Korean and stops the commit</p><div class="svc">install-hooks.sh / .ps1 (idempotent, backs up existing hooks)</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step hl"><div class="h"><span class="num">3</span><b>Build, platform validation</b></div><p><code>validator/dockerfile.py</code> + a real container smoke test. Final verdict</p><div class="svc"><img src="assets/aws/codebuild.svg" alt="">validate-build stage</div></div>
+      </div>
+      <table class="tbl" style="font-size:13.3px">
+        <thead><tr><th>Check</th><th class="c">① steering</th><th class="c">② pre-commit</th><th class="c">③ platform</th><th>On violation</th></tr></thead>
+        <tbody>
+          <tr><td class="k">Dockerfile at repository root</td><td class="c yes">✓</td><td class="c yes">✓</td><td class="c yes">✓ C1</td><td class="mono" style="font-size:12px">DOCKERFILE_MISSING</td></tr>
+          <tr><td class="k">EXPOSE 8080 only (8080/tcp allowed)</td><td class="c yes">✓</td><td class="c yes">✓</td><td class="c yes">✓ C2</td><td class="mono" style="font-size:12px">DOCKERFILE_INVALID</td></tr>
+          <tr><td class="k">Forbidden: --privileged, docker.sock, host network, --cap-add, host bind mount</td><td class="c yes">✓</td><td class="c yes">✓</td><td class="c yes">✓</td><td class="mono" style="font-size:12px">DOCKERFILE_INVALID</td></tr>
+          <tr><td class="k">GET /health → 200 (within 60s of start)</td><td class="c yes">✓</td><td class="c no">-</td><td class="c yes">✓ smoke</td><td class="mono" style="font-size:12px">HEALTHCHECK_FAILED</td></tr>
+          <tr><td class="k">non-root USER</td><td class="c yes">✓</td><td class="c no">-</td><td class="c wn">Warning</td><td class="muted">Not blocked</td></tr>
+          <tr><td class="k">Block committed secrets (<code>AKIA…</code>, PEM private key)</td><td class="c yes">✓</td><td class="c yes">✓</td><td class="c no">-</td><td class="muted">Commit stopped</td></tr>
+          <tr><td class="k">Stateless, logs to stdout, secrets via env vars</td><td class="c yes">✓</td><td class="c no">-</td><td class="c no">-</td><td class="muted">Guidance</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 23 SECURITY ═══════════════════ -->
+<section class="slide" data-nav="Security design" data-group="04 Quality / security / ops">
+  <div class="pad">
+    <div class="kicker">Security / Controls</div>
+    <h2 class="s-title">Network, IAM, secrets and auth - the default is always the narrowest permission</h2>
+    <div class="body vc g3" style="gap:14px">
+      <div class="card"><h4><svg class="ico"><use href="#i-net"/></svg>Network</h4>
+        <ul class="bl sm mt8"><li><code>0.0.0.0/0</code>, <code>::/0</code> rejected at config load (<code>assertNoOpenCidr</code>)</li><li>Only exception: the internet-facing ALB SG</li><li>Listener <code>open:false</code> - no auto-open rules</li><li>Task SG allows 8080 only by ALB SG reference</li></ul></div>
+      <div class="card"><h4><svg class="ico"><use href="#i-shield"/></svg>IAM scope</h4>
+        <ul class="bl sm mt8"><li>Restricted by resource name prefix <code>apphub-{stage}-app-*</code></li><li><code>Resource:"*"</code> only for actions without resource-level permissions (commented)</li><li>App deploy build: its own runtime stack only</li><li>provisioner EC2 SG creation: deploy-region condition</li></ul></div>
+      <div class="card"><h4><svg class="ico"><use href="#i-key"/></svg>App permissions</h4>
+        <ul class="bl sm mt8"><li>Task Role = inline policy from the admin's permission template</li><li>Default template has an empty Statement → no AWS permissions</li><li>Users see only the template name, never the policy body</li></ul></div>
+      <div class="card"><h4><svg class="ico"><use href="#i-lock"/></svg>Secrets</h4>
+        <ul class="bl sm mt8"><li>One Secrets Manager secret per app <code>apphub/{stage}/app/{appId}</code> - JSON <code>{KEY: value}</code></li><li>Only the ARN in DynamoDB, logs, CFN parameters</li><li>Injected per key via ECS <code>secrets</code> (<code>&lt;arn&gt;:KEY::</code>); execution role reads only that ARN</li><li>Force-deleted with the app</li></ul></div>
+      <div class="card"><h4><svg class="ico"><use href="#i-user"/></svg>Authentication, authorization</h4>
+        <ul class="bl sm mt8"><li>Cognito: self sign-up off (invite only), 12+ char complex passwords</li><li>API: JWT authorizer, admin/user groups</li><li>Apps: ALB authenticate-cognito (default on for internet apps, unavailable in private mode)</li></ul></div>
+      <div class="card"><h4><svg class="ico"><use href="#i-db"/></svg>Storage, transport</h4>
+        <ul class="bl sm mt8"><li>S3 public access fully blocked, SSE, SSL enforced</li><li>CloudFront → S3 via OAC (public mode)</li><li>DynamoDB PITR, RETAIN in prod</li><li>CORS reflects only allowed origins (no <code>*</code>)</li></ul></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 24 INSTALL ═══════════════════ -->
+<section class="slide" data-nav="Install / uninstall (deploy.sh)" data-group="04 Quality / security / ops">
+  <div class="pad">
+    <div class="kicker">Operations / Install / uninstall</div>
+    <h2 class="s-title">One command installs; re-running it any number of times gives the same result</h2>
+    <div class="body vc" style="gap:14px">
+      <div class="card soft" style="padding:10px 16px"><code style="font-size:13px;background:none;border:0">./scripts/deploy.sh --stage dev|prod --domain apps.example.com [--hosted-zone-id] [--region] [--admin-email] [--frontend-mode public|private] [--internal-cidrs "10.0.0.0/16,…"] [--vpc-cidr 10.20.0.0/16] [--skip-spa]</code></div>
+      <div class="flow">
+        <div class="step"><div class="h"><span class="num">1</span><b>Preflight</b></div><p>aws, node 22+, pnpm, docker, rsync, zip, credentials, hosted zone auto-lookup</p><div class="svc">Exits without changes on failure</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">2</span><b>bootstrap</b></div><p><code>cdk bootstrap</code> + sync 7 Lambda assets</p><div class="svc">Skipped if CDKToolkit exists</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">3</span><b>Deploy stacks</b></div><p>Deploy <code>network</code>, <code>platform</code>; upload validator, CDK source, Kiro bundle</p><div class="svc">No change = no-op, fixed S3 keys</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">4</span><b>Seed data</b></div><p>Seed default permission template, create the first admin account</p><div class="svc">Created only if missing (admin edits kept)</div></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg></div>
+        <div class="step"><div class="h"><span class="num">5</span><b>Deploy SPA</b></div><p>Build → generate <code>config.json</code> → S3 sync → CloudFront invalidation (public mode; private bakes it into the console image)</p><div class="svc">sync --delete, /* invalidation</div></div>
+      </div>
+      <div class="row" style="gap:16px">
+        <div class="card grow"><div class="cap">destroy.sh - delete in reverse dependency order</div>
+          <div class="row center mt8" style="gap:8px;flex-wrap:wrap;font-size:13px">
+            <span class="tag ghost">Confirm (type name for prod)</span>→<span class="tag ghost">all app-*-runtime</span>→<span class="tag ghost">all app-*-pipeline</span>→<span class="tag ghost">alb-* (scale-out ALBs)</span>→<span class="tag ghost">platform</span>→<span class="tag ghost">network</span>
+          </div>
+          <div class="small muted mt8">cloudformation delete-stack + wait for every stack (no synth needed), includes FAILED stacks, guidance for manual cleanup of prod RETAIN resources</div></div>
+        <div class="card" style="width:400px"><div class="cap">Idempotency test (e2e/idempotency-test.sh)</div>
+          <ul class="bl sm"><li>(A) deploy.sh twice in a row → second makes no changes</li><li>(B) destroy → reinstall works</li></ul></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 25 TESTS ═══════════════════ -->
+<section class="slide" data-nav="Test strategy" data-group="04 Quality / security / ops">
+  <div class="pad">
+    <div class="kicker">Quality / Tests</div>
+    <h2 class="s-title">1,123 unit tests across layers + 5 end-to-end scenarios on real AWS</h2>
+    <div class="body vc row" style="gap:22px">
+      <div class="col" style="width:440px;gap:14px">
+        <div class="card"><div class="cap">Automated tests (by test function)</div>
+          <div class="bars mt8">
+            <div class="bar-row"><span>backend</span><div class="track"><div class="fill" style="width:100%"></div></div><span class="val">522</span></div>
+            <div class="bar-row"><span>frontend</span><div class="track"><div class="fill" style="width:56.1%"></div></div><span class="val">293</span></div>
+            <div class="bar-row"><span>infra (CDK)</span><div class="track"><div class="fill" style="width:59.0%"></div></div><span class="val">308</span></div>
+            <div class="bar-row"><span>Playwright</span><div class="track"><div class="fill" style="width:2.1%"></div></div><span class="val">11</span></div>
+          </div>
+          <div class="small muted mt12">pytest, vitest + Testing Library, CDK assertions, Playwright</div></div>
+        <div class="card"><div class="cap">Live E2E (run-e2e.sh, dev account, ~30 min)</div>
+          <ul class="bl sm"><li>Deploy success + streaming + delete</li><li>4 failure fixtures → expected failureCategory</li><li>Auto deploy on push</li><li>Schedule + wake on request</li><li>Web UI user and admin journeys</li></ul></div>
+      </div>
+      <div class="grow">
+        <div class="cap" style="font:700 11px var(--font-display);letter-spacing:.06em;color:var(--g3);margin-bottom:6px">E2E SAMPLE APP FIXTURES (e2e/fixtures)</div>
+        <table class="tbl" style="font-size:13px">
+          <thead><tr><th>Fixture</th><th>Defect</th><th>Expected</th></tr></thead>
+          <tbody>
+            <tr><td class="k mono" style="font-size:12px">sample-ok</td><td>None</td><td><span class="tag ok">SUCCEEDED</span></td></tr>
+            <tr><td class="k mono" style="font-size:12px">sample-streaming</td><td>None - checks ALB buffering on SSE <code>/stream</code></td><td><span class="tag ok">SUCCEEDED</span></td></tr>
+            <tr><td class="k mono" style="font-size:12px">sample-no-dockerfile</td><td>No Dockerfile</td><td><span class="tag err">DOCKERFILE_MISSING</span></td></tr>
+            <tr><td class="k mono" style="font-size:12px">sample-wrong-port</td><td>EXPOSE 3000</td><td><span class="tag err">DOCKERFILE_INVALID</span></td></tr>
+            <tr><td class="k mono" style="font-size:12px">sample-build-error</td><td>Nonexistent dependency</td><td><span class="tag err">BUILD_FAILED</span></td></tr>
+            <tr><td class="k mono" style="font-size:12px">sample-no-health</td><td><code>/health</code> 404</td><td><span class="tag err">HEALTHCHECK_FAILED</span></td></tr>
+          </tbody>
+        </table>
+        <div class="g2 mt12" style="gap:10px">
+          <div class="card soft" style="padding:10px 12px"><div class="cap">Top backend files</div><div class="small">qa_2026_10_08_b 45, deploy_notify 39, secrets_d8 36, cc_repos 35, apps 31</div></div>
+          <div class="card soft" style="padding:10px 12px"><div class="cap">Top infra files</div><div class="small">platform-stack 75, network-stack 52, app-runtime 48, platform-frontend-mode 46</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 26 SCOPE / LIMITS ═══════════════════ -->
+<section class="slide" data-nav="Current scope / limits" data-group="04 Quality / security / ops">
+  <div class="pad">
+    <div class="kicker">Current scope / Known limits</div>
+    <h2 class="s-title">What the code implements today and what remains</h2>
+    <div class="body vc" style="gap:12px;max-width:980px">
+      <div class="col" style="gap:12px">
+        <div class="card"><h4><svg class="ico"><use href="#i-net"/></svg>Network scale-out</h4>
+          <ul class="bl mt8">
+            <li>Starts with one ALB per visibility - when app rules on one visibility reach <b>80</b>, the next ALB is created ahead of time; each ALB takes at most <b>90</b> (if no slot is free, app creation waits until scale-out completes)</li>
+          </ul></div>
+        <div class="card"><h4><svg class="ico"><use href="#i-git"/></svg>Repository connections</h4>
+          <ul class="bl mt8">
+            <li>GitHub, GitLab connections are <b>not yet implemented, for security reasons</b> - the console shows "Coming soon". Implementing them requires an external OAuth approval flow</li>
+          </ul></div>
+      </div>
+      <div class="col" style="gap:12px">
+        <div class="card"><h4><svg class="ico"><use href="#i-info"/></svg>Gaps between defined states and implementation</h4>
+          <ul class="bl mt8">
+            <li>The <code>BUILDING</code> deploy status is defined but never written by the backend - the console shows a single "Check, build" step to match reality</li>
+          </ul></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 27 SUMMARY ═══════════════════ -->
+<section class="slide cover" data-nav="Summary" data-group="Wrap-up">
+  <div class="glow tr"></div><div class="glow bl"></div>
+  <div class="pad" style="justify-content:center">
+    <div class="kicker">Summary</div>
+    <h2 class="s-title" style="font-size:40px;margin-top:16px">From deploy to operations in <span class="sweep">7 steps</span></h2>
+    <div class="g4 mt20" style="gap:16px;margin-top:40px">
+      <div class="card"><div class="ico-box"><svg class="ico"><use href="#i-sliders"/></svg></div><h4 class="mt12">Users</h4><p>A wizard with no AWS jargon, status badges, plain-language failure guidance</p></div>
+      <div class="card"><div class="ico-box"><svg class="ico"><use href="#i-layers"/></svg></div><h4 class="mt12">Infrastructure</h4><p>4 CDK stacks (+ alb on scale-out), 1 app = 2 stacks, idempotent install and removal</p></div>
+      <div class="card"><div class="ico-box"><svg class="ico"><use href="#i-repeat"/></svg></div><h4 class="mt12">Automation</h4><p>Step Functions + CodePipeline, event-driven status, scale-to-zero</p></div>
+      <div class="card"><div class="ico-box"><svg class="ico"><use href="#i-shield"/></svg></div><h4 class="mt12">Governance</h4><p>Admin presets and permission templates, 3-layer deploy-standard checks, least privilege</p></div>
+    </div>
+    <div class="small muted" style="margin-top:36px">Screen captures: <code>frontend</code> preview (mock) mode, Korean UI, Numbers: as of the repository code</div>
+  </div>
+</section>
+
+</main>
+
+<script src="js/deck.js?v=1791210766"></script>
+</body>
+</html>

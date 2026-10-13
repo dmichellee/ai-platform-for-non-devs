@@ -88,7 +88,7 @@ def create_app(ctx: RouteContext) -> ProxyResult:
     검증 순서: 형식 → 서브도메인 규칙 → provider 활성 → internet-facing 허용 →
       프리셋/권한템플릿 존재 → 연결 상태 → 쿼터 → 서브도메인 예약(원자적) → App(CREATING) → SFN start.
 
-    VPC 선택 기능은 제거됐다(1차는 플랫폼 부트스트랩 VPC 단일 배치 — DESIGN 3.7·10장).
+    VPC 선택 기능은 제거됐다(1차는 플랫폼 부트스트랩 VPC 단일 배치).
     프론트는 vpcId 를 보내지 않으며, 서버는 App 레코드에 vpcId 를 저장하지 않는다.
     앱이 배치될 VPC 는 ALB 슬롯 배정 시점에 network SSM(vpc-id)에서 확정된다.
     """
@@ -337,7 +337,7 @@ def admin_list_apps(ctx: RouteContext) -> ProxyResult:
 
 
 def admin_stop_app(ctx: RouteContext) -> ProxyResult:
-    """POST /admin/apps/{id}/stop — 관리자 강제 중지(DESIGN 3.5). 관리자 전용, 타인 앱 포함.
+    """POST /admin/apps/{id}/stop — 관리자 강제 중지. 관리자 전용, 타인 앱 포함.
 
     "강제 중지 = 관리자가 앱을 재우는 것" — ECS desiredCount=0 + 리스너 규칙을 Waker 로 전환 +
     runtimeState=SLEEPING(sleep_app(force=True) 재사용, always-on 앱도 대상). ACTIVE 앱만 의미 있음.
@@ -391,7 +391,7 @@ def restart_app(ctx: RouteContext) -> ProxyResult:
 def _force_new_deployment_or_friendly_error(stage: str, app_id: str) -> None:
     """ecs.update_service(forceNewDeployment=True). ClientError 는 사용자용 친절 에러로 마스킹.
 
-    cluster/service 규약(DESIGN.md D18)은 wake 헬퍼를 재사용한다(CLUSTER_NAME env + 이름 파생).
+    cluster/service 규약(D18)은 wake 헬퍼를 재사용한다(CLUSTER_NAME env + 이름 파생).
     """
     try:
         client("ecs").update_service(

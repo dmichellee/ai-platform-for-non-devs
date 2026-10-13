@@ -35,7 +35,7 @@ import { Construct } from "constructs";
 import { StageConfig, resourcePrefix, type FrontendMode } from "../lib/config";
 
 /**
- * platform-stack — 앱과 무관한 컨트롤 플레인 (apphub-conventions 2장, DESIGN.md 3.1).
+ * platform-stack — 앱과 무관한 컨트롤 플레인 (apphub-conventions 2장).
  *
  * 포함:
  *  - Cognito User Pool(그룹 admin/user, 관리자 초대 흐름) + Client + Hosted UI 도메인(public 모드만, D21)
@@ -80,7 +80,7 @@ export class PlatformStack extends Stack {
   readonly provisioner: codebuild.Project;
   readonly provisionStateMachine: sfn.StateMachine;
   readonly deleteStateMachine: sfn.StateMachine;
-  /** DESIGN 3.3 [Notify]: CodePipeline 상태 → DDB Deployment 레코드 갱신 Lambda */
+  /** CodePipeline 상태 → DDB Deployment 레코드 갱신 Lambda */
   readonly deployNotifyFunction: lambda.Function;
 
   constructor(scope: Construct, id: string, props: PlatformStackProps) {
@@ -107,7 +107,7 @@ export class PlatformStack extends Stack {
       sortKey: { name: "SK", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
-      timeToLiveAttribute: "ttl", // 배포 이력 90일 TTL (DESIGN.md 4)
+      timeToLiveAttribute: "ttl", // 배포 이력 90일 TTL
       removalPolicy: config.stage === "prod" ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
     });
     table.addGlobalSecondaryIndex({
@@ -126,7 +126,7 @@ export class PlatformStack extends Stack {
     // 관리자 초대 기본(selfSignUp 비활성). 그룹 admin/user.
     const userPool = new cognito.UserPool(this, "UserPool", {
       userPoolName: `${prefix}-users`,
-      selfSignUpEnabled: false, // 관리자 초대만 (DESIGN.md 5)
+      selfSignUpEnabled: false, // 관리자 초대만
       signInAliases: { email: true },
       autoVerify: { email: true },
       standardAttributes: { email: { required: true, mutable: false } },
@@ -171,7 +171,7 @@ export class PlatformStack extends Stack {
 
     // ── 플랫폼 웹 호스팅 (D19) — public: 비공개 S3 + CloudFront(OAC) ──────────────
     //  public zone `console` A/AAAA alias → CloudFront, private zone `console` CNAME → CloudFront 도메인
-    //  (private zone은 CloudFront alias 불가 — PLATFORM-ENGINEERING 4.1). 인증서는 CloudFront 요건상
+    //  (private zone은 CloudFront alias 불가). 인증서는 CloudFront 요건상
     //  us-east-1 ACM이어야 하며, 별도 스택 없이 이 스택 안에서 만든다(DnsValidatedCertificate — 커스텀
     //  리소스가 us-east-1에 발급·DNS 검증, 사용자 요구: 별도 스택 금지).
     const publicZone = route53.HostedZone.fromHostedZoneAttributes(this, "PublicZone", {
@@ -364,7 +364,7 @@ export class PlatformStack extends Stack {
         //  결정론적 이름을 직접 주입(크로스스택 참조/SSM 런타임 조회 없음).
         CLUSTER_NAME: `${prefix}-cluster`,
         // 핸들러 CORS(app/http/cors.py)가 요청 Origin을 허용 목록과
-        //  대조해 그대로 에코한다(와일드카드 * 미사용 — D17/PLATFORM-ENGINEERING과 무관하나 보안 관행).
+        //  대조해 그대로 에코한다(와일드카드 * 미사용 — D17과 무관하나 보안 관행).
         //  허용 origin은 콘솔 주소 `https://console.{appsDomain}`(D19 두 모드 공통). dev는 Vite dev 서버
         //  (localhost:5173)도 함께 허용.
         ALLOWED_ORIGINS: [consoleUrl, ...localDevOrigins].join(","),
@@ -524,7 +524,7 @@ export class PlatformStack extends Stack {
       }),
     );
 
-    // (4) codepipeline:StartPipelineExecution — 수동 배포/롤백 트리거(DESIGN 3.3/9, M5).
+    // (4) codepipeline:StartPipelineExecution — 수동 배포/롤백 트리거(M5).
     //     앱 파이프라인 이름 규약은 `apphub-{stage}-app-{appId}`(app-pipeline construct pipelineName).
     //     계정 내 앱 파이프라인(apphub-{stage}-app-*)으로 ARN 범위를 한정한다.
     apiHandler.addToRolePolicy(
@@ -778,6 +778,22 @@ export class PlatformStack extends Stack {
         }
       : {
           endpointConfiguration: { types: [apigw.EndpointType.REGIONAL] },
+          // private→public 전환 버그(dev 실측): RestApi의 Policy 속성을 빼도 CloudFormation/API GW는
+          //  기존 리소스 정책을 지우지 않는다 → private 때의 DenyOutsideVpce가 남아 모든 호출이 403.
+          //  그래서 public도 정책을 명시해 덮어쓴다. 내용은 "정책 없음"과 같은 동작(전체 Invoke 허용)이며
+          //  인증은 Cognito authorizer가 담당한다. 정책은 CfnRestApi 속성이라 Deployment 논리 ID 해시
+          //  (LatestDeploymentResource.calculateLogicalId가 RestApi 템플릿 전체를 해시)에 포함되어 자동 재배포된다.
+          policy: new iam.PolicyDocument({
+            statements: [
+              new iam.PolicyStatement({
+                sid: "AllowPublicInvoke",
+                effect: iam.Effect.ALLOW,
+                principals: [new iam.AnyPrincipal()],
+                actions: ["execute-api:Invoke"],
+                resources: ["execute-api:/*"],
+              }),
+            ],
+          }),
         };
     const api = new apigw.RestApi(this, "Api", {
       restApiName: `${prefix}-api`,
@@ -861,7 +877,7 @@ export class PlatformStack extends Stack {
     this.effectiveApiUrl = effectiveApiUrl;
     this.cognitoIdpEndpoint = cognitoIdpEndpoint;
 
-    // ── private 모드 콘솔: internal ALB + ECS Fargate(nginx) (D19, PLATFORM-ENGINEERING 4.1) ──
+    // ── private 모드 콘솔: internal ALB + ECS Fargate(nginx) (D19) ──
     //  - 콘솔 ALB `${prefix}-console-alb`: internal, SG ingress = internal CIDRs 443만(D17 — 예외 아님).
     //    HTTPS 리스너는 network 와일드카드 인증서. 앱용 ALB 레지스트리/슬롯 배정 대상이 아니다.
     //  - ECS 서비스 `${prefix}-console`: 공유 클러스터(D18) 위, desiredCount 1, 잠자기 대상 아님
@@ -1066,8 +1082,8 @@ export class PlatformStack extends Stack {
     apiHandler.addEnvironment("PROVISION_SM_ARN", provisionStateMachine.stateMachineArn);
     apiHandler.addEnvironment("DELETE_SM_ARN", deleteStateMachine.stateMachineArn);
 
-    // ── [Notify] deploy-notify Lambda + EventBridge 규칙 2개 (DESIGN 3.3) ────
-    // DESIGN.md 3.3 배포 파이프라인의 마지막 단계:
+    // ── [Notify] deploy-notify Lambda + EventBridge 규칙 2개 ────
+    // 배포 파이프라인의 마지막 단계:
     //   [Notify] EventBridge(CodePipeline 상태 변경) → Lambda → DDB Deployment 레코드 갱신.
     // 이 단계가 없으면 배포 진행 상황이 영원히 PENDING에 머문다(파이프라인이 성공/실패해도
     //  Deployment.status 전이가 안 됨). backend가 `app.orchestration.deploy_notify.handle`을 구현하고
@@ -1096,7 +1112,7 @@ export class PlatformStack extends Stack {
       //  테이블명은 결정론적(`${prefix}-main`)이라 크로스스택/SSM 없이 직접 주입(task Lambda와 동일 규약).
       //  CLUSTER_NAME: 배포 성공 후처리(잠든 앱 재정합 sleep_app·시크릿 지연 정리)가 공유 클러스터(D18) 서비스를 조회.
       environment: { STAGE: config.stage, TABLE_NAME: `${prefix}-main`, CLUSTER_NAME: `${prefix}-cluster` },
-      description: "CodePipeline/provisioner state -> DDB Deployment update ([Notify], DESIGN 3.3)",
+      description: "CodePipeline/provisioner state -> DDB Deployment update ([Notify])",
       ...lambdaVpcProps,
     });
     this.deployNotifyFunction = deployNotify;
@@ -1244,7 +1260,7 @@ export class PlatformStack extends Stack {
     //   (2) Pipeline Execution State Change — 파이프라인 전체 성공/실패 → SUCCEEDED/FAILED 종결.
     const deployNotifyStageRule = new events.Rule(this, "DeployNotifyStageRule", {
       ruleName: `${prefix}-deploy-notify-stage`,
-      description: "CodePipeline stage state change (app-*) -> deploy-notify ([Notify], DESIGN 3.3)",
+      description: "CodePipeline stage state change (app-*) -> deploy-notify ([Notify])",
       eventPattern: {
         source: ["aws.codepipeline"],
         detailType: ["CodePipeline Stage Execution State Change"],
@@ -1255,7 +1271,7 @@ export class PlatformStack extends Stack {
 
     const deployNotifyExecRule = new events.Rule(this, "DeployNotifyExecRule", {
       ruleName: `${prefix}-deploy-notify-exec`,
-      description: "CodePipeline execution state change (app-*) -> deploy-notify ([Notify], DESIGN 3.3)",
+      description: "CodePipeline execution state change (app-*) -> deploy-notify ([Notify])",
       eventPattern: {
         source: ["aws.codepipeline"],
         detailType: ["CodePipeline Pipeline Execution State Change"],
@@ -1287,7 +1303,7 @@ export class PlatformStack extends Stack {
     }
 
     // ── CloudWatch 대시보드(관리자 관측성) 최소 ─────────────────────────────
-    // DESIGN.md 9: 파이프라인 성공률, Step Functions 실패, ALB 규칙 사용량, 앱 수.
+    // 파이프라인 성공률, Step Functions 실패, ALB 규칙 사용량, 앱 수.
     //  M2에서는 존재하는 리소스(API Lambda, provisioner, SFN) 지표만. 나머지는 후속 확장.
     const dashboard = new cw.Dashboard(this, "AdminDashboard", {
       dashboardName: `${prefix}-admin`,
@@ -1357,7 +1373,7 @@ export class PlatformStack extends Stack {
     this.output("ProvisionerProjectName", provisioner.projectName);
     this.output("ProvisionStateMachineArn", provisionStateMachine.stateMachineArn);
     this.output("DeleteStateMachineArn", deleteStateMachine.stateMachineArn);
-    // DESIGN 3.3 [Notify]: deploy-notify Lambda ARN(관측/운영 참고, SSM 발행은 소비자 없어 생략).
+    // deploy-notify Lambda ARN(관측/운영 참고, SSM 발행은 소비자 없어 생략).
     this.output("DeployNotifyFunctionArn", deployNotify.functionArn);
   }
 

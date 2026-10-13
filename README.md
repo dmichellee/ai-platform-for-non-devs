@@ -1,85 +1,100 @@
-# AppHub — 비개발자용 앱 배포 플랫폼
+# AppHub: App Deployment Platform for Non-Developers
 
-비개발자가 Kiro로 만든 애플리케이션 코드를 **웹 화면 하나에서** 리포지토리 연결 → 배포 →
-서비스 상태 확인까지 처리할 수 있는 사내 배포 플랫폼.
+**English** | [한국어](README.ko.md)
 
-> 작업명(가칭) **AppHub** — 스택/리소스 접두어로 `apphub` 사용.
+An internal deployment platform that lets non-developers take application code written with Kiro
+from a connected repository to a running, monitored service, **all from one web console**.
 
-## 설계 원칙
+> **AppHub** is a working name; stacks and resources use the `apphub` prefix.
 
-1. **기술 옵션 최소화** — 사용자에게 AWS 용어를 노출하지 않는다. 선택지는 관리자가 사전에 정의한 프리셋과 비기술적 질문으로 좁힌다.
-2. **모든 인프라는 코드로** — 플랫폼 자신과 사용자 앱 모두 CDK로 정의하고, 배포는 멱등(idempotent)하다.
-3. **메인 서버 무부하** — 빌드·배포 작업은 전부 CodeBuild(임시 원격 환경)에서 수행한다. 플랫폼 API는 접수와 상태 조회만 한다.
-4. **친절한 실패** — 빌드/배포 실패를 유형별로 분류해 비개발자가 이해할 수 있는 한국어 안내로 보여준다.
+## Solution overview
 
-## 아키텍처
+Full presentation: [`presentation/AppHub-workload-overview-en.pdf`](presentation/AppHub-workload-overview-en.pdf) (Korean: [`AppHub-workload-overview-ko.pdf`](presentation/AppHub-workload-overview-ko.pdf))
 
-세 계층으로 구성된다.
+![At a glance](presentation/images/en/01-at-a-glance.png)
 
-- **컨트롤 플레인** — React SPA + API Gateway/Lambda(Python 3.13, boto3) + DynamoDB + Step Functions + Cognito.
-  플랫폼 웹은 설치 시 `--frontend-mode`로 선택: **public**(CloudFront+S3, API Regional) 또는
-  **private**(사내망 전용 — 플랫폼 전용 internal ALB + ECS nginx, Private API + VPC 엔드포인트).
-  두 모드 모두 콘솔 주소는 `https://console.<appsDomain>`, 로그인은 SPA 자체 화면(Cognito API 직접 호출).
-- **파이프라인 계층** — 앱별 CodePipeline + CodeBuild 2단계(검증·빌드 → 배포), ECR. 원격 실행.
-- **앱 호스팅 계층** — 공개 범위별 공유 ALB(호스트 기반 라우팅, 규칙 한도 근접 시 자동 증설) + ECS Fargate(공유 클러스터)
-  + Route53(`*.<appsDomain>`, 사내용 앱은 private zone, 외부 공개 앱은 public+private zone) + Secrets Manager
+![User journey](presentation/images/en/02-user-journey.png)
 
-앱 하나 = CloudFormation 스택 2개(`pipeline` + `runtime`). 멱등성은 CloudFormation이 보장하고,
-앱 삭제는 스택 2개 삭제로 끝나 리소스 누수가 없다.
+![Overall architecture](presentation/images/en/03-architecture.png)
 
-### CDK 스택
+![Deploy pipeline](presentation/images/en/04-deploy-pipeline.png)
 
-| 스택 | 내용 | 배포 주체 |
+## Design principles
+
+1. **Minimal technical options**: users never see AWS terms. Choices are narrowed to presets defined by the administrator and non-technical questions.
+2. **Everything as code**: both the platform and user apps are defined in CDK, and deployments are idempotent.
+3. **No load on the main server**: all build and deploy work runs in CodeBuild (temporary remote environments). The platform API only accepts requests and reports status.
+4. **Friendly failures**: build and deploy failures are classified by type and shown as guidance a non-developer can understand (in Korean).
+
+## Architecture
+
+Three layers:
+
+- **Control plane**: React SPA + API Gateway/Lambda (Python 3.13, boto3) + DynamoDB + Step Functions + Cognito.
+  The platform web is chosen at install time with `--frontend-mode`: **public** (CloudFront + S3, Regional API) or
+  **private** (internal network only: a dedicated internal ALB + ECS nginx, Private API + VPC endpoints).
+  In both modes the console is at `https://console.<appsDomain>` and sign-in uses the SPA's own screen (calling the Cognito API directly).
+- **Pipeline layer**: a CodePipeline per app with two CodeBuild stages (validate and build, then deploy) and ECR. Runs remotely.
+- **App hosting layer**: shared ALBs per visibility (host-based routing, automatically scaled out when close to the rule limit) + ECS Fargate (shared cluster)
+  + Route 53 (`*.<appsDomain>`; internal apps use a private zone, internet-facing apps use public and private zones) + Secrets Manager.
+
+One app = two CloudFormation stacks (`pipeline` + `runtime`). CloudFormation guarantees idempotency, and deleting an app
+is just deleting its two stacks, so no resources are left behind.
+
+### CDK stacks
+
+| Stack | Contents | Deployed by |
 |---|---|---|
-| `apphub-{stage}-network` | 공유 ALB 2대(n=0), 공유 ECS 클러스터, 와일드카드 ACM, private hosted zone, 보안 그룹, Waker/복원/잠자기 Lambda + ALB별 Waker TG, SSM 공유값 | 관리자 (`deploy.sh`) |
-| `apphub-{stage}-platform` | Cognito, DynamoDB, API GW+Lambda, Step Functions, provisioner CodeBuild + 플랫폼 웹(모드별 — public: CloudFront + us-east-1 인증서 / private: 콘솔 ALB + ECS nginx + VPC 엔드포인트 + Private API) | 관리자 (`deploy.sh --frontend-mode`) |
-| `apphub-{stage}-alb-{internet\|internal}-{n}` (n≥1) | 증설 ALB 1대 + 리스너 + 전용 Waker TG + SSM 발행. 앱 생성 흐름이 규칙 여유 부족을 감지하면 자동 생성(앱 삭제와 무관한 플랫폼 소유) | 플랫폼 (provisioner) |
-| `apphub-{stage}-app-{appId}-pipeline` | 앱별 CodePipeline, CodeBuild 2개, ECR | 플랫폼 (provisioner) |
-| `apphub-{stage}-app-{appId}-runtime` | ECS 서비스/태스크, Target Group, 배정된 ALB의 리스너 규칙, Route53, 앱 IAM 역할, 가동 스케줄 | 앱 파이프라인 |
+| `apphub-{stage}-network` | 2 shared ALBs (n=0), shared ECS cluster, wildcard ACM certificate, private hosted zone, security groups, Waker/restore/sleep Lambdas + a Waker target group per ALB, shared SSM values | Administrator (`deploy.sh`) |
+| `apphub-{stage}-platform` | Cognito, DynamoDB, API Gateway + Lambda, Step Functions, provisioner CodeBuild + platform web (per mode; public: CloudFront + us-east-1 certificate, private: console ALB + ECS nginx + VPC endpoints + Private API) | Administrator (`deploy.sh --frontend-mode`) |
+| `apphub-{stage}-alb-{internet\|internal}-{n}` (n≥1) | One additional ALB + listener + dedicated Waker target group + SSM outputs. Created automatically when app creation detects the rule capacity is running low (owned by the platform, independent of app deletion) | Platform (provisioner) |
+| `apphub-{stage}-app-{appId}-pipeline` | Per-app CodePipeline, 2 CodeBuild projects, ECR | Platform (provisioner) |
+| `apphub-{stage}-app-{appId}-runtime` | ECS service/task, target group, listener rule on the assigned ALB, Route 53 record, app IAM role, run schedule | App pipeline |
 
-## 저장소 구조 (모노레포)
+## Repository layout (monorepo)
 
 ```
-infra/          CDK 인프라 (TypeScript) — 모든 스택의 단일 코드베이스
-backend/        컨트롤 플레인 백엔드 (Python 3.13, 순수 boto3) — Lambda 핸들러 + Dockerfile 검증기
-frontend/       React SPA (TypeScript, Vite) — 사용자 대시보드·앱 생성 마법사·관리자 페이지
-design-system/  디자인 토큰·컴포넌트 규격
-e2e/            엔드투엔드 테스트 + 샘플 앱 픽스처
-kiro-config/    Kiro steering 설정 (빌드 표준 강제)
-scripts/        deploy.sh / destroy.sh (멱등 설치·제거) + Kiro 번들 빌드
+infra/          CDK infrastructure (TypeScript): single codebase for every stack
+backend/        Control plane backend (Python 3.13, plain boto3): Lambda handlers + Dockerfile validator
+frontend/       React SPA (TypeScript, Vite): user dashboard, app creation wizard, admin pages
+design-system/  Design tokens and component specs
+e2e/            End-to-end tests + sample app fixtures
+kiro-config/    Kiro steering configuration (enforces the build standard)
+scripts/        deploy.sh / destroy.sh (idempotent install and removal) + Kiro bundle build
+presentation/   Solution overview deck (HTML, PDF in English and Korean)
 ```
 
-## 요구 사항
+## Requirements
 
 - Node.js >= 22, pnpm 10.5.2
-- Python >= 3.13 (백엔드 — 런타임 의존성 없음, dev 도구는 uv/pytest/ruff)
-- AWS CLI 자격증명 + CDK, Docker (배포 시)
+- Python >= 3.13 (backend: no runtime dependencies; dev tools are uv, pytest, ruff)
+- AWS CLI credentials + CDK, Docker, rsync, zip (for deployment)
 
-## 개발
+## Development
 
 ```bash
-pnpm install            # 워크스페이스 의존성 설치
+pnpm install            # install workspace dependencies
 
-pnpm build              # 전체 워크스페이스 빌드
-pnpm test               # 전체 테스트
-pnpm typecheck          # 타입 점검
-pnpm synth              # CDK synth 검증 (infra)
+pnpm build              # build all workspaces
+pnpm test               # run all tests
+pnpm typecheck          # type check
+pnpm synth              # CDK synth check (infra)
 
-pnpm -C frontend dev    # SPA 개발 서버 (Vite)
+pnpm -C frontend dev    # SPA dev server (Vite)
 ```
 
-백엔드(Python):
+Backend (Python):
 
 ```bash
 cd backend
-uv sync                 # dev 의존성 설치
-uv run pytest           # 테스트
-uv run ruff check .     # 린트
+uv sync                 # install dev dependencies
+uv run pytest           # tests
+uv run ruff check .     # lint
 ```
 
-## 배포
+## Deployment
 
-`scripts/deploy.sh` 는 멱등하다 — 같은 명령을 몇 번 실행해도 결과가 같다.
+`scripts/deploy.sh` is idempotent: running the same command repeatedly gives the same result.
 
 ```bash
 ./scripts/deploy.sh --stage dev|prod --domain <apps.example.com> \
@@ -89,50 +104,54 @@ uv run ruff check .     # 린트
     [--internal-cidrs "10.0.0.0/16,..."] \
     [--vpc-cidr 10.20.0.0/16] \
     [--skip-spa] \
-    [--sso-start-url <https://d-xxxx.awsapps.com/start> --sso-region <IC 리전> --sso-permission-set <AppHubGit>]
+    [--sso-start-url <https://d-xxxx.awsapps.com/start> --sso-region <IC region> --sso-permission-set <AppHubGit>]
 ```
 
-- `--domain`은 사용자 앱 apex 도메인(예: dev는 `apps-dev.example.com`)이며 Route53 public
-  hosted zone이 있어야 한다. `--hosted-zone-id` 미지정 시 도메인(및 상위 라벨)로 자동 조회한다.
-- `--frontend-mode`(기본 `public`): 플랫폼 웹 배포 모드. `private`는 콘솔·API·로그인이 모두 사내망(VPC) 안에서만
-  열리므로 사내망-VPC 연결과 `<appsDomain>` DNS 포워딩이 필요하다. 다른 값으로 재실행하면 모드가 전환된다.
-  `private`에서는 앱의 '로그인한 사람만 접근'을 쓸 수 없고(Cognito Hosted UI 도메인 미생성), 플랫폼 Lambda 7개는 VPC 사설 서브넷에 배치된다.
-- `--internal-cidrs`: 사내용 ALB(및 private 모드 콘솔·VPC 엔드포인트)에 접속을 허용할 대역. 미지정 시 VPC 대역만.
-- `--vpc-cidr`: 플랫폼 VPC 대역(기본 `10.20.0.0/16`, 사설 대역 안의 /16~/22). **최초 설치 때만** 지정할 수 있으며, 이미 설치된 환경에 다른 값을 주면 아무것도 바꾸지 않고 멈춘다(VPC 교체 방지). 사내망(VPN·Direct Connect)과 겹치지 않게 정한다.
-- `--sso-start-url` / `--sso-region` / `--sso-permission-set`(D22, 선택): 코드 저장소(CodeCommit) 사용자 로그인을
-  IAM Identity Center 로 한다. **3개 모두 주면 활성, 일부만 주면 사전 점검에서 중단**, 없으면 비활성(이전 동작).
-  Identity Center(조직 인스턴스·그룹·권한 세트·`email` 접근 제어 속성)는 AppHub가 만들지 않으므로 먼저 준비한다
-  — 고객 절차서: [`IDENTITY-CENTER-SETUP.md`](IDENTITY-CENTER-SETUP.md) (정책 JSON·사용자 운영·PC 설정·문제 해결). 활성이면 Kiro 설정 zip 에 PC 1회 설정기(`setup-aws-git.sh`/`.ps1`)와
-  `apphub-aws.conf` 가 들어간다. 계정 ID·CodeCommit 리전(`--region`)은 자동. 값 형식: 시작 URL `https://…`,
-  리전 `ap-northeast-2` 형식, 권한 세트 영숫자·`+=,.@-` 1~32자.
+- `--domain` is the apex domain for user apps (for example `apps-dev.example.com` for dev) and needs a Route 53 public
+  hosted zone. Without `--hosted-zone-id`, the zone is looked up from the domain (and its parent labels).
+- `--frontend-mode` (default `public`): how the platform web is deployed. With `private`, the console, API and sign-in are
+  reachable only inside the internal network (VPC), so a connection from the corporate network to the VPC and DNS forwarding for `<appsDomain>` are required.
+  Re-running with another value switches the mode.
+  In `private` mode the app option "only signed-in people can access" is unavailable (no Cognito Hosted UI domain is created), and the 7 platform Lambdas run in private VPC subnets.
+- `--internal-cidrs`: ranges allowed to reach the internal ALB (and, in private mode, the console and VPC endpoints). Defaults to the VPC range only.
+- `--vpc-cidr`: the platform VPC range (default `10.20.0.0/16`, a /16 to /22 inside private address space). It can be set **only on the first install**;
+  passing a different value to an existing installation stops without changing anything (prevents VPC replacement). Choose a range that does not overlap the corporate network (VPN, Direct Connect).
+- `--sso-start-url` / `--sso-region` / `--sso-permission-set` (D22, optional): sign users in to the code repository (CodeCommit)
+  with IAM Identity Center. **All three enable it, a partial set stops at the pre-check**, none keeps it disabled (previous behavior).
+  AppHub does not create Identity Center (organization instance, groups, permission set, `email` access control attribute), so prepare it first;
+  see the customer procedure in [`IDENTITY-CENTER-SETUP.md`](IDENTITY-CENTER-SETUP.md) (policy JSON, user operations, PC setup, troubleshooting).
+  When enabled, the Kiro settings zip includes a one-time PC setup script (`setup-aws-git.sh` / `.ps1`) and `apphub-aws.conf`.
+  The account ID and CodeCommit Region (`--region`) are filled in automatically. Formats: start URL `https://…`,
+  Region like `ap-northeast-2`, permission set name of 1 to 32 alphanumeric characters or `+=,.@-`.
 
-동작 순서(출력의 단계 번호와 동일):
-`1/5` 사전 점검 → `2/5` `cdk bootstrap` → `2b/5` Lambda 자산 동기화 → `2c/5` (private만) SPA 빌드·Kiro zip을 콘솔 이미지 내용으로 준비
-→ `3/5` `network` → `platform` 스택 배포 → `3b/5` provisioner 자산 업로드 → `3c/5` Kiro 설정 zip 업로드(public만)
-→ `3d/5` 기본 권한 템플릿 시드 → `3e/5` CodeCommit 저장소 소유 태그 `apphub:owner` 백필(없는 것만, 실패 시 경고 후 계속) → `4/5` 최초 관리자 계정 생성 + (public만) SPA 빌드·`config.json`·S3 sync·CloudFront invalidation
-→ `5/5` 완료 출력(콘솔 주소 `https://console.<appsDomain>`, 모드, User Pool, Kiro 설정 URL, Git 인증 활성/비활성).
+Order of operations (matches the step numbers in the output):
+`1/5` pre-check → `2/5` `cdk bootstrap` → `2b/5` sync Lambda assets → `2c/5` (private only) build the SPA and Kiro zip into the console image
+→ `3/5` deploy `network` then `platform` → `3b/5` upload provisioner assets → `3c/5` upload the Kiro settings zip (public only)
+→ `3d/5` seed the default permission templates → `3e/5` backfill the `apphub:owner` tag on CodeCommit repositories (missing ones only; warns and continues on failure) → `4/5` create the first admin account + (public only) build the SPA, write `config.json`, S3 sync, CloudFront invalidation
+→ `5/5` print the result (console URL `https://console.<appsDomain>`, mode, User Pool, Kiro settings URL, Git authentication enabled or disabled).
 
-ALB 증설 스택(`apphub-{stage}-alb-*`)은 deploy.sh가 아니라 플랫폼이 앱 생성 중 필요할 때 provisioner CodeBuild로 만든다.
+The additional ALB stacks (`apphub-{stage}-alb-*`) are not created by deploy.sh; the platform creates them with the provisioner CodeBuild when app creation needs them.
 
-제거:
+Removal:
 
 ```bash
 ./scripts/destroy.sh --stage dev|prod [--region <region>] [--yes]
 ```
 
-CDK synth 없이 `aws cloudformation delete-stack`으로 `app-*-runtime → app-*-pipeline → alb-* → platform → network`
-순서로 지운다(실패/롤백 상태 스택 포함, 재실행 안전). prod는 `apphub-prod` 입력 확인을 강제하며,
-prod의 RETAIN 리소스(DynamoDB·User Pool·버킷)와 CDK bootstrap은 지우지 않는다.
+Without a CDK synth, it deletes stacks with `aws cloudformation delete-stack` in the order `app-*-runtime → app-*-pipeline → alb-* → platform → network`
+(including stacks in failed or rollback states; safe to re-run). prod requires typing `apphub-prod` to confirm,
+and prod's RETAIN resources (DynamoDB, User Pool, buckets) and the CDK bootstrap are not deleted.
 
-## 문서
+## Documentation
 
-- 설치·운영: 이 README
-- 코드 저장소(CodeCommit) 로그인 설정: [`IDENTITY-CENTER-SETUP.md`](IDENTITY-CENTER-SETUP.md)
-- Kiro 설정 번들(최종 사용자용): [`kiro-config/README.md`](kiro-config/README.md)
+- Installation and operations: this README
+- Code repository (CodeCommit) sign-in setup: [`IDENTITY-CENTER-SETUP.md`](IDENTITY-CENTER-SETUP.md)
+- Kiro settings bundle (for end users): [`kiro-config/README.md`](kiro-config/README.md)
+- Solution overview deck: [`presentation/`](presentation/) (English `index.en.html`, Korean `index.html`, and PDFs)
 
-코드 주석의 `D1`~`D22`, `DESIGN.md §…`, `_workspace/contracts/…` 같은 표기는 개발 중에 쓴 **내부 설계 문서의 결정 번호·절 번호**입니다.
-이 배포본에는 해당 문서가 포함되지 않으며, 동작은 코드와 위 문서 기준입니다.
+`D1` to `D22` in code comments are **design decision numbers** made during development, and names such as `api-contract`, `buildspec-contract`, `stack-outputs`, `apphub-conventions` and `cdk-authoring` refer to contract and convention specs used during development.
+Those specs are not included in this distribution; the code and the documents above are the reference for behavior.
 
-## 라이선스
+## License
 
-MIT No Attribution(MIT-0) — [`LICENSE`](LICENSE) 참조.
+MIT No Attribution (MIT-0). See [`LICENSE`](LICENSE).

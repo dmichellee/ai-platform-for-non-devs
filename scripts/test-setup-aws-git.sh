@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# kiro-config/setup-aws-git.sh 동작 테스트 (D22, KIRO-STANDARDS 2.3).
+# kiro-config/setup-aws-git.sh 동작 테스트 (D22).
 #
 # 실제 사용자 설정(~/.aws, ~/.gitconfig)은 절대 건드리지 않는다:
 #   - HOME, GIT_CONFIG_GLOBAL 을 임시 디렉토리로, GIT_CONFIG_NOSYSTEM=1, AWS_* 환경변수 제거.

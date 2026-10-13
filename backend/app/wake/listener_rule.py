@@ -1,4 +1,4 @@
-"""리스너 규칙 전환 — forward 대상만 교체, 멱등 (DESIGN.md 3.5, D-M4-04/D-M5-02).
+"""리스너 규칙 전환 — forward 대상만 교체, 멱등 (D-M4-04/D-M5-02).
 
 잠자기/복원 시 host-header 조건으로 규칙을 찾아, 액션 배열에서 **forward 액션의 TargetGroupArn만**
 교체한다. authenticate-cognito(order1) 등 다른 액션의 order/타입은 보존 → cognitoProtect 앱의

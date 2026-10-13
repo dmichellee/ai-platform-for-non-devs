@@ -1,4 +1,4 @@
-"""Secrets Manager — 앱당 시크릿 1개(JSON) 저장/조회/정리 (DESIGN.md D8, 3.6).
+"""Secrets Manager — 앱당 시크릿 1개(JSON) 저장/조회/정리 (D8).
 
 규약(D8, 2026-10-05 갱신):
   - 앱당 시크릿 **1개**, 이름 `apphub/{stage}/app/{appId}`, SecretString = JSON `{KEY: value}`.

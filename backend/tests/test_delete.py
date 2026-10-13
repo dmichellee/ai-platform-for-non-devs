@@ -1,4 +1,4 @@
-"""DeleteApp task 디스패처 테스트 (D-M5-05, DESIGN 3.6) — step 분기·정리·상태 전이."""
+"""DeleteApp task 디스패처 테스트 (D-M5-05) — step 분기·정리·상태 전이."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""앱 시크릿 도메인 로직 (DESIGN.md D8 — 앱당 시크릿 1개 JSON, 2026-10-05 갱신).
+"""앱 시크릿 도메인 로직 (D8 — 앱당 시크릿 1개 JSON, 2026-10-05 갱신).
 
 저장 모델:
   - Secrets Manager `apphub/{stage}/app/{appId}` 1개, SecretString = JSON `{KEY: value}`.

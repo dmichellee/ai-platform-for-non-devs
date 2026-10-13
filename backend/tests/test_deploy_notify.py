@@ -1,4 +1,4 @@
-"""L1 — [Notify] deploy-notify Lambda (DESIGN.md 3.3).
+"""L1 — [Notify] deploy-notify Lambda.
 
 CodePipeline 상태변화 EventBridge 이벤트 → DDB Deployment 갱신:
  - 스테이지 STARTED 상태 전이(Source→PENDING, ValidateBuild→VALIDATING, Deploy→DEPLOYING)

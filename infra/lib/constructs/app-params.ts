@@ -1,7 +1,7 @@
 /**
  * 앱 스택(app-pipeline / app-runtime) 파라미터 — provisioner CodeBuild가 컨텍스트로 주입한다.
  *
- * DESIGN.md 3.1 / cdk-authoring "앱 스택 특수 규칙":
+ * cdk-authoring "앱 스택 특수 규칙":
  *  - app-pipeline/app-runtime은 construct로 작성하고, provisioner가 앱별 파라미터를
  *    컨텍스트(-c appId=... -c ...)로 넘겨 독립 스택 `apphub-{stage}-app-{appId}-{pipeline|runtime}`
  *    으로 synth/deploy 한다. 같은 코드가 플랫폼 설치와 앱 배포 양쪽에서 쓰인다.
@@ -89,7 +89,7 @@ export interface AppRuntimeParams {
   readonly cognitoProtect: boolean;
   /**
    * 최초 생성 여부. true면 desiredCount를 minCount로 지정,
-   * false(갱신)면 desiredCount 미지정(현재 값 유지 — 스케줄러/Waker 드리프트 방지, DESIGN 3.5).
+   * false(갱신)면 desiredCount 미지정(현재 값 유지 — 스케줄러/Waker 드리프트 방지).
    */
   readonly isInitialDeploy: boolean;
   /**

@@ -1,4 +1,4 @@
-"""가동 스케줄 창 판정 (DESIGN 3.5 — "[재중지] 스케줄 밖 시간대에 한해").
+"""가동 스케줄 창 판정 ("[재중지] 스케줄 밖 시간대에 한해").
 
 App.schedule 형식(validate._parse_schedule 와 동일, app-runtime.ts Scheduler cron 의 원천):
   {"startTime": "HH:MM", "stopTime": "HH:MM", "days": [0..6], "timezone": "Asia/Seoul"}

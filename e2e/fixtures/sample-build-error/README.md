@@ -19,4 +19,4 @@ Dockerfile은 **정적 검증을 통과**하지만, 이미지 빌드 단계에�
 
 ## 검증기로는 잡히지 않음
 이 픽스처의 실패는 **정적 검증기 범위 밖**(빌드 실동작)이다. 검증기는 `ok: true`를 반환하며,
-BUILD_FAILED는 buildspec의 `docker build` 단계가 결정한다(KIRO-STANDARDS 3장: 신뢰 경계는 플랫폼 검증).
+BUILD_FAILED는 buildspec의 `docker build` 단계가 결정한다(신뢰 경계는 플랫폼 검증).

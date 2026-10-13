@@ -14,7 +14,7 @@ import { testConfig, testEnv } from "./helpers/config";
 
 /**
  * L2 — network 스택 CDK assertions.
- * 설계 결정(D2 공유 ALB, D3 와일드카드 ACM, D17 SG, DESIGN 3.5 idle timeout/Waker)이
+ * 설계 결정(D2 공유 ALB, D3 와일드카드 ACM, D17 SG, idle timeout/Waker)이
  * 코드에 반영됐는지 단언한다.
  */
 function synth(overrides?: { allowedIngressCidrs?: readonly string[] }): Template {
@@ -92,7 +92,7 @@ describe("network 스택", () => {
       });
     });
 
-    it("두 ALB 모두 idle timeout 300초 (SSE 대비, DESIGN 3.5)", () => {
+    it("두 ALB 모두 idle timeout 300초 (SSE 대비)", () => {
       const albs = template.findResources("AWS::ElasticLoadBalancingV2::LoadBalancer");
       const values = Object.values(albs);
       expect(values.length).toBe(2);
@@ -179,7 +179,7 @@ describe("network 스택", () => {
     });
   });
 
-  describe("Waker — wake-on-request 공유 리소스 (DESIGN 3.5)", () => {
+  describe("Waker — wake-on-request 공유 리소스", () => {
     it("Waker Lambda + 복원 Lambda 2개가 존재한다", () => {
       // ACM DNS 검증 커스텀 리소스 등 다른 Lambda가 있을 수 있으므로 함수명으로 특정.
       template.hasResourceProperties("AWS::Lambda::Function", {

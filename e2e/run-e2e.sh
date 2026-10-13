@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# AppHub 라이브 E2E (TEST-STRATEGY.md L4 — 릴리스 게이트).
+# AppHub 라이브 E2E (릴리스 게이트).
 #
 # 실제 AWS(dev 스테이지)에 대해 골든 샘플 앱의 배포 전 여정을 검증한다.
 # 실제 비용(소액)과 시간(~30분)이 든다. self-contained — 퍼블릭 애셋 사용자가

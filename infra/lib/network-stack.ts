@@ -25,19 +25,19 @@ import { StageConfig, resourcePrefix } from "../lib/config";
 import { albParamName, wakerTgName, type AlbSsmKey, type SchemeSlug } from "./alb-keys";
 
 /**
- * network-stack — 앱들이 **공유**하는 트래픽 인프라 (apphub-conventions 2장, DESIGN.md 3.1).
+ * network-stack — 앱들이 **공유**하는 트래픽 인프라 (apphub-conventions 2장).
  *
  * 포함:
  *  - VPC (dev 부트스트랩용 최소 신규 VPC. D-decision 참조)
  *  - 공유 ALB 2대(internet-facing 1, internal 1) + 각 SG
  *  - 와일드카드 ACM 인증서 `*.{appsDomain}` (DNS 검증, public hosted zone 사용)
  *  - Route53: 기존 public hosted zone 참조 + internal용 private hosted zone
- *  - HTTPS 리스너(idle timeout 300초 — SSE 대비, DESIGN.md 3.5), HTTP→HTTPS 리다이렉트
+ *  - HTTPS 리스너(idle timeout 300초 — SSE 대비), HTTP→HTTPS 리다이렉트
  *  - 공유 ECS 클러스터 1개(D18) — stage당 1개. 앱 runtime 스택은 이 위에 서비스만 만든다.
  *  - Waker Lambda + 복원 Lambda + ALB별 Waker Target Group(n=0 2개, D20 계약 §1.2)
  *  - ALB별 SSM 키 n=0 발행(`/network/alb/{slug}/0/*`, D20 계약 §1.1 — 기존 scheme 고정 키는 호환 유지)
  *
- * D17 (PLATFORM-ENGINEERING.md 2장): 플랫폼 소유 SG ingress에 0.0.0.0/0·::/0 금지.
+ * D17: 플랫폼 소유 SG ingress에 0.0.0.0/0·::/0 금지.
  *  유일한 예외 = internet-facing 공유 ALB SG (사용자 앱 인터넷 공개 목적).
  *  그 지점에만 Peer.anyIpv4()/anyIpv6()를 쓰고 D17 예외 주석을 단다.
  */
@@ -81,7 +81,7 @@ export class NetworkStack extends Stack {
     const prefix = resourcePrefix(config.stage);
 
     // ── VPC ──────────────────────────────────────────────────────────────
-    // D-decision: 관리자 등록 VPC는 런타임 개념(DESIGN.md 9)이나, 공유 ALB/앱이
+    // D-decision: 관리자 등록 VPC는 런타임 개념이나, 공유 ALB/앱이
     //  놓일 부트스트랩 VPC가 설치 시점에 필요하다. dev 편의를 위해 최소 신규 VPC를
     //  생성한다(2 AZ, public + private-with-egress). NAT는 비용 최소화를 위해 1개.
     const vpc = new ec2.Vpc(this, "Vpc", {
@@ -113,7 +113,7 @@ export class NetworkStack extends Stack {
     this.cluster = cluster;
 
     // internal ALB ingress로 허용할 대역: 설치 시점 주입 CIDR, 미지정 시 VPC CIDR.
-    // (PLATFORM-ENGINEERING.md 2장: internal은 사내/VPC 대역만)
+    // (internal은 사내/VPC 대역만)
     const internalIngressCidrs =
       config.allowedIngressCidrs.length > 0
         ? [...config.allowedIngressCidrs]
@@ -153,7 +153,7 @@ export class NetworkStack extends Stack {
       allowAllOutbound: true,
     });
     // [D17 예외] internet-facing 공유 ALB. 이 지점만 anyIpv4/anyIpv6 허용된다.
-    //  PLATFORM-ENGINEERING.md 2장 예외 목록 · L2 공통 테스트의 예외 SG.
+    //  예외 목록 · L2 공통 테스트의 예외 SG.
     internetAlbSg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443), "HTTPS from internet (D17 exception)");
     internetAlbSg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(80), "HTTP redirect from internet (D17 exception)");
     internetAlbSg.addIngressRule(ec2.Peer.anyIpv6(), ec2.Port.tcp(443), "HTTPS from internet IPv6 (D17 exception)");
@@ -189,7 +189,7 @@ export class NetworkStack extends Stack {
       vpc,
       internetFacing: true,
       securityGroup: internetAlbSg,
-      idleTimeout: Duration.seconds(300), // SSE/스트리밍 대비 (DESIGN.md 3.5)
+      idleTimeout: Duration.seconds(300), // SSE/스트리밍 대비
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
     });
     this.internetFacingAlb = internetFacingAlb;
@@ -346,7 +346,7 @@ export class NetworkStack extends Stack {
     });
     sleepRule.addTarget(new events_targets.LambdaFunction(sleepTransitionFunction));
 
-    // ── 트리거: 유휴 알람 고착 보정 스윕(QA N5, DESIGN 3.5 2026-10-08) ─────────────
+    // ── 트리거: 유휴 알람 고착 보정 스윕(QA N5 2026-10-08) ─────────────
     //  알람은 상태 *전이*에만 이벤트를 낸다 → CREATING 중 ALARM으로 바뀌어 건너뛴 앱은 다시 발화하지 않는다.
     //  15분마다 sleep-transition을 `{"sweep": true}`로 호출해, sleepMode≠always-on·status=ACTIVE·
     //  runtimeState=RUNNING이고 유휴 알람이 ALARM인 앱을 재운다(일반 sleep 경로와 동일 판정 — backend 소유).

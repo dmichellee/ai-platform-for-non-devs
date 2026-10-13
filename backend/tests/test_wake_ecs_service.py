@@ -1,6 +1,6 @@
-"""ECS desiredCount 멱등 조정 테스트 (DESIGN 3.5 — 드리프트 방지, UpdateService 로만 조정).
+"""ECS desiredCount 멱등 조정 테스트 (드리프트 방지, UpdateService 로만 조정).
 
-클러스터/서비스 분리(DESIGN.md D18): stage 당 공유 클러스터(`apphub-{stage}-cluster`) 위에
+클러스터/서비스 분리(D18): stage 당 공유 클러스터(`apphub-{stage}-cluster`) 위에
 앱 서비스(`apphub-{stage}-app-{appId}`)만 존재. 클러스터명은 CLUSTER_NAME env(network 스택 주입).
 """
 

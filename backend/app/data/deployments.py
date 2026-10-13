@@ -1,4 +1,4 @@
-"""배포 이력 데이터 액세스 (DESIGN.md 4/9). 90일 TTL."""
+"""배포 이력 데이터 액세스. 90일 TTL."""
 
 from __future__ import annotations
 
@@ -326,7 +326,7 @@ def update_deployment(
     build_id: str | None = None,
     trigger: str | None = None,
 ) -> dict[str, Any] | None:
-    """배포 이력 레코드 부분 갱신([Notify] EventBridge → deploy-notify Lambda, DESIGN.md 3.3).
+    """배포 이력 레코드 부분 갱신([Notify] EventBridge → deploy-notify Lambda).
 
     None 필드는 미변경(부분 upsert). updatedAt 은 항상 갱신. deploymentId 는 SK(`DEPLOY#{ts}`)의
     ts 이므로 이를 그대로 SK 로 재구성해 UpdateItem 한다. 존재 조건을 강제해(attribute_exists) 없는

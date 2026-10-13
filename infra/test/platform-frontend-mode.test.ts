@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { App } from "aws-cdk-lib";
 import { Template, Match } from "aws-cdk-lib/assertions";
+import type { CfnRestApi } from "aws-cdk-lib/aws-apigateway";
 import { PlatformStack } from "../lib/platform-stack";
 import type { FrontendMode } from "../lib/config";
 import { assertNoOpenIngress, assertSgDescriptionsAscii } from "./helpers/sg-ingress";
@@ -8,7 +9,6 @@ import { testConfig, testEnv } from "./helpers/config";
 
 /**
  * L2 — D19 플랫폼 웹 배포 모드(public / private) + D21 로그인 경로 + D20 provisioner/ASL 연동.
- * 계약: _workspace/contracts/delta-2026-10-07-d19-d21.md §4·§5·§9·§12.
  */
 function synth(mode: FrontendMode, overrides?: { allowedIngressCidrs?: readonly string[] }): Template {
   const app = new App();
@@ -69,16 +69,66 @@ describe("platform — frontendMode=public (기본)", () => {
     expect(JSON.stringify(priv[0]["ResourceRecords"])).toContain("DomainName");
   });
 
-  it("API는 Regional, 리소스 정책 없음, VPC 엔드포인트·콘솔 ALB·ECS 없음(반대 모드 리소스 미생성)", () => {
+  it("API는 Regional, 리소스 정책은 전체 Invoke 허용(명시), VPC 엔드포인트·콘솔 ALB·ECS 없음(반대 모드 리소스 미생성)", () => {
     t.hasResourceProperties("AWS::ApiGateway::RestApi", {
       EndpointConfiguration: { Types: ["REGIONAL"] },
     });
     const api = Object.values(t.findResources("AWS::ApiGateway::RestApi"))[0].Properties as Record<string, unknown>;
-    expect(api["Policy"]).toBeUndefined();
+    // 정책을 생략하면 CFN이 private 때의 정책을 지우지 않으므로 명시해 덮어쓴다(회귀 방지).
+    expect(api["Policy"]).toEqual({
+      Version: "2012-10-17",
+      Statement: [
+        {
+          Sid: "AllowPublicInvoke",
+          Effect: "Allow",
+          Principal: { AWS: "*" },
+          Action: "execute-api:Invoke",
+          Resource: "execute-api:/*",
+        },
+      ],
+    });
     t.resourceCountIs("AWS::EC2::VPCEndpoint", 0);
     t.resourceCountIs("AWS::ElasticLoadBalancingV2::LoadBalancer", 0);
     t.resourceCountIs("AWS::ECS::Service", 0);
     t.resourceCountIs("AWS::EC2::SecurityGroup", 0);
+  });
+
+  it("[회귀] public 리소스 정책에 Deny·aws:SourceVpce 없음(private→public 전환 시 기존 정책 덮어씀)", () => {
+    const api = Object.values(t.findResources("AWS::ApiGateway::RestApi"))[0].Properties as Record<string, unknown>;
+    const policy = api["Policy"] as { Statement: Array<Record<string, unknown>> } | undefined;
+    expect(policy, "public도 Policy를 명시해야 기존 private 정책이 제거된다").toBeDefined();
+    expect(policy!.Statement.length).toBeGreaterThan(0);
+    for (const st of policy!.Statement) expect(st["Effect"]).toBe("Allow");
+    const raw = JSON.stringify(policy);
+    expect(raw).not.toContain("Deny");
+    expect(raw).not.toContain("aws:SourceVpce");
+    expect(raw).not.toContain("DenyOutsideVpce");
+  });
+
+  it("[회귀] API Deployment 논리 ID가 모드별로 달라 정책 변경이 stage에 재배포된다", () => {
+    const depId = (tpl: Template): string[] => Object.keys(tpl.findResources("AWS::ApiGateway::Deployment"));
+    const pub = depId(t);
+    const priv = depId(synth("private"));
+    expect(pub.length).toBe(1);
+    expect(priv.length).toBe(1);
+    expect(pub[0]).not.toBe(priv[0]);
+    // Stage는 현재 Deployment를 가리킨다(새 Deployment로 전환됨).
+    t.hasResourceProperties("AWS::ApiGateway::Stage", { DeploymentId: { Ref: pub[0] } });
+  });
+
+  it("[회귀] RestApi Policy가 Deployment 논리 ID 해시에 포함된다(정책만 바뀌어도 재배포)", () => {
+    const depIdWith = (mutate?: (api: CfnRestApi) => void): string => {
+      const app = new App();
+      const config = testConfig("dev", { frontendMode: "public" });
+      const stack = new PlatformStack(app, "apphub-dev-platform", { stage: "dev", config, env: testEnv(config) });
+      if (mutate) mutate(stack.api.node.defaultChild as CfnRestApi);
+      return Object.keys(Template.fromStack(stack).findResources("AWS::ApiGateway::Deployment"))[0];
+    };
+    const base = depIdWith();
+    const changed = depIdWith((api) => {
+      api.policy = { Version: "2012-10-17", Statement: [] };
+    });
+    expect(base).not.toBe(changed);
   });
 
   it("Outputs: FrontendMode/ConsoleUrl/ApiUrl(Regional)/CognitoIdpEndpoint(공용) + SPA 버킷·CloudFront", () => {

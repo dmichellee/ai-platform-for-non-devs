@@ -1,4 +1,4 @@
-"""메트릭 핸들러 (DESIGN 6 앱 상세 "모니터링" 탭). GET /apps/{id}/metrics — 소유자/관리자만.
+"""메트릭 핸들러 (앱 상세 "모니터링" 탭). GET /apps/{id}/metrics — 소유자/관리자만.
 
 접속량(requests)·CPU·메모리 시계열을 CloudWatch GetMetricData 배치 1회로 반환한다.
 로그 프록시(GET /apps/{id}/logs)는 유지 — 배포 이력 쪽에서 계속 쓴다.

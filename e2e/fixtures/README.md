@@ -1,4 +1,4 @@
-# 골든 샘플 픽스처 (TEST-STRATEGY L4)
+# 골든 샘플 픽스처
 
 라이브 E2E(`e2e/run-e2e.sh`)가 dev 스테이지의 소스 리포로 push해서 사용하는 최소 샘플 앱들.
 각 픽스처는 **실제로 빌드되는 최소 코드**이거나, **의도적 결함**으로 특정 실패 유형을 재현한다.
@@ -17,7 +17,7 @@
 
 > "검증기 정적결과"는 `backend/dist/validator/dockerfile_validator.py`를 각 픽스처 Dockerfile에 돌린 결과다.
 > `sample-build-error`/`sample-no-health`는 **정적 검증을 통과**하며, 실패는 buildspec의 실동작
-> 단계(`docker build` / 스모크 `GET /health`)에서 결정된다 — KIRO-STANDARDS 3장 "정적은 검증기,
+> 단계(`docker build` / 스모크 `GET /health`)에서 결정된다 — "정적은 검증기,
 > 실동작은 이미지 실행". 이 분리가 곧 신뢰 경계다.
 
 ## 공통 규약

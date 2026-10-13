@@ -1,4 +1,4 @@
-"""Waker — ALB Lambda 타깃 (DESIGN.md 3.5, D-M5-03).
+"""Waker — ALB Lambda 타깃 (D-M5-03).
 
 공유 Waker TG 의 유일한 대상. 잠자는 앱으로 요청이 오면:
   Host → subdomain → 예약 아이템(appId) → App → preset.minCount → ensure_running(멱등)

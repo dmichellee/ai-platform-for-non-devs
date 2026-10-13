@@ -22,7 +22,7 @@ import { albParamName, schemeSlug, type AlbSsmKey } from "../alb-keys";
 import type { AppRuntimeParams } from "./app-params";
 
 /**
- * app-runtime — 특정 앱의 **실행체** (apphub-conventions 2장, DESIGN.md 3.1/3.5).
+ * app-runtime — 특정 앱의 **실행체** (apphub-conventions 2장).
  *
  * 포함(전부 앱별 — 앱 삭제 = 이 스택 삭제로 완결):
  *  - ECS Fargate 태스크 정의(프리셋 cpu/mem 주입) + 서비스
@@ -34,7 +34,7 @@ import type { AppRuntimeParams } from "./app-params";
  *  - 시크릿은 ECS secrets(환경변수 아님, D8)
  *  - D16 Cognito 인증 리스너 옵션(cognitoProtect) + 앱 전용 Cognito 앱 클라이언트(콜백 정확히 1개)
  *
- * 드리프트 방지(DESIGN 3.5): desiredCount는 최초 생성 시에만 지정, 갱신 배포에선 미지정.
+ * 드리프트 방지: desiredCount는 최초 생성 시에만 지정, 갱신 배포에선 미지정.
  * 공유 리소스(VPC/ALB/리스너/SG/hosted zone)는 network SSM에서 읽는다(Export 잠금 방지).
  */
 export interface AppRuntimeProps {
@@ -128,7 +128,7 @@ export class AppRuntime extends Construct {
     // 경로 규약: /apphub/{stage}/app/{appId} — platform API의 logs:FilterLogEvents 권한 범위와 일치.
     const logGroup = new logs.LogGroup(this, "Logs", {
       logGroupName: `/apphub/${p.stage}/app/${p.appId}`,
-      retention: logs.RetentionDays.ONE_MONTH, // 30일 (DESIGN 9)
+      retention: logs.RetentionDays.ONE_MONTH, // 30일
       removalPolicy: RemovalPolicy.DESTROY, // 앱 삭제 시 함께 소멸
     });
     this.logGroup = logGroup;
@@ -196,7 +196,7 @@ export class AppRuntime extends Construct {
       containerName: "app",
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: "app", logGroup }),
       environment: {
-        // 컨테이너 계약: 8080 포트(KIRO-STANDARDS C2). PORT도 관례로 주입.
+        // 컨테이너 계약: 8080 포트. PORT도 관례로 주입.
         PORT: "8080",
         ...p.envVars,
       },
@@ -209,7 +209,7 @@ export class AppRuntime extends Construct {
     void container;
 
     // ── Fargate 서비스 ──────────────────────────────────────────────────────
-    // desiredCount: 최초 생성 시에만 minCount 지정, 갱신 배포에선 미지정(드리프트 방지, DESIGN 3.5).
+    // desiredCount: 최초 생성 시에만 minCount 지정, 갱신 배포에선 미지정(드리프트 방지).
     this.service = new ecs.FargateService(this, "Service", {
       serviceName: `${appPrefix}`,
       cluster,
@@ -220,7 +220,7 @@ export class AppRuntime extends Construct {
       ...(p.isInitialDeploy ? { desiredCount: p.minCount } : {}),
       minHealthyPercent: 100,
       maxHealthyPercent: 200,
-      circuitBreaker: { rollback: true }, // 배포 실패 시 자동 롤백(이전 버전 유지, DESIGN 3.3)
+      circuitBreaker: { rollback: true }, // 배포 실패 시 자동 롤백(이전 버전 유지)
       healthCheckGracePeriod: Duration.seconds(60), // C9 기동 60초
     });
 
@@ -277,7 +277,7 @@ export class AppRuntime extends Construct {
 
     // 규칙 생성: 기본은 forward(앱 TG). D16 cognitoProtect면 아래 escape hatch로
     //  authenticate-cognito → forward 체인으로 재정의한다.
-    //  (Waker는 잠자기 전환 시 이 액션 체인에서 forward 대상만 Waker TG로 교체 — 인증 유지, DESIGN 3.5)
+    //  (Waker는 잠자기 전환 시 이 액션 체인에서 forward 대상만 Waker TG로 교체 — 인증 유지)
     const rule = new elbv2.ApplicationListenerRule(this, "HostRule", {
       listener,
       priority: p.rulePriority, // ← DDB 카운터에서 발급받아 주입(자동 채번 금지)
@@ -338,7 +338,7 @@ export class AppRuntime extends Construct {
     //  IAliasRecordTarget을 직접 구현해 SSM 토큰 값만으로 A alias를 만든다.
     //  - internal 앱       : private zone 1개.
     //  - internet-facing 앱: public zone + private zone 2개(버그 C). 사내 DNS가 {appsDomain}을 VPC
-    //    Resolver로 포워딩하면 private zone만 보이므로 양쪽에 같은 ALB alias를 둔다(PLATFORM-ENGINEERING 5.2).
+    //    Resolver로 포워딩하면 private zone만 보이므로 양쪽에 같은 ALB alias를 둔다.
     //  논리 ID "AliasA"/"Zone"은 기존 레코드(scheme의 주 zone)를 그대로 유지(교체 방지). 추가분만 신규 ID.
     const albAliasTarget: route53.IAliasRecordTarget = {
       bind: () => ({ dnsName: albDns, hostedZoneId: albZoneId }),
@@ -365,7 +365,7 @@ export class AppRuntime extends Construct {
     }
     void route53_targets;
 
-    // ── EventBridge Scheduler 2개 (가동 스케줄 — DESIGN 3.5) ─────────────────
+    // ── EventBridge Scheduler 2개 (가동 스케줄) ─────────────────
     // 시작 시각: ECS desiredCount=minCount(태스크 기동). sleepMode=schedule일 때만.
     // 종료 시각: network의 공유 sleep-transition Lambda를 직접 호출(잠자기 전환).
     if (p.sleepMode === "schedule" && p.schedule) {
@@ -445,7 +445,7 @@ export class AppRuntime extends Construct {
       });
     }
 
-    // ── 유휴 재중지 알람 (DESIGN 3.5 — 유휴 15분 → 잠자기) ────────────────────
+    // ── 유휴 재중지 알람 (유휴 15분 → 잠자기) ────────────────────
     // always-on은 잠들지 않는다(제외). on-demand/schedule 앱만 유휴 알람을 만든다.
     //  알람명 규약: {appPrefix}-idle → network의 공유 idle-sleep EventBridge 규칙이 잡아
     //  sleep-transition Lambda를 호출한다(alarmName에서 appId 파싱, D-M5-03). 앱 삭제 = 이 알람 삭제.
@@ -465,7 +465,7 @@ export class AppRuntime extends Construct {
         alarmName: `${appPrefix}-idle`,
         alarmDescription: `Idle (no requests) -> sleep transition trigger - ${p.appId}`,
         metric: idleMetric,
-        // 5분×3 = 15분 연속 요청 0이면 ALARM(DESIGN 3.5: 유휴 15분).
+        // 5분×3 = 15분 연속 요청 0이면 ALARM(유휴 15분).
         threshold: 1,
         comparisonOperator: cw.ComparisonOperator.LESS_THAN_THRESHOLD,
         evaluationPeriods: 3,

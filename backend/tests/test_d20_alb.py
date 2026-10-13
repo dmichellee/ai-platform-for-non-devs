@@ -1,6 +1,4 @@
 """D20 ALB 증설 — deploy-notify alb build 처리, sleep/restore albIndex·legacy TG 판정, 관리자 레지스트리.
-
-계약: _workspace/contracts/delta-2026-10-07-d19-d21.md §1.2·§3.2·§7·§8.
 """
 
 from __future__ import annotations

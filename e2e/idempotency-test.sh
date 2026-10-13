@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 설치 스크립트 멱등성 테스트 (TEST-STRATEGY.md "멱등성 테스트").
+# 설치 스크립트 멱등성 테스트.
 #
 # 검증:
 #   (A) deploy.sh --stage dev 를 2회 연속 실행 → 2회차가 오류 없이 no-op 으로 종료

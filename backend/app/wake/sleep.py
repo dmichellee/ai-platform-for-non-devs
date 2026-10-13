@@ -1,4 +1,4 @@
-"""잠자기 Lambda — 유휴 알람 / 스케줄 EventBridge 트리거 (DESIGN.md 3.5, D-M5-03).
+"""잠자기 Lambda — 유휴 알람 / 스케줄 EventBridge 트리거 (D-M5-03).
 
 앱이 유휴하면: ECS desiredCount=0(멱등) + 리스너 규칙 forward 를 해당 ALB(App.albIndex)의
   Waker TG 로 전환(멱등, D20 — ALB마다 Waker TG 1개)
@@ -10,10 +10,10 @@ appId 는 event.appId(직접 호출) 또는 알람명(`apphub-{stage}-app-{appId
 `{"sweep": true}` 로 호출하면 ACTIVE·RUNNING·sleepMode≠always-on 앱의 유휴 알람 상태를 조회해
 ALARM 인 앱만 일반 경로와 같은 sleep_app 으로 재운다.
 
-스케줄 창 보호(2026-10-08, QA W-1 — DESIGN 3.5 "[재중지] 스케줄 밖 시간대에 한해"): 유휴 알람은
+스케줄 창 보호(2026-10-08, QA W-1 — "[재중지] 스케줄 밖 시간대에 한해"): 유휴 알람은
 treatMissingData=BREACHING 이라 잠든 밤 동안 ALARM 에 고착된다. 그래서 sleepMode=schedule 앱이 지금
 가동 시간대 안이면 유휴 경로(알람·스윕)는 재우지 않는다(reason "in-schedule-window").
-ACTIVE 후 유예(2026-10-08, QA W-3 — DESIGN 3.5 "유휴 15분"): 유휴 알람은 CREATING 중(트래픽이 들어올 수
+ACTIVE 후 유예(2026-10-08, QA W-3 — "유휴 15분"): 유휴 알람은 CREATING 중(트래픽이 들어올 수
 없는 구간)에 데이터 부재로 ALARM 이 되므로, ALARM 이 곧 "ACTIVE 후 15분 유휴"를 뜻하지 않는다(실측: ACTIVE
 39초 뒤 스윕이 재움). 그래서 앱이 ACTIVE/RUNNING(또는 WAKING)이 된 시각부터 15분이 지나지 않았으면 유휴 경로
 (알람·스윕)는 재우지 않는다(reason "grace-after-active"). 기준 시각 = App.runtimeStateUpdatedAt
@@ -95,7 +95,7 @@ def sleep_app(app_id: str, force: bool = False, schedule_stop: bool = False) -> 
       유휴 트리거(schedule_stop=False)는 sleepMode=schedule 앱이 가동 시간대 안이면 스킵(QA W-1).
       유휴 트리거는 ACTIVE/RUNNING 후 15분 미만이면 스킵(QA W-3, reason "grace-after-active").
     schedule_stop=True(스케줄 종료 시각 StopSchedule): 창·유예 판정 없이 재운다(always-on 은 여전히 스킵).
-    force=True(관리자 강제 중지·배포 후 재수면, DESIGN 3.5): sleepMode·창·유예와 무관하게 재운다.
+    force=True(관리자 강제 중지·배포 후 재수면): sleepMode·창·유예와 무관하게 재운다.
       (관리자가 명시적으로 멈추는 것이므로 always-on 도 대상.)
     """
     st = stage()

@@ -4,7 +4,7 @@
   "license": "MIT-0",
   "private": true,
   "type": "module",
-  "description": "AppHub 웹 UI E2E (Playwright) — TEST-STRATEGY L4 시나리오 5",
+  "description": "AppHub 웹 UI E2E (Playwright) — 시나리오 5",
   "scripts": {
     "test": "playwright test",
     "test:headed": "playwright test --headed",

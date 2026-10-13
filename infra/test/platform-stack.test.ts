@@ -36,7 +36,7 @@ describe("platform 스택", () => {
     });
   });
 
-  describe("데이터 모델 — 단일 테이블 (DESIGN 4)", () => {
+  describe("데이터 모델 — 단일 테이블", () => {
     it("apphub-dev-main 테이블 + GSI1(ownerId)/GSI2(status), PAY_PER_REQUEST", () => {
       template.hasResourceProperties("AWS::DynamoDB::Table", {
         TableName: "apphub-dev-main",
@@ -485,7 +485,7 @@ describe("platform 스택", () => {
     });
   });
 
-  describe("[Notify] deploy-notify Lambda + EventBridge 규칙 (DESIGN 3.3)", () => {
+  describe("[Notify] deploy-notify Lambda + EventBridge 규칙", () => {
     // 배경: [Notify] 단계(EventBridge → Lambda → DDB Deployment 갱신)가 없으면 배포 진행 상황이
     //  영원히 PENDING. platform 스택(컨트롤 플레인 소속)에 함수 + 규칙 2개 + IAM(DDB/pipeline/build)을 고정한다.
     type Stmt = { Sid?: string; Action?: unknown; Resource?: unknown };
@@ -1196,7 +1196,7 @@ describe("platform 스택", () => {
     });
   });
 
-  describe("관측성 — CloudWatch 대시보드 (DESIGN 9)", () => {
+  describe("관측성 — CloudWatch 대시보드", () => {
     it("관리자 대시보드가 존재한다", () => {
       template.hasResourceProperties("AWS::CloudWatch::Dashboard", {
         DashboardName: "apphub-dev-admin",

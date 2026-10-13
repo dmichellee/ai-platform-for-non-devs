@@ -1,6 +1,6 @@
 """L1 — 시크릿 구조 D8(앱당 1개 JSON) + 시크릿 변경 즉시 재배포 + 지연 정리 + QA M1/H2 회귀.
 
-DESIGN.md D8(2026-10-05): 앱당 Secrets Manager 시크릿 1개 `apphub/{stage}/app/{appId}`(JSON {KEY: value}),
+D8(2026-10-05): 앱당 Secrets Manager 시크릿 1개 `apphub/{stage}/app/{appId}`(JSON {KEY: value}),
 DDB App 은 secretArn + secretKeys + version. 삭제 KEY 는 secretKeys 에서만 빼고 JSON 값은 배포 성공 후 정리.
 
 검증 대상:

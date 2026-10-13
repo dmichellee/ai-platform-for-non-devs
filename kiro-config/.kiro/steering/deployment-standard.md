@@ -49,7 +49,7 @@ inclusion: always
 
 - 설치가 필요한 조건: 이 프로젝트에 `.git/hooks/pre-commit`이 **없거나** 번들의
   `hooks/pre-commit`과 **다르면** 설치한다.
-- 설치 방법 — **사용자 OS에 맞는 설치기**를 프로젝트 루트에서 실행한다(번들에 둘 다 들어 있다):
+- 설치 방법 — **사용자 OS에 맞는 설치기**를 프로젝트 루트에서 실행한다(번들에는 사용자 OS용 설치기 하나가 들어 있다):
   - macOS / Linux: `sh install-hooks.sh`
   - Windows: `powershell -ExecutionPolicy Bypass -File install-hooks.ps1`
   - (스크립트를 못 쓰는 상황이면 대안: `hooks/pre-commit`을 `.git/hooks/pre-commit`으로 복사하고

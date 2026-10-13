@@ -1,6 +1,6 @@
 /**
- * API 계약 타입 — 단일 원본은 _workspace/contracts/api-contract.md.
- * 여기 정의된 shape은 계약 문서를 그대로 옮긴 것이다. 계약에 없는 필드를 추측해서 추가하지 않는다.
+ * API 계약 타입 — 백엔드 API 응답·요청 shape.
+ * 여기 정의된 shape은 API 계약을 그대로 옮긴 것이다. 계약에 없는 필드를 추측해서 추가하지 않는다.
  */
 
 // ── 리터럴 유니온 (상태 기계 — apphub-conventions 5장 / 계약 상태 기계) ──

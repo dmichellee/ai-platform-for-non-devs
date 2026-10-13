@@ -1,5 +1,5 @@
 /**
- * Playwright 설정 — AppHub 웹 UI E2E (TEST-STRATEGY L4 시나리오 5).
+ * Playwright 설정 — AppHub 웹 UI E2E (시나리오 5).
  *
  * baseURL 은 배포된 콘솔(ConsoleUrl = https://console.{appsDomain}) 또는 로컬 preview 를 가리킨다.
  * 라이브 실행 시 환경변수로 주입(run-e2e.sh 시나리오 5가 채워 준다):
