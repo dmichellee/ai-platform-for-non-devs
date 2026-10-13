@@ -436,6 +436,14 @@ describe("app-runtime — cognitoProtect=false 이면 Cognito 앱 클라이언�
     t.resourceCountIs("AWS::Cognito::UserPoolClient", 0);
     expect(JSON.stringify(t.findResources("AWS::ElasticLoadBalancingV2::ListenerRule"))).not.toContain("authenticate-cognito");
   });
+  it("[D21 2026-10-14] platform SSM user-pool-*(도메인 포함)을 읽지 않는다 — private 모드(도메인 미발행)에서도 배포 가능", () => {
+    const t = synth(
+      baseParams({ appId: "open0001", subdomain: "open", scheme: "internet-facing", cognitoProtect: false, sleepMode: "on-demand", schedule: undefined }),
+    );
+    const json = JSON.stringify(t.toJSON());
+    expect(json).not.toContain("/apphub/dev/platform/user-pool-domain");
+    expect(json).not.toContain("/apphub/dev/platform/user-pool-id");
+  });
 });
 
 describe("app-runtime — deployId docker 라벨 (D8, QA D-1)", () => {

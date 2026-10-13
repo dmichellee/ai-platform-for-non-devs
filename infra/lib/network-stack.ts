@@ -221,6 +221,36 @@ export class NetworkStack extends Stack {
       TABLE_NAME: `${prefix}-main`,
       CLUSTER_NAME: `${prefix}-cluster`,
     };
+    // ── private 모드(D19, 2026-10-14): wake Lambda 3종 VPC 배치 ─────────────────
+    //  사설(PRIVATE_WITH_EGRESS) 서브넷 2개 + 전용 SG(인바운드 없음, 아웃바운드 443만). AWS API는 기존 NAT
+    //  경유, DynamoDB만 게이트웨이 엔드포인트(무과금)로 VPC 내 경로. 인터페이스 엔드포인트는 추가하지 않는다.
+    //  SG 소유 = **스택별**(network: `${prefix}-lambda-sg`, platform: `${prefix}-platform-lambda-sg`).
+    //  근거: SG를 network가 만들어 platform에 SSM으로 넘기면 private→public 전환 때 network(선배포)가
+    //  platform Lambda ENI가 아직 붙은 SG를 지우려다 실패하고, destroy 때도 ENI 해제 대기가 스택 경계를 넘는다.
+    //  스택별로 두면 Lambda VpcConfig 해제와 SG 삭제가 같은 스택 업데이트 안에서 CFN 의존 순서로 처리된다.
+    //  public 모드는 기존과 동일(Lambda VPC 밖, SG·엔드포인트 미생성).
+    let lambdaVpcProps: Pick<lambda.FunctionProps, "vpc" | "vpcSubnets" | "securityGroups"> = {};
+    if (config.frontendMode === "private") {
+      const lambdaSg = new ec2.SecurityGroup(this, "LambdaSg", {
+        vpc,
+        securityGroupName: `${prefix}-lambda-sg`,
+        description: "Platform wake Lambdas (private mode) - no inbound, HTTPS outbound only (D17)",
+        allowAllOutbound: false,
+      });
+      // egress 443만: AWS API(NAT 경유)·DynamoDB 게이트웨이 엔드포인트(prefix list) 모두 HTTPS.
+      //  DNS(VPC resolver)는 SG 규칙 대상이 아니다. ingress 규칙은 두지 않는다.
+      lambdaSg.addEgressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443), "HTTPS to AWS APIs");
+      vpc.addGatewayEndpoint("DynamoDbEndpoint", {
+        service: ec2.GatewayVpcEndpointAwsService.DYNAMODB,
+        subnets: [{ subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS }],
+      });
+      lambdaVpcProps = {
+        vpc,
+        vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+        securityGroups: [lambdaSg],
+      };
+    }
+
     const fnLog = (name: string): logs.LogGroup =>
       new logs.LogGroup(this, `${name}Logs`, {
         logGroupName: `/apphub/${config.stage}/${name}`,
@@ -229,6 +259,7 @@ export class NetworkStack extends Stack {
       });
 
     // Waker — ALB Lambda 타깃. Host→앱 식별→ensureRunning(멱등)→대기페이지 200.
+    //  (private 모드 VPC 배치와 무관: ALB는 Lambda Invoke API로 호출하므로 TG 동작은 같다.)
     const wakerFunction = new lambda.Function(this, "WakerFn", {
       functionName: `${prefix}-waker`,
       runtime: lambda.Runtime.PYTHON_3_13,
@@ -239,6 +270,7 @@ export class NetworkStack extends Stack {
       logGroup: fnLog("waker"),
       environment: commonEnv,
       description: "wake-on-request entry point (D-M5-03)",
+      ...lambdaVpcProps,
     });
     this.wakerFunction = wakerFunction;
 
@@ -253,6 +285,7 @@ export class NetworkStack extends Stack {
       logGroup: fnLog("wake-restore"),
       environment: commonEnv,
       description: "on app healthy event -> restore listener rule (D-M5-03)",
+      ...lambdaVpcProps,
     });
     this.wakeRestoreFunction = wakeRestoreFunction;
 
@@ -267,6 +300,7 @@ export class NetworkStack extends Stack {
       logGroup: fnLog("sleep-transition"),
       environment: commonEnv,
       description: "idle alarm -> sleep transition (desiredCount=0 + rule to=waker) (D-M5-03)",
+      ...lambdaVpcProps,
     });
     this.sleepTransitionFunction = sleepTransitionFunction;
 

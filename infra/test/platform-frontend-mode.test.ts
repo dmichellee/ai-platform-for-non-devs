@@ -298,14 +298,17 @@ describe("platform — frontendMode=private", () => {
     expect(spa["AllowedOAuthFlowsUserPoolClient"]).toBe(false);
   });
 
-  it("D16 앱 보호용 Cognito 도메인(Hosted UI)은 유지, 공유 app-auth 클라이언트는 없다(앱별 클라이언트는 runtime 소유)", () => {
-    t.resourceCountIs("AWS::Cognito::UserPoolDomain", 1);
+  it("[D21 2026-10-14] User Pool 도메인(Hosted UI) 미생성 + SSM user-pool-domain 없음(PrivateLink 거부 방지), 공유 app-auth 클라이언트 없음", () => {
+    t.resourceCountIs("AWS::Cognito::UserPoolDomain", 0);
+    t.resourceCountIs("AWS::Cognito::ManagedLoginBranding", 0);
     const secretClients = Object.values(t.findResources("AWS::Cognito::UserPoolClient"))
       .map((c) => c.Properties as Record<string, unknown>)
       .filter((c) => c["GenerateSecret"] === true);
     expect(secretClients).toEqual([]);
     expect(ssmNames(t)).not.toContain("/apphub/dev/platform/app-auth-client-id");
-    expect(ssmNames(t)).toContain("/apphub/dev/platform/user-pool-domain");
+    expect(ssmNames(t)).not.toContain("/apphub/dev/platform/user-pool-domain");
+    // 도메인을 가리키는 Output/값이 템플릿 어디에도 없다.
+    expect(JSON.stringify(t.toJSON())).not.toContain("amazoncognito.com");
   });
 
   it("[D16] API Lambda env FRONTEND_MODE=private (백엔드가 cognitoProtect=true 거부)", () => {
@@ -449,5 +452,87 @@ describe("platform — SPA 버킷 모드 공통 (QA M-1, 리더 결정 2026-10-0
     expect(pub[0][0]).toMatch(/^SpaBucket/);
     expect(priv[0][0]).toBe(pub[0][0]);
     expect(priv[0][1]).toEqual(pub[0][1]);
+  });
+});
+
+// ── 2026-10-14: private 모드 플랫폼 Lambda VPC 배치 (D19) ─────────────────────────
+const PLATFORM_LAMBDAS = ["apphub-dev-api", "apphub-dev-provision-task", "apphub-dev-delete-task", "apphub-dev-deploy-notify"];
+const fnByName = (t: Template, name: string): Record<string, unknown> => {
+  const list = Object.values(t.findResources("AWS::Lambda::Function", { Properties: { FunctionName: name } }));
+  expect(list.length, `Lambda ${name}`).toBe(1);
+  return list[0].Properties as Record<string, unknown>;
+};
+const roleOf = (t: Template, fnProps: Record<string, unknown>): Record<string, unknown> => {
+  const roleId = ((fnProps["Role"] as { "Fn::GetAtt": string[] })["Fn::GetAtt"])[0];
+  return resources(t)[roleId].Properties!;
+};
+
+describe("platform — private 모드 Lambda 4종 VPC 배치 (2026-10-14)", () => {
+  let t: Template;
+  beforeAll(() => {
+    t = synth("private");
+  });
+
+  it("전용 SG apphub-dev-platform-lambda-sg: 인바운드 0, 아웃바운드 443만, description ASCII", () => {
+    const sgs = Object.entries(resources(t)).filter(
+      ([, r]) => r.Type === "AWS::EC2::SecurityGroup" && r.Properties?.["GroupName"] === "apphub-dev-platform-lambda-sg",
+    );
+    expect(sgs.length).toBe(1);
+    const [sgId, sg] = sgs[0];
+    expect(sg.Properties?.["SecurityGroupIngress"]).toBeUndefined();
+    const standaloneIngress = Object.values(resources(t)).filter(
+      (r) => r.Type === "AWS::EC2::SecurityGroupIngress" && JSON.stringify(r.Properties?.["GroupId"]).includes(sgId),
+    );
+    expect(standaloneIngress).toEqual([]);
+    expect(sg.Properties?.["SecurityGroupEgress"]).toEqual([
+      expect.objectContaining({ CidrIp: "0.0.0.0/0", IpProtocol: "tcp", FromPort: 443, ToPort: 443 }),
+    ]);
+    expect(/^[\x20-\x7e]*$/.test(String(sg.Properties?.["GroupDescription"]))).toBe(true);
+    assertNoOpenIngress(t);
+    assertSgDescriptionsAscii(t);
+  });
+
+  it.each(PLATFORM_LAMBDAS)("%s: VpcConfig = network SSM 사설 서브넷 2개 + 전용 SG", (name) => {
+    const fn = fnByName(t, name);
+    const vpcConfig = fn["VpcConfig"] as { SubnetIds: unknown[]; SecurityGroupIds: unknown[] };
+    expect(vpcConfig).toBeDefined();
+    expect(vpcConfig.SubnetIds.length).toBe(2);
+    const subnets = JSON.stringify(vpcConfig.SubnetIds);
+    expect(subnets).toMatch(/networkprivatesubnetid0/);
+    expect(subnets).toMatch(/networkprivatesubnetid1/);
+    expect(vpcConfig.SecurityGroupIds).toEqual([{ "Fn::GetAtt": [expect.stringMatching(/^LambdaSg/), "GroupId"] }]);
+  });
+
+  it.each(PLATFORM_LAMBDAS)("%s: 역할에 AWSLambdaVPCAccessExecutionRole(ENI 권한) 부착", (name) => {
+    const role = roleOf(t, fnByName(t, name));
+    expect(JSON.stringify(role["ManagedPolicyArns"])).toContain("service-role/AWSLambdaVPCAccessExecutionRole");
+  });
+});
+
+describe("platform — public 모드 회귀: 도메인 유지 · Lambda VPC 밖 (2026-10-14)", () => {
+  let t: Template;
+  beforeAll(() => {
+    t = synth("public");
+  });
+
+  it("User Pool 도메인 1개 + SSM user-pool-domain(D16 앱 보호용)", () => {
+    t.resourceCountIs("AWS::Cognito::UserPoolDomain", 1);
+    t.hasResourceProperties("AWS::Cognito::UserPoolDomain", { Domain: "apphub-dev-111122223333" });
+    expect(JSON.stringify(ssmValue(t, "/apphub/dev/platform/user-pool-domain"))).toContain(
+      "apphub-dev-111122223333.auth.",
+    );
+  });
+
+  it.each(PLATFORM_LAMBDAS)("%s: VpcConfig 없음, VPC 실행 정책 없음", (name) => {
+    const fn = fnByName(t, name);
+    expect(fn["VpcConfig"]).toBeUndefined();
+    expect(JSON.stringify(roleOf(t, fn)["ManagedPolicyArns"])).not.toContain("AWSLambdaVPCAccessExecutionRole");
+  });
+
+  it("Lambda 전용 SG 없음", () => {
+    const sgs = Object.values(resources(t)).filter(
+      (r) => r.Type === "AWS::EC2::SecurityGroup" && String(r.Properties?.["GroupName"]).includes("lambda-sg"),
+    );
+    expect(sgs).toEqual([]);
   });
 });

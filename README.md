@@ -96,6 +96,7 @@ uv run ruff check .     # 린트
   hosted zone이 있어야 한다. `--hosted-zone-id` 미지정 시 도메인(및 상위 라벨)로 자동 조회한다.
 - `--frontend-mode`(기본 `public`): 플랫폼 웹 배포 모드. `private`는 콘솔·API·로그인이 모두 사내망(VPC) 안에서만
   열리므로 사내망-VPC 연결과 `<appsDomain>` DNS 포워딩이 필요하다. 다른 값으로 재실행하면 모드가 전환된다.
+  `private`에서는 앱의 '로그인한 사람만 접근'을 쓸 수 없고(Cognito Hosted UI 도메인 미생성), 플랫폼 Lambda 7개는 VPC 사설 서브넷에 배치된다.
 - `--internal-cidrs`: 사내용 ALB(및 private 모드 콘솔·VPC 엔드포인트)에 접속을 허용할 대역. 미지정 시 VPC 대역만.
 - `--vpc-cidr`: 플랫폼 VPC 대역(기본 `10.20.0.0/16`, 사설 대역 안의 /16~/22). **최초 설치 때만** 지정할 수 있으며, 이미 설치된 환경에 다른 값을 주면 아무것도 바꾸지 않고 멈춘다(VPC 교체 방지). 사내망(VPN·Direct Connect)과 겹치지 않게 정한다.
 - `--sso-start-url` / `--sso-region` / `--sso-permission-set`(D22, 선택): 코드 저장소(CodeCommit) 사용자 로그인을

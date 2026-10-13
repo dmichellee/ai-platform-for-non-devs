@@ -38,7 +38,7 @@ import { StageConfig, resourcePrefix, type FrontendMode } from "../lib/config";
  * platform-stack — 앱과 무관한 컨트롤 플레인 (apphub-conventions 2장, DESIGN.md 3.1).
  *
  * 포함:
- *  - Cognito User Pool(그룹 admin/user, 관리자 초대 흐름) + Client + Hosted UI 도메인
+ *  - Cognito User Pool(그룹 admin/user, 관리자 초대 흐름) + Client + Hosted UI 도메인(public 모드만, D21)
  *  - DynamoDB 단일 테이블 apphub-{stage}-main (PK/SK + GSI1 ownerId + GSI2 status)
  *  - REST API Gateway + Lambda 핸들러 골격(실핸들러는 M3 backend) + Cognito authorizer
  *  - Step Functions 스텁 (ProvisionApp / DeleteApp — M5에서 채움)
@@ -46,12 +46,15 @@ import { StageConfig, resourcePrefix, type FrontendMode } from "../lib/config";
  *      public : S3(비공개) + CloudFront(OAC) + 대체 도메인 console.{appsDomain}(us-east-1 인증서, 이 스택 안)
  *               + API GW Regional
  *      private: 콘솔 internal ALB + ECS(nginx, DockerImageAsset) + Private REST API(execute-api 엔드포인트)
- *               + cognito-idp 엔드포인트
+ *               + cognito-idp 엔드포인트 + 플랫폼 Lambda 4종 VPC 배치(2026-10-14)
  *  - provisioner CodeBuild 프로젝트(앱 스택 cdk deploy용) 뼈대
  *  - CloudWatch 대시보드(관리자 관측성) 최소
  *
  * 교차 스택 참조는 Export 대신 SSM/명시 Outputs (cdk-authoring 규칙).
  */
+/** private 모드 Lambda VPC 배치 속성(public = 빈 객체). */
+type LambdaVpcProps = Pick<lambda.FunctionProps, "vpc" | "vpcSubnets" | "securityGroups">;
+
 export interface PlatformStackProps extends StackProps {
   readonly stage: StageConfig["stage"];
   readonly config: StageConfig;
@@ -151,10 +154,17 @@ export class PlatformStack extends Stack {
     });
 
     // Hosted UI 도메인 — stage+account 기반으로 전역 유일화(퍼블릭 애셋: 조직 식별정보 금지).
+    //  **public 모드에서만 생성**(D21, 2026-10-14 dev 실측): Cognito는 Managed Login(Hosted UI) 도메인이 있는
+    //  User Pool에 PrivateLink 접근을 거부한다(`InvalidParameterException: PrivateLink access is disabled for
+    //  the user pool that has ManagedLogin configured`) → private 모드 SPA 로그인(cognito-idp VPC 엔드포인트)이
+    //  막힌다. private 모드는 앱 '로그인한 사람만 접근'(D16)을 이미 거부(400)하므로 도메인 소비자가 없다.
+    //  prefix가 결정론적이라 모드 전환 시 CFN이 삭제(public→private)·같은 prefix로 재생성(private→public)한다.
     const hostedUiDomainPrefix = `apphub-${config.stage}-${this.account}`;
-    userPool.addDomain("HostedUi", {
-      cognitoDomain: { domainPrefix: hostedUiDomainPrefix },
-    });
+    if (!isPrivate) {
+      userPool.addDomain("HostedUi", {
+        cognitoDomain: { domainPrefix: hostedUiDomainPrefix },
+      });
+    }
     // D16(2026-10-08, QA N1): ALB authenticate-cognito용 클라이언트는 **앱마다** app-runtime 스택이 만든다
     //  (콜백 = 정확한 `https://{subdomain}.{appsDomain}/oauth2/idpresponse` 1개 — Cognito는 와일드카드 콜백 미지원).
     //  공유 `AppAuthClient`(와일드카드 콜백)와 SSM `app-auth-client-id`는 제거. Hosted UI 도메인(위)은 ALB 인증 필수라 유지.
@@ -232,7 +242,7 @@ export class PlatformStack extends Stack {
     //  RespondToAuthChallenge, ForgotPassword, RevokeToken). 따라서 USER_PASSWORD_AUTH를 허용하고
     //  OAuth(Hosted UI code grant) 플로우·콜백 URL은 비활성(disableOAuth). REFRESH_TOKEN_AUTH는 CDK가
     //  항상 포함한다. RevokeToken(로그아웃)을 위해 토큰 폐기를 명시적으로 켠다.
-    //  Cognito 도메인(Hosted UI)은 위에서 그대로 유지한다(앱 보호용 클라이언트는 app-runtime 소유, D16).
+    //  Cognito 도메인(Hosted UI)은 public 모드에서만 유지한다(앱 보호용 클라이언트는 app-runtime 소유, D16).
     const localDevOrigins = config.stage === "prod" ? [] : ["http://localhost:5173"];
     const userPoolClient = userPool.addClient("SpaClient", {
       userPoolClientName: `${prefix}-spa`,
@@ -254,6 +264,8 @@ export class PlatformStack extends Stack {
           cognitoIdpEndpoint: ec2.InterfaceVpcEndpoint;
         }
       | undefined;
+    // private 모드 Lambda VPC 배치 속성(public 모드 = 빈 객체 → 기존과 동일하게 VPC 밖).
+    let lambdaVpcProps: LambdaVpcProps = {};
     if (isPrivate) {
       const SUBNET_COUNT = 2;
       const azs: string[] = [];
@@ -299,6 +311,24 @@ export class PlatformStack extends Stack {
         subnets: { subnets: vpc.privateSubnets },
       });
       privateNet = { vpc, internalCidrs, executeApiEndpoint, cognitoIdpEndpoint };
+
+      // 플랫폼 Lambda 4종(api·provision-task·delete-task·deploy-notify) VPC 배치(D19, 2026-10-14).
+      //  사설 서브넷 2개(위 SSM 기반 fromVpcAttributes) + 전용 SG(인바운드 없음, 아웃바운드 443만).
+      //  AWS API는 network의 NAT 경유, DynamoDB는 network가 private 모드에서 만든 게이트웨이 엔드포인트.
+      //  SG를 network SG(SSM 공유)가 아니라 이 스택 소유로 둔 근거: network-stack LambdaSg 주석
+      //  (모드 전환·destroy 때 SG 삭제와 ENI 해제가 같은 스택 안에서 끝나야 한다).
+      const lambdaSg = new ec2.SecurityGroup(this, "LambdaSg", {
+        vpc,
+        securityGroupName: `${prefix}-platform-lambda-sg`,
+        description: "Platform control-plane Lambdas (private mode) - no inbound, HTTPS outbound only (D17)",
+        allowAllOutbound: false,
+      });
+      lambdaSg.addEgressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443), "HTTPS to AWS APIs");
+      lambdaVpcProps = {
+        vpc,
+        vpcSubnets: { subnets: vpc.privateSubnets },
+        securityGroups: [lambdaSg],
+      };
     }
 
     // ── REST API Gateway + Lambda 핸들러 골격 ──────────────────────────────
@@ -343,6 +373,7 @@ export class PlatformStack extends Stack {
         FRONTEND_MODE: frontendMode,
       },
       description: "Platform REST handler (M3 routing)",
+      ...lambdaVpcProps,
     });
     table.grantReadWriteData(apiHandler);
     this.apiHandler = apiHandler;
@@ -1025,7 +1056,7 @@ export class PlatformStack extends Stack {
     // 단일 task Lambda + step 디스패치. ASL은 Task 나열 + Wait/Choice(폴링) + Catch(실패 전이) 봉투.
     //  task Lambda(backend/src/orchestration/{provision,delete}.ts 번들)는 event.step으로 분기하고,
     //  "메인 서버 무부하" 원칙대로 CodeBuild/Pipeline/DeleteStack을 시작만 하고 폴링한다.
-    const { provisionStateMachine, deleteStateMachine } = this.buildStateMachines(config.stage, prefix);
+    const { provisionStateMachine, deleteStateMachine } = this.buildStateMachines(config.stage, prefix, lambdaVpcProps);
     this.provisionStateMachine = provisionStateMachine;
     this.deleteStateMachine = deleteStateMachine;
 
@@ -1066,6 +1097,7 @@ export class PlatformStack extends Stack {
       //  CLUSTER_NAME: 배포 성공 후처리(잠든 앱 재정합 sleep_app·시크릿 지연 정리)가 공유 클러스터(D18) 서비스를 조회.
       environment: { STAGE: config.stage, TABLE_NAME: `${prefix}-main`, CLUSTER_NAME: `${prefix}-cluster` },
       description: "CodePipeline/provisioner state -> DDB Deployment update ([Notify], DESIGN 3.3)",
+      ...lambdaVpcProps,
     });
     this.deployNotifyFunction = deployNotify;
 
@@ -1282,7 +1314,8 @@ export class PlatformStack extends Stack {
       "user-pool-arn": userPool.userPoolArn,
       "user-pool-client-id": userPoolClient.userPoolClientId,
       // D16 ALB authenticate-cognito(app-runtime)용 Hosted UI 도메인. 앱 클라이언트는 app-runtime이 앱마다 생성.
-      "user-pool-domain": `${hostedUiDomainPrefix}.auth.${this.region}.amazoncognito.com`,
+      //  public 모드만 — private 모드는 도메인 미생성(D21), 소비자(cognitoProtect=true runtime)도 없다(400).
+      ...(isPrivate ? {} : { "user-pool-domain": `${hostedUiDomainPrefix}.auth.${this.region}.amazoncognito.com` }),
       // D19: api-url = 모드별 실제 호출 URL(private는 VPC 엔드포인트 전용 호스트명).
       "api-url": effectiveApiUrl,
       "api-id": api.restApiId,
@@ -1614,6 +1647,7 @@ export class PlatformStack extends Stack {
   private buildStateMachines(
     stage: StageConfig["stage"],
     prefix: string,
+    lambdaVpcProps: LambdaVpcProps,
   ): { provisionStateMachine: sfn.StateMachine; deleteStateMachine: sfn.StateMachine } {
     // ── task Lambda 2개 (PYTHON_3_13, handler.handler, STAGE + TABLE_NAME env) ──
     const tableArn = this.formatArn({ service: "dynamodb", resource: "table", resourceName: `${prefix}-main` });
@@ -1654,6 +1688,7 @@ export class PlatformStack extends Stack {
       //  테이블명은 결정론적(`${prefix}-main`)이라 크로스스택/SSM 없이 직접 주입한다(D-M8 P2 요청).
       environment: { STAGE: stage, TABLE_NAME: `${prefix}-main` },
       description: "ProvisionApp step dispatch (D-M5-01)",
+      ...lambdaVpcProps,
     });
     // IAM(ARN 범위, Resource:"*" 금지):
     provisionTask.addToRolePolicy(
@@ -1699,6 +1734,7 @@ export class PlatformStack extends Stack {
       // TABLE_NAME: 데이터 계층 요구(폴백 없음). 결정론적 테이블명 직접 주입(D-M8 P2 요청).
       environment: { STAGE: stage, TABLE_NAME: `${prefix}-main` },
       description: "DeleteApp step dispatch (D-M5-01)",
+      ...lambdaVpcProps,
     });
     deleteTask.addToRolePolicy(
       new iam.PolicyStatement({

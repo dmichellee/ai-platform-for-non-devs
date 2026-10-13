@@ -8,6 +8,7 @@ import {
 import {
   assertNoOpenIngress,
   assertExemptSgIsActuallyOpen,
+  assertSgDescriptionsAscii,
 } from "./helpers/sg-ingress";
 import { testConfig, testEnv } from "./helpers/config";
 
@@ -558,5 +559,101 @@ describe("VPC 대역 파라미터화 (--vpc-cidr)", () => {
     );
     expect(subnets.length).toBe(4);
     for (const c of subnets) expect(c.startsWith("172.20.")).toBe(true);
+  });
+});
+
+// ── 2026-10-14: private 모드 wake Lambda 3종 VPC 배치 + DynamoDB 게이트웨이 엔드포인트 (D19) ──
+describe("network — frontendMode별 wake Lambda VPC 배치 (2026-10-14)", () => {
+  const WAKE_LAMBDAS = ["apphub-dev-waker", "apphub-dev-wake-restore", "apphub-dev-sleep-transition"];
+  const synthMode = (frontendMode: "public" | "private"): Template => {
+    const app = new App();
+    const config = testConfig("dev", { frontendMode });
+    return Template.fromStack(new NetworkStack(app, "apphub-dev-network", { stage: "dev", config, env: testEnv(config) }));
+  };
+  type Res = { Type: string; Properties?: Record<string, unknown> };
+  const res = (t: Template): Record<string, Res> => (t.toJSON() as { Resources: Record<string, Res> }).Resources;
+  const fnByName = (t: Template, name: string): Record<string, unknown> => {
+    const list = Object.values(t.findResources("AWS::Lambda::Function", { Properties: { FunctionName: name } }));
+    expect(list.length, name).toBe(1);
+    return list[0].Properties as Record<string, unknown>;
+  };
+  const privateSubnetIds = (t: Template): string[] =>
+    Object.entries(res(t))
+      .filter(([, r]) => r.Type === "AWS::EC2::Subnet" && JSON.stringify(r.Properties?.["Tags"]).includes('"private"'))
+      .map(([id]) => id)
+      .sort();
+
+  describe("private", () => {
+    let t: Template;
+    beforeAll(() => {
+      t = synthMode("private");
+    });
+
+    it("전용 SG apphub-dev-lambda-sg: 인바운드 0, 아웃바운드 443만, D17·ASCII 공통 단언 통과", () => {
+      const sgs = Object.entries(res(t)).filter(
+        ([, r]) => r.Type === "AWS::EC2::SecurityGroup" && r.Properties?.["GroupName"] === "apphub-dev-lambda-sg",
+      );
+      expect(sgs.length).toBe(1);
+      const [sgId, sg] = sgs[0];
+      expect(sg.Properties?.["SecurityGroupIngress"]).toBeUndefined();
+      expect(
+        Object.values(res(t)).filter(
+          (r) => r.Type === "AWS::EC2::SecurityGroupIngress" && JSON.stringify(r.Properties?.["GroupId"]).includes(sgId),
+        ),
+      ).toEqual([]);
+      expect(sg.Properties?.["SecurityGroupEgress"]).toEqual([
+        expect.objectContaining({ CidrIp: "0.0.0.0/0", IpProtocol: "tcp", FromPort: 443, ToPort: 443 }),
+      ]);
+      assertNoOpenIngress(t, [D17_EXEMPT_SG_DESCRIPTION]);
+      assertSgDescriptionsAscii(t);
+    });
+
+    it.each(WAKE_LAMBDAS)("%s: VpcConfig = 사설 서브넷 2개 + 전용 SG, VPC 실행 정책 부착", (name) => {
+      const fn = fnByName(t, name);
+      const vpcConfig = fn["VpcConfig"] as { SubnetIds: Array<{ Ref: string }>; SecurityGroupIds: unknown[] };
+      expect(vpcConfig.SubnetIds.map((s) => s.Ref).sort()).toEqual(privateSubnetIds(t));
+      expect(vpcConfig.SubnetIds.length).toBe(2);
+      expect(vpcConfig.SecurityGroupIds).toEqual([{ "Fn::GetAtt": [expect.stringMatching(/^LambdaSg/), "GroupId"] }]);
+      const roleId = (fn["Role"] as { "Fn::GetAtt": string[] })["Fn::GetAtt"][0];
+      expect(JSON.stringify(res(t)[roleId].Properties?.["ManagedPolicyArns"])).toContain(
+        "service-role/AWSLambdaVPCAccessExecutionRole",
+      );
+    });
+
+    it("DynamoDB 게이트웨이 엔드포인트 1개 — 사설 라우트 테이블 2개, 인터페이스 엔드포인트 없음", () => {
+      const eps = Object.values(t.findResources("AWS::EC2::VPCEndpoint")).map((r) => r.Properties as Record<string, unknown>);
+      expect(eps.length).toBe(1);
+      expect(eps[0]["VpcEndpointType"]).toBe("Gateway");
+      expect(JSON.stringify(eps[0]["ServiceName"])).toContain("dynamodb");
+      const rts = (eps[0]["RouteTableIds"] as Array<{ Ref: string }>).map((r) => r.Ref);
+      expect(rts.length).toBe(2);
+      for (const rt of rts) expect(rt).toMatch(/privateSubnet\d+RouteTable/);
+    });
+
+    it("waker는 그대로 ALB Lambda 타깃(TG 2개 모두 waker 대상)", () => {
+      const tgs = Object.values(t.findResources("AWS::ElasticLoadBalancingV2::TargetGroup", { Properties: { TargetType: "lambda" } }));
+      expect(tgs.length).toBe(2);
+      for (const tg of tgs) expect(JSON.stringify(tg.Properties)).toContain("WakerFn");
+    });
+  });
+
+  describe("public (회귀 — 기존과 동일)", () => {
+    let t: Template;
+    beforeAll(() => {
+      t = synthMode("public");
+    });
+
+    it.each(WAKE_LAMBDAS)("%s: VpcConfig 없음", (name) => {
+      expect(fnByName(t, name)["VpcConfig"]).toBeUndefined();
+    });
+
+    it("Lambda SG·VPC 엔드포인트 없음", () => {
+      t.resourceCountIs("AWS::EC2::VPCEndpoint", 0);
+      expect(
+        Object.values(res(t)).filter(
+          (r) => r.Type === "AWS::EC2::SecurityGroup" && String(r.Properties?.["GroupName"]).includes("lambda-sg"),
+        ),
+      ).toEqual([]);
+    });
   });
 });
