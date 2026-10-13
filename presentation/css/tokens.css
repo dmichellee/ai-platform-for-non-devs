@@ -68,7 +68,7 @@
      Pretendard, which has no latin coverage conflict because Ember wins first. */
   --font-display: 'Amazon Ember Web', 'Amazon Ember Display', 'Pretendard Local', 'Apple SD Gothic Neo', sans-serif;
   --font-body: 'Amazon Ember Web', 'Amazon Ember', 'Pretendard Local', 'Apple SD Gothic Neo', sans-serif;
-  --font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, 'Pretendard Local', monospace;
 
   /* Headings unchanged; body sizes bumped one step because 18/15px was too
      small to read from the back of a press-conference room. */

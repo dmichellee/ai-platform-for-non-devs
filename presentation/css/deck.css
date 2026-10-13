@@ -271,6 +271,10 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; }
   #thread, #counter, .nav-arrow, #menu-toggle, #sidebar { display: none !important; }
   #stage { position: static; }
   .slide { display: block !important; position: relative; left: 0; top: 0; translate: none; transform: none !important; box-shadow: none; border-radius: 0; page-break-after: always; animation: none !important; }
+  /* Chromium writes box-shadow / drop-shadow() to PDF as soft-masked images; Apple PDFKit
+     ignores the mask and paints solid translucent rectangles. Keep .glow blur (renders fine). */
+  *, *::before, *::after { box-shadow: none !important; }
+  img, .shot, [style*="drop-shadow"] { filter: none !important; }
 }
 /* Fixed-height frame that keeps the capture's natural scale and crops the bottom */
 .shot.clip { height: var(--h, 200px); }
