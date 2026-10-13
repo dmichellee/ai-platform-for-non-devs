@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   assertNoOpenCidr,
   loadConfig,
+  DEFAULT_VPC_CIDR,
   parseFrontendMode,
+  parseVpcCidr,
   parseStage,
   resourcePrefix,
   type ConfigInputs,
@@ -134,5 +136,32 @@ describe("config 로더 — D19 frontendMode", () => {
   });
   it("알 수 없는 값은 throw(조용한 오설치 방지)", () => {
     expect(() => parseFrontendMode("internal")).toThrow(/frontendMode/);
+  });
+});
+
+describe("VPC 대역 (--vpc-cidr)", () => {
+  it("미지정이면 기존 설치와 같은 기본값 10.20.0.0/16", () => {
+    expect(parseVpcCidr(undefined)).toBe(DEFAULT_VPC_CIDR);
+    expect(DEFAULT_VPC_CIDR).toBe("10.20.0.0/16");
+    expect(loadConfig("dev", FULL).vpcCidr).toBe("10.20.0.0/16");
+  });
+
+  it("사설 대역 /16~/22 는 그대로 받는다", () => {
+    for (const c of ["10.88.0.0/16", "172.20.0.0/20", "192.168.64.0/22", "10.0.0.0/16"]) {
+      expect(parseVpcCidr(c)).toBe(c);
+    }
+    expect(loadConfig("dev", { ...FULL, vpcCidr: "172.20.0.0/20" }).vpcCidr).toBe("172.20.0.0/20");
+  });
+
+  it.each([
+    ["8.8.0.0/16", "사설"],
+    ["172.32.0.0/16", "사설"],
+    ["10.0.0.0/8", "/16~/22"],
+    ["10.20.0.0/24", "/16~/22"],
+    ["10.20.1.0/16", "네트워크 주소"],
+    ["10.20.0/16", "유효하지 않은"],
+    ["10.300.0.0/16", "유효하지 않은"],
+  ])("잘못된 값 %s 는 거부한다", (c, msg) => {
+    expect(() => parseVpcCidr(c)).toThrow(msg);
   });
 });

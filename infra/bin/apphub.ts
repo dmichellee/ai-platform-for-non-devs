@@ -108,6 +108,7 @@ function buildConfigInputs(cdkApp: App): ConfigInputs {
     region: resolveRegion(cdkApp),
     allowedIngressCidrs,
     frontendMode: parseFrontendMode(ctxOpt(cdkApp, "frontendMode")),
+    vpcCidr: ctxOpt(cdkApp, "vpcCidr"),
   };
 }
 

@@ -445,7 +445,7 @@ export class PlatformStack extends Stack {
 
     // (3b) codecommit — 레포 목록/생성/조회(GET/POST /connections/{connId}/repos). 액션별 리소스 레벨
     //     지원 여부에 따라 분리한다. codeconnections(3)과 동일하게 IAM 정책 시뮬레이터로 검증했다:
-    //       - simulate-custom-policy 결과(2026-07-09, ap-northeast-2, account 111122223333):
+    //       - simulate-custom-policy 결과(2026-07-09, ap-northeast-2):
     //         · ListRepositories / CreateRepository @ `arn:aws:codecommit:{region}:{account}:*` → implicitDeny
     //         · ListRepositories / CreateRepository @ `*`                                       → allowed
     //         · GetRepository @ `arn:aws:codecommit:{region}:{account}:some-repo`               → allowed

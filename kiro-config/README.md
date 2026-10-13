@@ -38,8 +38,7 @@ mac zip 에 `setup-aws-git.sh`, windows zip 에 `setup-aws-git.ps1` 이 들어�
 - 업로드: `--upload --stage <dev|prod>` — 플랫폼 자산 버킷의 고정 키에 각각 올린다.
   - `s3://{assets}/kiro-config/kiro-config-mac.zip`
   - `s3://{assets}/kiro-config/kiro-config-windows.zip`
-- 서빙 계약: `_workspace/contracts/api-contract.md` 의 "Kiro 설정 다운로드" 참조.
-  프론트는 OS별 다운로드 버튼("Mac"/"Windows")으로 두 키를 제공한다.
+- 서빙: 프론트는 OS별 다운로드 버튼("Mac"/"Windows")으로 두 키를 제공한다.
 
 ## 검사 내용 / 신뢰 경계
 검사 항목과 "훅은 보조 수단, 최종 강제는 플랫폼" 원칙은 각 OS README에 동일하게 정리돼 있다.

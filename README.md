@@ -47,7 +47,6 @@ design-system/  디자인 토큰·컴포넌트 규격
 e2e/            엔드투엔드 테스트 + 샘플 앱 픽스처
 kiro-config/    Kiro steering 설정 (빌드 표준 강제)
 scripts/        deploy.sh / destroy.sh (멱등 설치·제거) + Kiro 번들 빌드
-docs/           설계 문서 (단일 진실 원본) — 로컬 전용, 버전관리 제외
 ```
 
 ## 요구 사항
@@ -88,6 +87,7 @@ uv run ruff check .     # 린트
     [--hosted-zone-id <ZID>] [--region <region>] \
     [--admin-email <email>] [--admin-name <name>] \
     [--internal-cidrs "10.0.0.0/16,..."] \
+    [--vpc-cidr 10.20.0.0/16] \
     [--skip-spa] \
     [--sso-start-url <https://d-xxxx.awsapps.com/start> --sso-region <IC 리전> --sso-permission-set <AppHubGit>]
 ```
@@ -97,6 +97,7 @@ uv run ruff check .     # 린트
 - `--frontend-mode`(기본 `public`): 플랫폼 웹 배포 모드. `private`는 콘솔·API·로그인이 모두 사내망(VPC) 안에서만
   열리므로 사내망-VPC 연결과 `<appsDomain>` DNS 포워딩이 필요하다. 다른 값으로 재실행하면 모드가 전환된다.
 - `--internal-cidrs`: 사내용 ALB(및 private 모드 콘솔·VPC 엔드포인트)에 접속을 허용할 대역. 미지정 시 VPC 대역만.
+- `--vpc-cidr`: 플랫폼 VPC 대역(기본 `10.20.0.0/16`, 사설 대역 안의 /16~/22). **최초 설치 때만** 지정할 수 있으며, 이미 설치된 환경에 다른 값을 주면 아무것도 바꾸지 않고 멈춘다(VPC 교체 방지). 사내망(VPN·Direct Connect)과 겹치지 않게 정한다.
 - `--sso-start-url` / `--sso-region` / `--sso-permission-set`(D22, 선택): 코드 저장소(CodeCommit) 사용자 로그인을
   IAM Identity Center 로 한다. **3개 모두 주면 활성, 일부만 주면 사전 점검에서 중단**, 없으면 비활성(이전 동작).
   Identity Center(조직 인스턴스·그룹·권한 세트·`email` 접근 제어 속성)는 AppHub가 만들지 않으므로 먼저 준비한다
@@ -122,11 +123,15 @@ CDK synth 없이 `aws cloudformation delete-stack`으로 `app-*-runtime → app-
 순서로 지운다(실패/롤백 상태 스택 포함, 재실행 안전). prod는 `apphub-prod` 입력 확인을 강제하며,
 prod의 RETAIN 리소스(DynamoDB·User Pool·버킷)와 CDK bootstrap은 지우지 않는다.
 
-## 설계 문서
+## 문서
 
-설계 문서가 단일 진실 원본이며 `docs/` 에 있다(로컬 전용, 버전관리 제외).
+- 설치·운영: 이 README
+- 코드 저장소(CodeCommit) 로그인 설정: [`IDENTITY-CENTER-SETUP.md`](IDENTITY-CENTER-SETUP.md)
+- Kiro 설정 번들(최종 사용자용): [`kiro-config/README.md`](kiro-config/README.md)
 
-- `docs/DESIGN.md` — 플랫폼 기능·아키텍처·설계 결정(D1–D21)
-- `docs/PLATFORM-ENGINEERING.md` — 플랫폼 개발·설치 규칙
-- `docs/TEST-STRATEGY.md` — 테스트 전략
-- `docs/KIRO-STANDARDS.md` — Kiro 빌드 표준
+코드 주석의 `D1`~`D22`, `DESIGN.md §…`, `_workspace/contracts/…` 같은 표기는 개발 중에 쓴 **내부 설계 문서의 결정 번호·절 번호**입니다.
+이 배포본에는 해당 문서가 포함되지 않으며, 동작은 코드와 위 문서 기준입니다.
+
+## 라이선스
+
+MIT No Attribution(MIT-0) — [`LICENSE`](LICENSE) 참조.

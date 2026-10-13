@@ -88,7 +88,7 @@ export class NetworkStack extends Stack {
       vpcName: `${prefix}-vpc`,
       maxAzs: 2,
       natGateways: 1,
-      ipAddresses: ec2.IpAddresses.cidr("10.20.0.0/16"),
+      ipAddresses: ec2.IpAddresses.cidr(config.vpcCidr), // 설치 인자 --vpc-cidr(기본 10.20.0.0/16)
       subnetConfiguration: [
         { name: "public", subnetType: ec2.SubnetType.PUBLIC, cidrMask: 24 },
         {

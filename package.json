@@ -1,6 +1,7 @@
 {
   "name": "apphub",
   "version": "0.1.0",
+  "license": "MIT-0",
   "private": true,
   "description": "AppHub — 비개발자용 앱 배포 플랫폼 (monorepo)",
   "packageManager": "pnpm@10.5.2",
@@ -19,6 +20,8 @@
     "vitest": "^3.0.5"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   }
 }

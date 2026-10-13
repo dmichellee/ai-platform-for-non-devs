@@ -61,6 +61,44 @@ export interface StageConfig {
   readonly allowedIngressCidrs: readonly string[];
   /** 플랫폼 웹 배포 모드(D19). 기본 public. */
   readonly frontendMode: FrontendMode;
+  /** 플랫폼 VPC 대역(IPv4, RFC1918, /16~/22). 기본 10.20.0.0/16. 최초 설치 때만 정할 수 있다(변경 = VPC 교체). */
+  readonly vpcCidr: string;
+}
+
+/** 플랫폼 VPC 기본 대역 — 기존 설치와 동일. */
+export const DEFAULT_VPC_CIDR = "10.20.0.0/16";
+
+/**
+ * VPC CIDR 검증. 형식(a.b.c.d/n, 네트워크 주소 정렬), RFC1918 사설 대역 안, 프리픽스 /16~/22
+ * (서브넷 /24 × public 2 + private 2 와 여유). 미지정이면 기본값.
+ * @throws {Error} 형식·대역·크기 위반(친절한 한국어 안내)
+ */
+export function parseVpcCidr(raw: string | undefined): string {
+  const v = (raw ?? "").trim();
+  if (v === "") return DEFAULT_VPC_CIDR;
+  const how = "`--vpc-cidr 10.20.0.0/16` 처럼 사설 대역(10.0.0.0/8 · 172.16.0.0/12 · 192.168.0.0/16) 안의 /16~/22 를 지정하세요.";
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/.exec(v);
+  if (!m) throw new Error(`유효하지 않은 VPC 대역: ${JSON.stringify(v)}. ${how}`);
+  const o = m.slice(1, 5).map(Number);
+  const prefix = Number(m[5]);
+  if (o.some((x) => x > 255)) throw new Error(`유효하지 않은 VPC 대역: ${v}. ${how}`);
+  if (prefix < 16 || prefix > 22) {
+    throw new Error(`VPC 대역 크기는 /16~/22 여야 해요(현재 /${prefix}). ${how}`);
+  }
+  const ip = ((o[0] << 24) >>> 0) + (o[1] << 16) + (o[2] << 8) + o[3];
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+  if ((ip & mask) >>> 0 !== ip) {
+    throw new Error(`VPC 대역의 네트워크 주소가 맞지 않아요: ${v}(호스트 비트가 0이어야 함). ${how}`);
+  }
+  const inRange = (base: number[], bits: number): boolean => {
+    const b = ((base[0] << 24) >>> 0) + (base[1] << 16) + (base[2] << 8) + base[3];
+    const bm = (0xffffffff << (32 - bits)) >>> 0;
+    return prefix >= bits && ((ip & bm) >>> 0) === b;
+  };
+  if (!(inRange([10, 0, 0, 0], 8) || inRange([172, 16, 0, 0], 12) || inRange([192, 168, 0, 0], 16))) {
+    throw new Error(`VPC 대역은 사설 대역이어야 해요: ${v}. ${how}`);
+  }
+  return v;
 }
 
 /** D17 위반: 전 개방 대역. 플랫폼 소유 SG ingress에 절대 허용하지 않는다. */
@@ -115,6 +153,8 @@ export interface ConfigInputs {
   readonly allowedIngressCidrs?: readonly string[];
   /** 플랫폼 웹 배포 모드(D19). deploy.sh `--frontend-mode` → `-c frontendMode=...`. 미지정 시 public. */
   readonly frontendMode?: FrontendMode;
+  /** 플랫폼 VPC 대역. deploy.sh `--vpc-cidr` → `-c vpcCidr=...`. 미지정 시 기본값(parseVpcCidr). */
+  readonly vpcCidr?: string;
 }
 
 /**
@@ -185,6 +225,7 @@ export function loadConfig(stage: Stage, inputs?: ConfigInputs): StageConfig {
     hostedZoneId,
     allowedIngressCidrs,
     frontendMode: inputs?.frontendMode ?? "public",
+    vpcCidr: parseVpcCidr(inputs?.vpcCidr),
   };
 }
 

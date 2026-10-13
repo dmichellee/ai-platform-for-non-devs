@@ -538,3 +538,25 @@ describe("network 스택", () => {
     });
   });
 });
+
+describe("VPC 대역 파라미터화 (--vpc-cidr)", () => {
+  it("기본값이면 VPC CIDR 이 10.20.0.0/16 그대로(기존 설치와 동일, 교체 없음)", () => {
+    const app = new App();
+    const stack = new NetworkStack(app, "apphub-dev-network-vpcdefault", { stage: "dev", config: testConfig("dev") });
+    Template.fromStack(stack).hasResourceProperties("AWS::EC2::VPC", { CidrBlock: "10.20.0.0/16" });
+  });
+  it("지정한 대역이 VPC·서브넷에 반영된다", () => {
+    const app = new App();
+    const stack = new NetworkStack(app, "apphub-dev-network-vpccustom", {
+      stage: "dev",
+      config: testConfig("dev", { vpcCidr: "172.20.0.0/20" }),
+    });
+    const t = Template.fromStack(stack);
+    t.hasResourceProperties("AWS::EC2::VPC", { CidrBlock: "172.20.0.0/20" });
+    const subnets = Object.values(t.findResources("AWS::EC2::Subnet")).map(
+      (r) => (r as { Properties: { CidrBlock: string } }).Properties.CidrBlock,
+    );
+    expect(subnets.length).toBe(4);
+    for (const c of subnets) expect(c.startsWith("172.20.")).toBe(true);
+  });
+});

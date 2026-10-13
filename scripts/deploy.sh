@@ -44,6 +44,7 @@ HOSTED_ZONE_ID=""       # --hosted-zone-id (선택). 미지정 시 Route53 자�
 ADMIN_EMAIL=""
 ADMIN_NAME=""
 INTERNAL_CIDRS=""
+VPC_CIDR=""            # --vpc-cidr (최초 설치 때만 지정, 미지정 시 기존 값 또는 10.20.0.0/16)
 SKIP_SPA="false"
 FRONTEND_MODE="public"  # --frontend-mode (D19). public | private
 # D22 Git 인증(Identity Center) — 3개 모두 주면 활성, 일부만 주면 사전 점검에서 중단, 없으면 비활성.
@@ -67,14 +68,17 @@ usage() {
                                 public : CloudFront + S3, API Gateway Regional
                                 private: 사내 전용 — internal ALB + 컨테이너(nginx), Private API(VPC 엔드포인트).
                                          사무실 PC 접속에는 사내망-VPC 연결과 DNS 포워딩이 필요합니다
-                                         (PLATFORM-ENGINEERING.md 5.2).
+                                         (README 의 요구 사항 참고).
                               다른 값으로 다시 실행하면 모드가 전환됩니다.
   --internal-cidrs "a,b"      internal ALB(및 private 모드 콘솔·VPC 엔드포인트) ingress 허용 대역
                               (콤마 구분). 미지정 시 VPC CIDR.
+  --vpc-cidr <CIDR>           플랫폼 VPC 대역(기본 10.20.0.0/16). 사설 대역 안의 /16~/22.
+                              **최초 설치 때만** 지정할 수 있습니다(바꾸면 VPC 가 교체됨 — 기존 설치에서
+                              다른 값을 주면 멈춥니다). 사내망(VPN·Direct Connect)과 겹치지 않게 정하세요.
   --skip-spa                  SPA 빌드/업로드 생략(인프라만 갱신할 때). private 모드에서는 이전에
                               준비된 콘솔 이미지 내용(infra/console/site)을 그대로 사용한다.
   Git 인증 설정(D22, 선택 — 3개 모두 주면 활성, 일부만 주면 오류). Identity Center 는 미리 준비
-  (PLATFORM-ENGINEERING.md 5.4, IDENTITY-CENTER-SETUP.md). 주면 Kiro 설정 zip 에 PC 1회 설정기
+  (IDENTITY-CENTER-SETUP.md). 주면 Kiro 설정 zip 에 PC 1회 설정기
   (setup-aws-git)와 apphub-aws.conf 가 들어간다. 계정 ID·CodeCommit 리전(--region)은 자동.
   --sso-start-url <url>       Identity Center 시작 URL (https://d-xxxxxxxxxx.awsapps.com/start)
   --sso-region <region>       Identity Center 리전 (AppHub 리전과 다를 수 있음)
@@ -100,6 +104,7 @@ while [[ $# -gt 0 ]]; do
     --admin-email)    ADMIN_EMAIL="${2:-}"; shift 2 ;;
     --admin-name)     ADMIN_NAME="${2:-}"; shift 2 ;;
     --internal-cidrs) INTERNAL_CIDRS="${2:-}"; shift 2 ;;
+    --vpc-cidr)       VPC_CIDR="${2:-}"; shift 2 ;;
     --frontend-mode)  FRONTEND_MODE="${2:-}"; shift 2 ;;
     --skip-spa)       SKIP_SPA="true"; shift ;;
     --sso-start-url)      SSO_START_URL="${2:-}"; shift 2 ;;
@@ -117,6 +122,11 @@ fi
 
 if [[ "${FRONTEND_MODE}" != "public" && "${FRONTEND_MODE}" != "private" ]]; then
   echo "오류: --frontend-mode 는 public 또는 private 여야 합니다." >&2
+  usage; exit 2
+fi
+
+if [[ -n "${VPC_CIDR}" ]] && ! [[ "${VPC_CIDR}" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/(1[6-9]|2[0-2])$ ]]; then
+  echo "오류: --vpc-cidr 형식이 올바르지 않습니다: ${VPC_CIDR} (예: 10.20.0.0/16, 프리픽스 /16~/22)." >&2
   usage; exit 2
 fi
 
@@ -146,7 +156,7 @@ if [[ "${SSO_GIVEN}" -eq 3 ]]; then
   GIT_AUTH="true"
 elif [[ "${SSO_GIVEN}" -ne 0 ]]; then
   echo "오류: --sso-start-url / --sso-region / --sso-permission-set 은 3개를 모두 주거나 모두 생략하세요." >&2
-  echo "      (Git 인증 설정은 세 값이 모두 있어야 동작합니다 — PLATFORM-ENGINEERING.md 5.4)" >&2
+  echo "      (Git 인증 설정은 세 값이 모두 있어야 동작합니다 — IDENTITY-CENTER-SETUP.md)" >&2
   usage; exit 2
 fi
 
@@ -221,6 +231,29 @@ export CDK_DEFAULT_ACCOUNT="${ACCOUNT_ID}"
 export CDK_DEFAULT_REGION="${REGION}"
 CDK_CTX+=(-c "account=${ACCOUNT_ID}")
 
+# VPC 대역 — 최초 설치 때만 정할 수 있다(CIDR 변경 = VPC 교체 → 모든 앱 중단·삭제 위험).
+#  기존 network 스택의 실제 대역(SSM vpc-cidr)을 읽어(읽기 전용) 비교한다.
+EXISTING_VPC_CIDR="$(aws ssm get-parameter --name "/apphub/${STAGE}/network/vpc-cidr" --region "${REGION}" \
+  --query Parameter.Value --output text 2>/dev/null || true)"
+[[ "${EXISTING_VPC_CIDR}" == "None" ]] && EXISTING_VPC_CIDR=""
+if [[ -n "${EXISTING_VPC_CIDR}" ]]; then
+  if [[ -z "${VPC_CIDR}" ]]; then
+    VPC_CIDR="${EXISTING_VPC_CIDR}"
+    log "VPC 대역: 기존 설치 값 ${VPC_CIDR} 사용(--vpc-cidr 미지정)"
+  elif [[ "${VPC_CIDR}" != "${EXISTING_VPC_CIDR}" ]]; then
+    echo "오류: 이미 설치된 VPC 대역(${EXISTING_VPC_CIDR})과 --vpc-cidr(${VPC_CIDR})이 다릅니다." >&2
+    echo "      VPC 대역은 최초 설치 때만 정할 수 있어요(바꾸면 VPC 가 교체되어 모든 앱이 영향받습니다)." >&2
+    echo "      --vpc-cidr 를 빼거나 ${EXISTING_VPC_CIDR} 로 지정하세요. 아무것도 변경하지 않았습니다." >&2
+    exit 1
+  else
+    log "VPC 대역: ${VPC_CIDR} (기존 설치와 동일)"
+  fi
+else
+  VPC_CIDR="${VPC_CIDR:-10.20.0.0/16}"
+  log "VPC 대역: ${VPC_CIDR} (신규 설치)"
+fi
+CDK_CTX+=(-c "vpcCidr=${VPC_CIDR}")
+
 # hostedZoneId 해석 — 미지정 시 Route53에서 자동 조회.
 #  apex 도출이 애매하므로(예: apps-dev.example.com → example.com), --domain 자체와 상위 라벨을
 #  차례로 list-hosted-zones-by-name 으로 시도해 가장 먼저 매칭되는 public zone을 채택한다.
@@ -245,7 +278,7 @@ if [[ -z "${HOSTED_ZONE_ID}" ]]; then
   if [[ -z "${HOSTED_ZONE_ID}" ]]; then
     echo "오류: '${APPS_DOMAIN}'(및 상위 도메인)에 해당하는 Route53 public hosted zone을 찾지 못했습니다." >&2
     echo "      --hosted-zone-id <ZID> 로 직접 지정하거나, 해당 도메인의 public hosted zone을 계정에 두세요" >&2
-    echo "      (와일드카드 인증서 DNS 검증에 필요, PLATFORM-ENGINEERING.md 5.1)." >&2
+    echo "      (와일드카드 인증서 DNS 검증에 필요, README 의 배포 절 참고)." >&2
     exit 1
   fi
 fi
@@ -255,7 +288,7 @@ log "앱 도메인 ${APPS_DOMAIN}, hosted zone ${HOSTED_ZONE_ID}"
 # hosted zone 존재 확인 (전제조건 5.1) — 없으면 중단
 if ! aws route53 get-hosted-zone --id "${HOSTED_ZONE_ID}" >/dev/null 2>&1; then
   echo "오류: Route53 hosted zone ${HOSTED_ZONE_ID} 를 찾을 수 없습니다." >&2
-  echo "      와일드카드 인증서 DNS 검증에 필요합니다(PLATFORM-ENGINEERING.md 5.1)." >&2
+  echo "      와일드카드 인증서 DNS 검증에 필요합니다(README 의 배포 절 참고)." >&2
   exit 1
 fi
 log "hosted zone 존재 확인 OK"
@@ -653,7 +686,7 @@ if [[ "${FRONTEND_MODE}" == "public" ]]; then
   echo "  (참고) 콘솔 인증서 발급·DNS 전파에 수 분이 걸릴 수 있습니다."
 else
   echo "  (참고) private 모드 콘솔은 사내망에서만 열립니다 — 사내망-VPC 연결과 '${APPS_DOMAIN}' DNS 포워딩이"
-  echo "         필요합니다(PLATFORM-ENGINEERING.md 5.2). 앱 '로그인한 사람만 접근'은 공용 로그인 도메인을 경유합니다."
+  echo "         필요합니다(README 의 요구 사항 참고). 앱 '로그인한 사람만 접근'은 공용 로그인 도메인을 경유합니다."
 fi
 echo
 echo "다음 단계:"

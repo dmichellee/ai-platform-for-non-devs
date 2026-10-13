@@ -1,6 +1,7 @@
 {
   "name": "@apphub/e2e-web",
   "version": "0.1.0",
+  "license": "MIT-0",
   "private": true,
   "type": "module",
   "description": "AppHub 웹 UI E2E (Playwright) — TEST-STRATEGY L4 시나리오 5",

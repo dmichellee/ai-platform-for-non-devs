@@ -101,8 +101,8 @@ zip 안에 **`apphub-aws.conf` 와 `setup-aws-git.ps1`** 이 들어 있다면, �
 - 급히 훅을 건너뛰어야 하면 `git commit --no-verify`로 우회할 수 있으나 권장하지 않는다
   (어차피 플랫폼 배포 전 검증에서 같은 항목이 걸린다).
 
-## 이 번들은 어떻게 서빙되는가 (계약)
-`_workspace/contracts/api-contract.md`의 "Kiro 설정 다운로드" 계약 참조.
+## 이 번들은 어떻게 서빙되는가
+AppHub 화면의 "Kiro 설정" 메뉴에서 OS별로 내려받습니다.
 zip은 `scripts/build-kiro-bundle.sh`로 생성하며, 플랫폼 자산 버킷의 고정 키
 `s3://{assets}/kiro-config/kiro-config-windows.zip`에 업로드된다.
 (macOS/Linux 판은 `.../kiro-config-mac.zip`.)
