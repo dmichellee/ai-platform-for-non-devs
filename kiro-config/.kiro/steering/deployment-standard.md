@@ -67,6 +67,28 @@ inclusion: always
    (훅에 걸리면 사유를 읽고 3~6장 규칙에 맞게 고친 뒤 다시 커밋한다).
 3. `git push` — 원격 저장소로 올린다(플랫폼이 이 저장소를 배포에 사용한다).
 
+## 7-1. 코드 저장소 로그인(AWS)
+**이 설정을 쓰는 회사라면**(프로젝트 루트나 Kiro 설정 zip 에 `apphub-aws.conf` 와 `setup-aws-git.sh` /
+`setup-aws-git.ps1` 이 있는 경우) 코드 저장소(AWS CodeCommit)에 push/clone 할 때 회사 AWS 로그인을 쓴다.
+이 파일들이 없으면 이 절은 무시한다.
+
+- **PC 처음 설정(한 번만)**: 사용자가 처음 `git clone`/`git push` 하기 전에 OS에 맞는 설정기를 실행한다.
+  - macOS / Linux: `sh setup-aws-git.sh`
+  - Windows: `powershell -ExecutionPolicy Bypass -File setup-aws-git.ps1`
+  - AWS CLI 버전 2 가 없다고 나오면, 안내된 주소에서 설치한 뒤 다시 실행한다.
+  - 이미 다른 값의 apphub 설정이 있다며 멈추면, 사용자에게 바꿔도 되는지 확인한 뒤 `--force`(Windows `-Force`)로 다시 실행한다.
+- **사용자가 "AWS 로그인해줘"라고 하면** `aws sso login --profile apphub` 를 실행한다(브라우저가 열리면 회사 계정으로 로그인).
+- **push/clone 인증 오류가 나면** — `403`, `The requested URL returned error: 403`, `Unable to locate credentials`,
+  `Token has expired`/`토큰 만료`, `Error loading SSO Token` 등:
+  1. `aws sso login --profile apphub` 를 실행해 다시 로그인한 뒤, 같은 git 명령을 다시 시도한다
+     (로그인은 보통 하루에 한 번 만료된다).
+  2. 다시 로그인했는데도 403 이면 더 시도하지 말고, 사용자에게 "회사 AWS 로그인 계정·그룹(AppHub-Developers)·
+     이메일이 AppHub 계정과 같은지 관리자에게 확인해 주세요"라고 안내한다. (AppHub 에 저장소를 만든 사람과
+     같은 이메일이어야 그 저장소에 접근할 수 있다.)
+- **저장소 주소는 HTTPS 를 쓴다**: `https://git-codecommit.{리전}.amazonaws.com/v1/repos/{저장소이름}`
+  (플랫폼 화면에 보이는 주소). `codecommit::` 로 시작하는 주소나 SSH 주소는 쓰지 않는다.
+- 로그인 정보(토큰·비밀번호)를 코드·README·채팅에 적지 않는다. 설정 파일에는 비밀값이 없다.
+
 ## 8. "배포 표준에 맞춰줘" 요청 대응
 사용자가 "배포 표준에 맞춰줘" 또는 "이 앱을 배포 표준에 맞게 준비해줘"라고 요청하면
 위 1~6 항목을 **전부 점검**하고 미비점을 수정한다. 특히:

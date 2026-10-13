@@ -75,8 +75,10 @@ def test_create_repo_prefixes_email_local_part(ddb_table, stub_clients):
     assert set(out["data"].keys()) == {"repoName", "cloneUrlHttp"}
 
 
-def test_create_repo_falls_back_to_sub_when_no_email(ddb_table, stub_clients):
-    """email 클레임이 없으면 sub 앞 8자를 접두어로 붙인다: 'my-app' → 'user-ali-my-app'."""
+def test_create_repo_without_email_rejected(ddb_table, stub_clients):
+    """D22: email 클레임이 없으면 소유 태그를 만들 수 없어 VALIDATION_ERROR(레포 미생성)."""
+    from app.integrations.codecommit import get_repository
+
     _seed_connection(ddb_table, OWNER, "c1")
     res = handler(
         make_event(
@@ -88,8 +90,10 @@ def test_create_repo_falls_back_to_sub_when_no_email(ddb_table, stub_clients):
         )
     )
     out = parse_result(res)
-    assert out["status"] == 201
-    assert out["data"]["repoName"] == f"{OWNER_SUB_PREFIX}-my-app"
+    assert out["status"] == 400
+    assert out["error"]["code"] == "VALIDATION_ERROR"
+    assert "이메일" in out["error"]["message"]
+    assert get_repository(f"{OWNER_SUB_PREFIX}-my-app") is None
 
 
 def test_created_repo_appears_only_for_owner_with_final_name(ddb_table, stub_clients):
@@ -287,7 +291,8 @@ def test_different_owners_same_base_no_conflict(ddb_table, stub_clients):
                 "POST",
                 "/connections/c2/repos",
                 user_id=OTHER,
-                groups=["user"],  # email 없음 → sub 폴백
+                groups=["user"],
+                email="+++@example.com",  # 로컬파트 정제 후 빈 값 → sub 폴백
                 body={"repoName": "shared"},
             )
         )
@@ -560,7 +565,7 @@ def test_delete_other_users_repo_not_found(ddb_table, stub_clients):
     """타인이 만든 레포명으로 삭제 시도 → 본인 소유권 아이템 없음 → 404(존재 여부 안 흘림)."""
     _seed_connection(ddb_table, OWNER, "c1")
     _seed_connection(ddb_table, OTHER, "c2")
-    other_repo = _create_repo("c2", OTHER, "bob-secret")  # email 없음 → sub 폴백
+    other_repo = _create_repo("c2", OTHER, "bob-secret", email="bob@example.com")
     other_final = other_repo["repoName"]
     # OWNER 가 OTHER 의 레포명을 자기 연결로 지우려 함 → 본인 파티션에 없음 → 404.
     res = handler(
@@ -640,3 +645,136 @@ def test_delete_repo_github_connection_rejected(ddb_table, stub_clients):
     out = parse_result(res)
     assert out["status"] == 400
     assert out["error"]["code"] == "VALIDATION_ERROR"
+
+
+# ── D22 소유 태그 apphub:owner (moto 는 create tags 는 받지만 list_tags_for_resource 미구현 → stub) ──
+
+
+def _codecommit_stub(name: str = "alice.kim-tagged") -> StubClient:
+    from app.integrations import clients as integ_clients
+
+    stub = StubClient()
+    stub.set_response(
+        "create_repository",
+        {
+            "repositoryMetadata": {
+                "repositoryName": name,
+                "cloneUrlHttp": f"https://git-codecommit.ap-northeast-2.amazonaws.com/v1/repos/{name}",
+            }
+        },
+    )
+    integ_clients.set_client("codecommit", stub)
+    return stub
+
+
+def _post_repo(base: str, email: str | None = OWNER_EMAIL):
+    return parse_result(
+        handler(
+            make_event(
+                "POST",
+                "/connections/c1/repos",
+                user_id=OWNER,
+                groups=["user"],
+                email=email,
+                body={"repoName": base},
+            )
+        )
+    )
+
+
+def test_create_repo_attaches_lowercase_owner_tag_atomically(ddb_table, stub_clients):
+    """CreateRepository(tags={apphub:owner: email 소문자}) 한 번으로 생성+태그(별도 TagResource 없음)."""
+    _seed_connection(ddb_table, OWNER, "c1")
+    cc = _codecommit_stub()
+    out = _post_repo("tagged")
+    assert out["status"] == 201
+    assert set(out["data"].keys()) == {"repoName", "cloneUrlHttp"}  # 응답 shape 불변
+    calls = cc.calls_for("create_repository")
+    assert calls == [
+        {"repositoryName": "alice.kim-tagged", "tags": {"apphub:owner": "alice.kim@example.com"}}
+    ]
+    assert cc.calls_for("tag_resource") == []
+    assert cc.calls_for("delete_repository") == []
+
+
+def test_create_repo_tag_failure_rolls_back_and_internal_error(ddb_table, stub_clients):
+    """태그 권한 거부 등 생성 실패 → 레포 삭제 시도(롤백) + INTERNAL_ERROR, 소유권 미기록."""
+    from botocore.exceptions import ClientError
+
+    _seed_connection(ddb_table, OWNER, "c1")
+    cc = _codecommit_stub()
+    cc.set_raise(
+        "create_repository",
+        ClientError(
+            {"Error": {"Code": "AccessDeniedException", "Message": "not authorized: TagResource"}},
+            "CreateRepository",
+        ),
+    )
+    out = _post_repo("tagged")
+    assert out["status"] == 500
+    assert out["error"]["code"] == "INTERNAL_ERROR"
+    assert cc.calls_for("delete_repository") == [{"repositoryName": "alice.kim-tagged"}]
+    listed = parse_result(
+        handler(make_event("GET", "/connections/c1/repos", user_id=OWNER, groups=["user"]))
+    )
+    assert listed["data"]["items"] == []
+
+
+def test_create_repo_ownership_write_failure_rolls_back(ddb_table, stub_clients, monkeypatch):
+    """생성 성공 후 소유권(DDB) 기록 실패 → 방금 만든 레포 삭제 + INTERNAL_ERROR."""
+    from app.handlers import connections as conn_handlers
+
+    _seed_connection(ddb_table, OWNER, "c1")
+    cc = _codecommit_stub()
+
+    def _boom(**_kwargs):
+        raise RuntimeError("ddb down")
+
+    monkeypatch.setattr(conn_handlers, "put_cc_repo", _boom)
+    out = _post_repo("tagged")
+    assert out["status"] == 500
+    assert out["error"]["code"] == "INTERNAL_ERROR"
+    assert cc.calls_for("delete_repository") == [{"repositoryName": "alice.kim-tagged"}]
+
+
+def test_create_repo_rollback_delete_failure_still_internal_error(ddb_table, stub_clients):
+    """롤백 삭제마저 실패해도 원래 실패를 INTERNAL_ERROR 로 응답(롤백 예외가 가리지 않음)."""
+    from botocore.exceptions import ClientError
+
+    _seed_connection(ddb_table, OWNER, "c1")
+    cc = _codecommit_stub()
+    cc.set_raise("create_repository", ClientError({"Error": {"Code": "Throttling"}}, "Create"))
+    cc.set_raise("delete_repository", ClientError({"Error": {"Code": "Throttling"}}, "Delete"))
+    out = _post_repo("tagged")
+    assert out["error"]["code"] == "INTERNAL_ERROR"
+
+
+def test_create_repo_name_taken_does_not_rollback(ddb_table, stub_clients):
+    """동명 존재(타인 레포일 수 있음)는 REPO_NAME_TAKEN — 절대 삭제하지 않는다."""
+    from botocore.exceptions import ClientError
+
+    _seed_connection(ddb_table, OWNER, "c1")
+    cc = _codecommit_stub()
+    cc.set_raise(
+        "create_repository",
+        ClientError({"Error": {"Code": "RepositoryNameExistsException"}}, "CreateRepository"),
+    )
+    out = _post_repo("tagged")
+    assert out["error"]["code"] == "REPO_NAME_TAKEN"
+    assert cc.calls_for("delete_repository") == []
+
+
+def test_create_repo_blank_email_rejected(ddb_table, stub_clients):
+    """email 이 공백뿐이어도 VALIDATION_ERROR, CodeCommit 호출 없음."""
+    _seed_connection(ddb_table, OWNER, "c1")
+    cc = _codecommit_stub()
+    out = _post_repo("tagged", email="   ")
+    assert out["error"]["code"] == "VALIDATION_ERROR"
+    assert cc.calls == []
+
+
+def test_owner_tags_lowercases_and_strips():
+    from app.integrations.codecommit import OWNER_TAG_KEY, owner_tags
+
+    assert OWNER_TAG_KEY == "apphub:owner"
+    assert owner_tags("  Alice.Kim@Example.COM ") == {"apphub:owner": "alice.kim@example.com"}

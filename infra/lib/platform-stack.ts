@@ -462,6 +462,9 @@ export class PlatformStack extends Stack {
         actions: [
           "codecommit:ListRepositories",
           "codecommit:CreateRepository",
+          // D22: 저장소 소유 태그 `apphub:owner`(생성자 email). CreateRepository(tags=...) 동반 생성도
+          //  TagResource 권한으로 평가되고, 생성 시점엔 repo ARN이 없으므로 CreateRepository와 같은 범위(*).
+          "codecommit:TagResource",
         ],
         // 리소스 레벨 미지원(IAM 시뮬레이터 검증) → Resource:"*" 필수.
         //  계정/리전 한정 ARN조차 implicitDeny(codeconnections:CreateConnection/ListConnections와 동일).

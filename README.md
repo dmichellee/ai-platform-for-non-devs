@@ -88,7 +88,8 @@ uv run ruff check .     # 린트
     [--hosted-zone-id <ZID>] [--region <region>] \
     [--admin-email <email>] [--admin-name <name>] \
     [--internal-cidrs "10.0.0.0/16,..."] \
-    [--skip-spa]
+    [--skip-spa] \
+    [--sso-start-url <https://d-xxxx.awsapps.com/start> --sso-region <IC 리전> --sso-permission-set <AppHubGit>]
 ```
 
 - `--domain`은 사용자 앱 apex 도메인(예: dev는 `apps-dev.example.com`)이며 Route53 public
@@ -96,12 +97,18 @@ uv run ruff check .     # 린트
 - `--frontend-mode`(기본 `public`): 플랫폼 웹 배포 모드. `private`는 콘솔·API·로그인이 모두 사내망(VPC) 안에서만
   열리므로 사내망-VPC 연결과 `<appsDomain>` DNS 포워딩이 필요하다. 다른 값으로 재실행하면 모드가 전환된다.
 - `--internal-cidrs`: 사내용 ALB(및 private 모드 콘솔·VPC 엔드포인트)에 접속을 허용할 대역. 미지정 시 VPC 대역만.
+- `--sso-start-url` / `--sso-region` / `--sso-permission-set`(D22, 선택): 코드 저장소(CodeCommit) 사용자 로그인을
+  IAM Identity Center 로 한다. **3개 모두 주면 활성, 일부만 주면 사전 점검에서 중단**, 없으면 비활성(이전 동작).
+  Identity Center(조직 인스턴스·그룹·권한 세트·`email` 접근 제어 속성)는 AppHub가 만들지 않으므로 먼저 준비한다
+  — 고객 절차서: [`IDENTITY-CENTER-SETUP.md`](IDENTITY-CENTER-SETUP.md) (정책 JSON·사용자 운영·PC 설정·문제 해결). 활성이면 Kiro 설정 zip 에 PC 1회 설정기(`setup-aws-git.sh`/`.ps1`)와
+  `apphub-aws.conf` 가 들어간다. 계정 ID·CodeCommit 리전(`--region`)은 자동. 값 형식: 시작 URL `https://…`,
+  리전 `ap-northeast-2` 형식, 권한 세트 영숫자·`+=,.@-` 1~32자.
 
 동작 순서(출력의 단계 번호와 동일):
 `1/5` 사전 점검 → `2/5` `cdk bootstrap` → `2b/5` Lambda 자산 동기화 → `2c/5` (private만) SPA 빌드·Kiro zip을 콘솔 이미지 내용으로 준비
 → `3/5` `network` → `platform` 스택 배포 → `3b/5` provisioner 자산 업로드 → `3c/5` Kiro 설정 zip 업로드(public만)
-→ `3d/5` 기본 권한 템플릿 시드 → `4/5` 최초 관리자 계정 생성 + (public만) SPA 빌드·`config.json`·S3 sync·CloudFront invalidation
-→ `5/5` 완료 출력(콘솔 주소 `https://console.<appsDomain>`, 모드, User Pool, Kiro 설정 URL).
+→ `3d/5` 기본 권한 템플릿 시드 → `3e/5` CodeCommit 저장소 소유 태그 `apphub:owner` 백필(없는 것만, 실패 시 경고 후 계속) → `4/5` 최초 관리자 계정 생성 + (public만) SPA 빌드·`config.json`·S3 sync·CloudFront invalidation
+→ `5/5` 완료 출력(콘솔 주소 `https://console.<appsDomain>`, 모드, User Pool, Kiro 설정 URL, Git 인증 활성/비활성).
 
 ALB 증설 스택(`apphub-{stage}-alb-*`)은 deploy.sh가 아니라 플랫폼이 앱 생성 중 필요할 때 provisioner CodeBuild로 만든다.
 

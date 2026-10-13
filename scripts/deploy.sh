@@ -7,7 +7,8 @@
 #   ./scripts/deploy.sh --stage dev|prod --domain <apps.example.com> \
 #       [--frontend-mode public|private] \
 #       [--hosted-zone-id <ZID>] [--region <region>] \
-#       [--admin-email <email>] [--admin-name <name>] [--internal-cidrs "10.0.0.0/16,..."] [--skip-spa]
+#       [--admin-email <email>] [--admin-name <name>] [--internal-cidrs "10.0.0.0/16,..."] [--skip-spa] \
+#       [--sso-start-url <url> --sso-region <region> --sso-permission-set <name>]
 #
 # 환경 값(도메인/hostedZone/계정/리전)은 하드코딩하지 않고 여기서 주입한다(퍼블릭 애셋 — 설치자마다 다름):
 #   - --domain          (필수) 사용자 앱 apex 도메인. prod/dev 공통 명시 지정(dev는 apps-dev.example.com 등).
@@ -22,6 +23,7 @@
 #          (DockerImageAsset) 내용이므로 cdk deploy **앞**에서 한다.
 #   3. cdk deploy apphub-{stage}-network apphub-{stage}-platform (변경 없으면 no-op).
 #      이어서 provisioner 자산(검증기·CDK소스)과 (public 모드) Kiro 설정 zip을 자산 버킷 고정 키로 업로드.
+#      3e. (D22) 기존 CodeCommit 저장소에 소유 태그 apphub:owner 백필(없는 것만, 실패 시 경고 후 계속).
 #   4. 최초 관리자 계정 생성(존재하면 통과). public 모드: SPA 빌드 → config.json 생성 →
 #      S3 sync → CloudFront invalidation(/* — kiro-config 포함). private 모드: 콘솔 컨테이너가
 #      시작 시 config.json을 만든다(업로드 단계 없음).
@@ -44,6 +46,10 @@ ADMIN_NAME=""
 INTERNAL_CIDRS=""
 SKIP_SPA="false"
 FRONTEND_MODE="public"  # --frontend-mode (D19). public | private
+# D22 Git 인증(Identity Center) — 3개 모두 주면 활성, 일부만 주면 사전 점검에서 중단, 없으면 비활성.
+SSO_START_URL=""
+SSO_REGION=""
+SSO_PERMISSION_SET=""
 
 usage() {
   cat <<'USAGE'
@@ -67,12 +73,21 @@ usage() {
                               (콤마 구분). 미지정 시 VPC CIDR.
   --skip-spa                  SPA 빌드/업로드 생략(인프라만 갱신할 때). private 모드에서는 이전에
                               준비된 콘솔 이미지 내용(infra/console/site)을 그대로 사용한다.
+  Git 인증 설정(D22, 선택 — 3개 모두 주면 활성, 일부만 주면 오류). Identity Center 는 미리 준비
+  (PLATFORM-ENGINEERING.md 5.4, IDENTITY-CENTER-SETUP.md). 주면 Kiro 설정 zip 에 PC 1회 설정기
+  (setup-aws-git)와 apphub-aws.conf 가 들어간다. 계정 ID·CodeCommit 리전(--region)은 자동.
+  --sso-start-url <url>       Identity Center 시작 URL (https://d-xxxxxxxxxx.awsapps.com/start)
+  --sso-region <region>       Identity Center 리전 (AppHub 리전과 다를 수 있음)
+  --sso-permission-set <name> 권한 세트 이름 (예: AppHubGit)
 
 예:
   ./scripts/deploy.sh --stage prod --domain apps.example.com --admin-email admin@example.com
   ./scripts/deploy.sh --stage dev  --domain apps-dev.example.com --region us-east-1
   ./scripts/deploy.sh --stage prod --domain apps.example.com --frontend-mode private \
       --internal-cidrs "10.0.0.0/8"
+  ./scripts/deploy.sh --stage prod --domain apps.example.com \
+      --sso-start-url https://d-1234567890.awsapps.com/start --sso-region ap-northeast-2 \
+      --sso-permission-set AppHubGit
 USAGE
 }
 
@@ -87,6 +102,9 @@ while [[ $# -gt 0 ]]; do
     --internal-cidrs) INTERNAL_CIDRS="${2:-}"; shift 2 ;;
     --frontend-mode)  FRONTEND_MODE="${2:-}"; shift 2 ;;
     --skip-spa)       SKIP_SPA="true"; shift ;;
+    --sso-start-url)      SSO_START_URL="${2:-}"; shift 2 ;;
+    --sso-region)         SSO_REGION="${2:-}"; shift 2 ;;
+    --sso-permission-set) SSO_PERMISSION_SET="${2:-}"; shift 2 ;;
     -h|--help)        usage; exit 0 ;;
     *) echo "알 수 없는 인자: $1" >&2; usage; exit 2 ;;
   esac
@@ -105,6 +123,30 @@ fi
 if [[ -z "${APPS_DOMAIN}" ]]; then
   echo "오류: --domain 인자로 사용자 앱 도메인을 지정하세요(예: --domain apps.example.com)." >&2
   echo "      환경 값은 하드코딩하지 않습니다 — 설치자마다 다릅니다." >&2
+  usage; exit 2
+fi
+
+# D22 Git 인증(Identity Center) 인자 검증 — 전부/없음 + 형식. AWS 호출 전에 막는다(사전 점검,
+#  변경 전 검증 원칙). build-kiro-bundle.sh 도 같은 검증을 하지만 그 단계(2c/3c)는 늦다.
+GIT_AUTH="false"
+SSO_GIVEN=0
+for v in "${SSO_START_URL}" "${SSO_REGION}" "${SSO_PERMISSION_SET}"; do
+  [[ -n "${v}" ]] && SSO_GIVEN=$((SSO_GIVEN + 1))
+done
+if [[ "${SSO_GIVEN}" -eq 3 ]]; then
+  if [[ ! "${SSO_START_URL}" =~ ^https://[^[:space:]]+$ ]]; then
+    echo "오류: --sso-start-url 은 https:// 로 시작해야 합니다(예: https://d-1234567890.awsapps.com/start): ${SSO_START_URL}" >&2; exit 2
+  fi
+  if [[ ! "${SSO_REGION}" =~ ^[a-z]{2}(-[a-z]+)+-[0-9]+$ ]]; then
+    echo "오류: --sso-region 형식이 올바르지 않습니다(예: ap-northeast-2): ${SSO_REGION}" >&2; exit 2
+  fi
+  if [[ ! "${SSO_PERMISSION_SET}" =~ ^[A-Za-z0-9+=,.@-]{1,32}$ ]]; then
+    echo "오류: --sso-permission-set 은 영숫자와 +=,.@- 로 1~32자여야 합니다: ${SSO_PERMISSION_SET}" >&2; exit 2
+  fi
+  GIT_AUTH="true"
+elif [[ "${SSO_GIVEN}" -ne 0 ]]; then
+  echo "오류: --sso-start-url / --sso-region / --sso-permission-set 은 3개를 모두 주거나 모두 생략하세요." >&2
+  echo "      (Git 인증 설정은 세 값이 모두 있어야 동작합니다 — PLATFORM-ENGINEERING.md 5.4)" >&2
   usage; exit 2
 fi
 
@@ -235,6 +277,20 @@ if [[ "${FRONTEND_MODE}" == "private" ]]; then
   fi
 fi
 
+# D22 Git 인증 — 번들 인자 조립(계정 ID 확인 뒤). 인자 검증은 위(인자 파싱 직후)에서 끝났다.
+GIT_AUTH_HINT=""
+KIRO_SSO_ARGS=()
+if [[ "${GIT_AUTH}" == "true" ]]; then
+  KIRO_SSO_ARGS=(--sso-start-url "${SSO_START_URL}" --sso-region "${SSO_REGION}"
+                 --sso-permission-set "${SSO_PERMISSION_SET}"
+                 --account-id "${ACCOUNT_ID}" --codecommit-region "${REGION}")
+  # 수동 재실행 안내용(3c 실패 시).
+  GIT_AUTH_HINT=" --sso-start-url ${SSO_START_URL} --sso-region ${SSO_REGION} --sso-permission-set ${SSO_PERMISSION_SET} --account-id ${ACCOUNT_ID} --codecommit-region ${REGION}"
+  log "Git 인증 설정: Identity Center 활성 (시작 URL ${SSO_START_URL}, IC 리전 ${SSO_REGION}, 권한 세트 ${SSO_PERMISSION_SET}, CodeCommit ${REGION})"
+else
+  log "Git 인증 설정: 비활성(--sso-* 미지정 — Kiro 번들에 코드 저장소 로그인 설정 미포함)"
+fi
+
 # ── 2. cdk bootstrap (이미 되어 있으면 통과) ─────────────────────────────────
 step "2/5 cdk bootstrap"
 if aws cloudformation describe-stacks --stack-name CDKToolkit --region "${REGION}" >/dev/null 2>&1; then
@@ -298,7 +354,8 @@ else
   log "SPA → ${CONSOLE_SITE_DIR} 동기화 OK"
 
   KIRO_TMP="$(mktemp -d -t apphub-kiro-XXXXXX)"
-  if bash "${ROOT_DIR}/scripts/build-kiro-bundle.sh" --out-dir "${KIRO_TMP}" >/dev/null; then
+  if bash "${ROOT_DIR}/scripts/build-kiro-bundle.sh" --out-dir "${KIRO_TMP}" --region "${REGION}" \
+       ${KIRO_SSO_ARGS[@]+"${KIRO_SSO_ARGS[@]}"} >/dev/null; then
     mkdir -p "${CONSOLE_SITE_DIR}/kiro-config"
     for z in kiro-config-mac.zip kiro-config-windows.zip; do
       if same_zip_content "${KIRO_TMP}/${z}" "${CONSOLE_SITE_DIR}/kiro-config/${z}"; then
@@ -411,13 +468,14 @@ if [[ "${FRONTEND_MODE}" == "private" ]]; then
   log "private 모드 — Kiro zip은 콘솔 이미지에 포함(업로드 생략)"
 elif [[ -z "${ASSETS_BUCKET}" ]]; then
   log "경고: AssetsBucketName Output 없음 — Kiro 설정 zip 업로드 건너뜀."
-elif bash "${ROOT_DIR}/scripts/build-kiro-bundle.sh" --upload --stage "${STAGE}" --region "${REGION}" --assets-bucket "${ASSETS_BUCKET}"; then
+elif bash "${ROOT_DIR}/scripts/build-kiro-bundle.sh" --upload --stage "${STAGE}" --region "${REGION}" --assets-bucket "${ASSETS_BUCKET}" \
+       ${KIRO_SSO_ARGS[@]+"${KIRO_SSO_ARGS[@]}"}; then
   KIRO_UPLOAD_OK="true"
   log "Kiro 설정 zip 업로드 OK → s3://${ASSETS_BUCKET}/kiro-config/{kiro-config-mac.zip, kiro-config-windows.zip}"
 else
   log "경고: Kiro 설정 zip 업로드 실패 — 배포는 계속합니다."
   log "      다운로드 페이지가 깨질 수 있으니 아래를 수동 실행하세요:"
-  log "      bash scripts/build-kiro-bundle.sh --upload --stage ${STAGE} --region ${REGION}"
+  log "      bash scripts/build-kiro-bundle.sh --upload --stage ${STAGE} --region ${REGION}${GIT_AUTH_HINT}"
 fi
 
 # ── 3d. 기본 권한 템플릿 시드 (DESIGN D7 "기본 = 권한 없음") ─────────────────
@@ -439,6 +497,23 @@ if aws dynamodb put-item \
   log "기본 권한 템플릿(PERM#default) 시드 완료"
 else
   log "기본 권한 템플릿 이미 존재(또는 조건 불충족) — 생성 생략"
+fi
+
+# ── 3e. CodeCommit 저장소 소유 태그 백필 (D22) ──────────────────────────────
+# D22 이전에 AppHub로 만든 저장소에는 소유 태그 apphub:owner 가 없어 Identity Center 권한 세트의
+#  ABAC 조건(ResourceTag/apphub:owner == PrincipalTag/email)에 걸려 git 접근이 거부된다.
+#  DDB 소유권(CCREPO#) → Cognito email(소문자) 로 **없는 것만** 채운다(멱등, 있으면 건드리지 않음).
+#  Git 인증 활성 여부와 무관하게 매 실행 수행(태그는 무해, 나중에 활성화해도 바로 쓰이도록).
+#  실패 방침(경고+계속): 태그 누락은 해당 저장소의 git 접근만 막을 뿐 플랫폼 기동과 무관.
+step "3e/5 CodeCommit 저장소 소유 태그 백필 (없는 것만)"
+if [[ -z "${USER_POOL_ID}" ]]; then
+  log "경고: UserPoolId Output 없음 — 소유 태그 백필 건너뜀."
+elif bash "${ROOT_DIR}/scripts/backfill-repo-owner-tags.sh" \
+       --table "${TABLE_NAME}" --user-pool-id "${USER_POOL_ID}" --region "${REGION}" --account-id "${ACCOUNT_ID}"; then
+  log "소유 태그 백필 OK"
+else
+  log "경고: 소유 태그 백필 실패 — 설치는 계속합니다. 다시 실행하려면:"
+  log "      bash scripts/backfill-repo-owner-tags.sh --table ${TABLE_NAME} --user-pool-id ${USER_POOL_ID} --region ${REGION}"
 fi
 
 # ── 4. 최초 관리자(존재하면 통과) + SPA 업로드 ───────────────────────────────
@@ -566,8 +641,13 @@ else
   if [[ "${FRONTEND_MODE}" == "private" ]]; then
     echo "                       (경고: Kiro zip이 콘솔 이미지에 없습니다 — deploy.sh를 --skip-spa 없이 다시 실행하세요)"
   else
-    echo "                       (경고: 자동 업로드 실패 — 'bash scripts/build-kiro-bundle.sh --upload --stage ${STAGE} --region ${REGION}' 수동 실행 필요)"
+    echo "                       (경고: 자동 업로드 실패 — 'bash scripts/build-kiro-bundle.sh --upload --stage ${STAGE} --region ${REGION}${GIT_AUTH_HINT}' 수동 실행 필요)"
   fi
+fi
+if [[ "${GIT_AUTH}" == "true" ]]; then
+  echo "  Git 인증        : Identity Center(권한 세트 ${SSO_PERMISSION_SET}) 활성"
+else
+  echo "  Git 인증        : 비활성"
 fi
 if [[ "${FRONTEND_MODE}" == "public" ]]; then
   echo "  (참고) 콘솔 인증서 발급·DNS 전파에 수 분이 걸릴 수 있습니다."

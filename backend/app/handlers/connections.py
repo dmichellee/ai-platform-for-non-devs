@@ -22,6 +22,7 @@ from ..integrations.codecommit import (
     RepositoryNameExists,
     create_repository,
     delete_repository,
+    owner_tags,
 )
 from ..integrations.codeconnections import (
     create_provider_connection,
@@ -157,23 +158,50 @@ def create_connection_repo(ctx: RouteContext) -> ProxyResult:
 
     → 201 {data:{repoName, cloneUrlHttp}} (repoName=최종명). base 이름 규칙 위반 또는
     최종명 길이 초과 시 VALIDATION_ERROR, 계정 전체에 동명(최종명) 존재 시 REPO_NAME_TAKEN(409).
+
+    D22: 레포에 소유 태그 `apphub:owner=<email 소문자>` 를 생성과 동시에 부착한다
+    (CreateRepository tags — Identity Center ABAC 로 Git 권한 판정). email 클레임이 없으면
+    VALIDATION_ERROR. 생성 이후 단계(태그·소유권 기록)가 실패하면 방금 만든 레포를 삭제하고
+    INTERNAL_ERROR — 태그 없는/소유권 없는 반쪽 레포를 남기지 않는다.
     """
     _require_codecommit_connection(ctx)
+    email = ctx.identity.email
+    if not isinstance(email, str) or not email.strip():
+        raise errors.validation(
+            "계정에 이메일 정보가 없어 저장소를 만들 수 없어요. 로그아웃 후 다시 로그인해보고, "
+            "그래도 안 되면 관리자에게 문의해주세요."
+        )
     body = parse_body(ctx.event.get("body"))
     base_name = validate_repo_name(body.get("repoName"))
     full_repo_name = build_repo_name(ctx.identity, base_name)
 
     try:
-        created_repo = create_repository(full_repo_name)
+        created_repo = create_repository(full_repo_name, tags=owner_tags(email))
     except RepositoryNameExists as err:
         raise errors.repo_name_taken() from err
+    except Exception as err:
+        # 태그 권한 거부 등. 원자적 생성이라 보통 레포가 없지만, 혹시 생겼다면 정리한다.
+        _rollback_repo(full_repo_name)
+        raise errors.internal() from err
 
-    repo = put_cc_repo(
-        owner_id=ctx.identity.user_id,
-        repo_name=created_repo["repoName"],
-        clone_url_http=created_repo["cloneUrlHttp"],
-    )
+    try:
+        repo = put_cc_repo(
+            owner_id=ctx.identity.user_id,
+            repo_name=created_repo["repoName"],
+            clone_url_http=created_repo["cloneUrlHttp"],
+        )
+    except Exception as err:
+        _rollback_repo(created_repo["repoName"])
+        raise errors.internal() from err
     return created(repo)
+
+
+def _rollback_repo(repo_name: str) -> None:
+    """생성 흐름 실패 시 레포 삭제(best-effort). 없으면 무시, 삭제 실패도 원래 에러를 가리지 않는다."""
+    try:
+        delete_repository(repo_name)
+    except Exception:
+        pass
 
 
 def _app_using_repo(owner_id: str, repo: dict) -> dict | None:

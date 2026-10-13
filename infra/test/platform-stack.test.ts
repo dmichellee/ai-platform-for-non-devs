@@ -820,6 +820,20 @@ describe("platform 스택", () => {
       expect(actions).not.toContain("codecommit:GetRepository");
     });
 
+    it("D22: TagResource(소유 태그 apphub:owner)는 CreateRepository와 같은 statement·리소스 범위다", () => {
+      // 태그 동반 생성(CreateRepository(tags=...))은 TagResource 권한으로도 평가된다 — 누락 시 생성 자체가
+      //  AccessDenied. 생성 시점 ARN이 없으므로 CreateRepository와 같은 Resource:"*" statement에 둔다.
+      const stmts = stmtsBySid("CodeCommitRepos");
+      expect(stmts.length).toBe(1);
+      const actions = asArray(stmts[0].Action);
+      expect(actions).toContain("codecommit:TagResource");
+      expect(actions).toContain("codecommit:CreateRepository");
+      expect(isStar(stmts[0].Resource)).toBe(true);
+      // 태그 제거 권한은 주지 않는다(소유 태그는 부착만 — 백필·생성 모두 추가 전용).
+      const all = JSON.stringify(template.findResources("AWS::IAM::Policy"));
+      expect(all).not.toContain("codecommit:UntagResource");
+    });
+
     it("GetRepository/DeleteRepository는 계정/리전 스코프 ARN으로 한정한다(리소스 레벨 지원, Resource:'*' 아님)", () => {
       const stmts = stmtsBySid("CodeCommitRepoManage");
       expect(stmts.length, "CodeCommitRepoManage statement가 존재해야 함").toBe(1);

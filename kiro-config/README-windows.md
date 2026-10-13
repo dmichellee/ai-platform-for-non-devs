@@ -43,6 +43,32 @@ install-hooks.ps1                # pre-commit 을 .git\hooks\ 에 설치하는 �
   같으면 통과, 다른 훅이 있으면 물어본 뒤 백업(`.bak`) 후 교체(`-Force` 로 확인 생략),
   git 저장소가 아니면 안내. 훅은 바이트 그대로 복사돼 줄바꿈(LF)이 보존된다.
 
+## PC 처음 설정 (코드 저장소 로그인) — 해당 회사만
+zip 안에 **`apphub-aws.conf` 와 `setup-aws-git.ps1`** 이 들어 있다면, 이 회사는 코드 저장소(AWS CodeCommit)에
+**회사 AWS 로그인**으로 접속한다. 이 설정은 **저장소마다가 아니라 PC당 한 번**이며, 처음 `git clone` 하기 전에 한다.
+(두 파일이 없으면 이 절은 건너뛴다.)
+
+1. **AWS CLI 버전 2 설치** — https://docs.aws.amazon.com/ko_kr/cli/latest/userguide/getting-started-install.html
+   에서 Windows 용 `AWSCLIV2.msi` 를 받아 설치한다(회사 PC는 관리자 권한이 필요할 수 있다).
+   설치 후 **PowerShell 창을 새로 열고** `aws --version` 이 `aws-cli/2.` 로 시작하는지 확인한다.
+2. zip 을 푼 폴더에서 PowerShell 로 한 번 실행한다:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File setup-aws-git.ps1
+   ```
+   - `%USERPROFILE%\.aws\config` 에 `apphub` 로그인 설정을 추가하고, git 이 **CodeCommit 주소에서만** AWS 로그인을
+     쓰게 한다(이 주소에서만 Windows 기본 로그인 도우미를 끈다. GitHub 등 다른 git 설정은 그대로).
+   - 몇 번 실행해도 안전하다. 이미 다른 값의 `apphub` 설정이 있으면 덮어쓰지 않고 멈추며,
+     바꾸려면 끝에 `-Force` 를 붙인다(원본은 `config.bak.시각` 으로 백업).
+   - 되돌리려면 끝에 `-Uninstall` 을 붙여 실행한다(이 스크립트가 넣은 설정만 지운다).
+3. 브라우저가 열리면 **회사 AWS 계정**(관리자가 알려준 이메일)으로 로그인하고 '허용'을 누른다.
+   확인: `aws sts get-caller-identity --profile apphub`
+4. 로그인은 **보통 하루에 한 번** 만료된다. push/clone 이 `403` 이나 `Unable to locate credentials` 로
+   실패하면 `aws sso login --profile apphub` 를 실행한 뒤 다시 시도한다(Kiro에게 "AWS 로그인해줘"라고 해도 된다).
+   다시 로그인해도 403 이면 관리자에게 "회사 AWS 로그인 계정·그룹·이메일이 AppHub 계정과 같은지" 확인을 요청한다.
+- 저장소 주소는 플랫폼 화면의 **HTTPS 주소**(`https://git-codecommit.…/v1/repos/…`)를 쓴다.
+- 예전에 이 주소의 아이디·비밀번호(Git 자격 증명)를 Windows 자격 증명 관리자에 저장한 적이 있어도, 이 설정 뒤에는
+  그 값 대신 회사 AWS 로그인이 쓰인다.
+
 ## pre-commit 훅은 무엇을 검사하나 (결정적으로 판정 가능한 것만)
 커밋할 때 아래를 검사하고, 걸리면 **한국어로 사유를 안내하며 커밋을 멈춘다**:
 1. 레포 루트에 **Dockerfile 존재**.

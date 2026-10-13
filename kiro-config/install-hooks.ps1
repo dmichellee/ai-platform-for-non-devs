@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 # AppHub 배포 표준 — git pre-commit 훅 설치기 (Windows / PowerShell 판)
 #
 # hooks/pre-commit 을 이 프로젝트의 .git/hooks/pre-commit 으로 설치한다.

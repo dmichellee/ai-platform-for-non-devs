@@ -10,6 +10,7 @@
 IAM(platform-stack, API Lambda 역할):
   codecommit:ListRepositories(Resource "*" — 리소스 레벨 미지원),
   codecommit:CreateRepository, codecommit:GetRepository(레포 ARN 범위 지정 가능),
+  codecommit:TagResource(D22 — CreateRepository(tags=...) 는 TagResource 권한도 평가. 같은 레포 ARN 범위),
   codecommit:DeleteRepository(레포 ARN 범위 지정 가능 — arn:aws:codecommit:{region}:{account}:*).
 """
 
@@ -56,14 +57,29 @@ def list_repositories() -> list[str]:
             return names
 
 
-def create_repository(repo_name: str) -> dict[str, str]:
+# D22 — 저장소 소유 태그. Identity Center ABAC 세션 태그 `email` 과 값 일치로 Git 권한 판정.
+OWNER_TAG_KEY = "apphub:owner"
+
+
+def owner_tags(email: str) -> dict[str, str]:
+    """소유 태그 맵. 값 = 이메일 소문자(앞뒤 공백 제거)."""
+    return {OWNER_TAG_KEY: email.strip().lower()}
+
+
+def create_repository(repo_name: str, tags: dict[str, str] | None = None) -> dict[str, str]:
     """레포 생성. {repoName, cloneUrlHttp} 반환.
+
+    tags 가 있으면 CreateRepository(tags=...) 로 생성과 동시에 부착한다(원자적 — 태그 실패 시
+    레포도 만들어지지 않음. IAM 은 CreateRepository + TagResource 둘 다 필요).
 
     동명 레포가 계정 전체에 이미 있으면 RepositoryNameExists 를 올린다(호출부가 명확한
     에러코드로 매핑). 그 외 ClientError 는 그대로 전파.
     """
     try:
-        res = client("codecommit").create_repository(repositoryName=repo_name)
+        kwargs: dict[str, Any] = {"repositoryName": repo_name}
+        if tags:
+            kwargs["tags"] = dict(tags)
+        res = client("codecommit").create_repository(**kwargs)
     except ClientError as err:
         if err.response.get("Error", {}).get("Code") == "RepositoryNameExistsException":
             raise RepositoryNameExists(repo_name) from err
